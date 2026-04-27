@@ -9260,6 +9260,276 @@ renderHome();
 
   console.log('[AJ PRO] Phase 11 chargée (statistiques + filtres clients).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 12 : NOTIFICATIONS DE RELANCE
+   • Bannière intelligente sur l'écran d'accueil avec actions en attente
+   • Détecte travaux "à mesurer / à confirmer / à chiffrer" anciens
+   • Détecte pièces incomplètes
+   • Click → navigue vers le contexte concerné
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P12_LOADED) return;
+  window.__AJ_P12_LOADED = true;
+
+  /* ─── 1) ANALYSE DES ACTIONS EN ATTENTE ─── */
+  function analyzePendingTasks(){
+    var db = dbLoad();
+    var clients = db.clients || {};
+    var pieces = Object.values(db.pieces || {});
+    var statuses = db.interventionStatus || {};
+    var prices = db.interventionPrices || {};
+
+    var byStatusByClient = {}; // client -> { 'a-mesurer': [], ... }
+    Object.keys(statuses).forEach(function(iid){
+      var st = statuses[iid];
+      if(['a-mesurer','a-confirmer','a-chiffrer','bloque'].indexOf(st) < 0) return;
+      // Extract pieceId from iid (format: pieceId::key)
+      var pid = iid.split('::')[0];
+      var p = pieces.find(function(x){ return x.id === pid; });
+      if(!p) return;
+      var clientId = p.clientId;
+      if(!byStatusByClient[clientId]) byStatusByClient[clientId] = { 'a-mesurer':[], 'a-confirmer':[], 'a-chiffrer':[], 'bloque':[] };
+      byStatusByClient[clientId][st].push({ iid: iid, pieceId: pid, pieceName: p.nom });
+    });
+
+    // Pièces incomplètes (sans mesures saisies)
+    var incompletePieces = pieces.filter(function(p){
+      if(!p.clientId || !clients[p.clientId]) return false;
+      var m = p.mesures || {};
+      var hasMesures = !!(m.long && m.larg && m.haut);
+      var hasCroquis = !!p.croquis;
+      var hasTravaux = (p.travaux && (Object.values(p.travaux.cats || {}).some(function(v){return v===true;}) || (p.travaux.paintElems||[]).length > 0));
+      var nbDone = [hasMesures, hasCroquis, hasTravaux].filter(Boolean).length;
+      return nbDone > 0 && nbDone < 3; // commencé mais pas fini
+    });
+
+    // Chantiers avec interventions chiffrables non chiffrées
+    var clientsWithUnpriced = [];
+    Object.keys(clients).forEach(function(cid){
+      var clientPieces = pieces.filter(function(p){ return p.clientId === cid; });
+      if(!clientPieces.length) return;
+      var unpriced = 0;
+      clientPieces.forEach(function(p){
+        var t = p.travaux || {};
+        Object.keys(t.cats || {}).forEach(function(k){
+          if(t.cats[k] !== true) return;
+          var iid = p.id + '::' + k;
+          if(!prices[iid]) unpriced++;
+        });
+      });
+      if(unpriced > 0) clientsWithUnpriced.push({ clientId: cid, count: unpriced });
+    });
+
+    return {
+      pendingByClient: byStatusByClient,
+      incompletePieces: incompletePieces,
+      clientsWithUnpriced: clientsWithUnpriced,
+      totalClients: Object.keys(clients).length
+    };
+  }
+
+  /* ─── 2) BANNIÈRE D'ACCUEIL ─── */
+  function injectHomeBanner(){
+    var screen = document.getElementById('screen-home');
+    if(!screen || !screen.classList.contains('active')) return;
+    // Remove old banner
+    var old = document.getElementById('aj-reminder-banner');
+    if(old) old.remove();
+
+    var analysis = analyzePendingTasks();
+    if(!analysis.totalClients) return; // No data yet
+
+    // Compte global
+    var totalAMesurer = 0, totalAConfirmer = 0, totalAChiffrer = 0, totalBloque = 0;
+    Object.values(analysis.pendingByClient).forEach(function(byStatus){
+      totalAMesurer += byStatus['a-mesurer'].length;
+      totalAConfirmer += byStatus['a-confirmer'].length;
+      totalAChiffrer += byStatus['a-chiffrer'].length;
+      totalBloque += byStatus['bloque'].length;
+    });
+
+    var totalActions = totalAMesurer + totalAConfirmer + totalAChiffrer + totalBloque;
+    var hasReminders = totalActions > 0 || analysis.incompletePieces.length > 0 || analysis.clientsWithUnpriced.length > 0;
+
+    if(!hasReminders) return;
+
+    var banner = document.createElement('div');
+    banner.id = 'aj-reminder-banner';
+    banner.style.cssText = 'background:#fff;border:1px solid var(--c-border,#e3dccc);border-left:4px solid #c9a96e;border-radius:14px;padding:18px 20px;margin-bottom:20px;font-family:Inter,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,0.04);';
+
+    var html = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">' +
+      '<div style="font-size:22px;">📌</div>' +
+      '<div style="flex:1;">' +
+        '<div style="font-weight:700;color:#0f2030;font-size:15px;">Actions en attente</div>' +
+        '<div style="font-size:12px;color:#3a4a5c;">Ce qu\'il reste à traiter sur tes chantiers</div>' +
+      '</div>' +
+      '<button onclick="document.getElementById(\'aj-reminder-banner\').remove()" style="background:transparent;border:none;color:#7a8896;font-size:18px;cursor:pointer;padding:4px 8px;">×</button>' +
+    '</div>';
+
+    var items = [];
+    if(totalAMesurer > 0){
+      items.push({
+        icon: '📐',
+        color: '#0d4690',
+        bg: 'rgba(21,101,192,0.08)',
+        label: totalAMesurer + ' travaux à mesurer',
+        sub: 'Mesures manquantes',
+        action: function(){
+          // Va sur synthèse pour voir le détail
+          if(typeof showScreen === 'function'){
+            // Si plusieurs clients, prend le premier ayant des à-mesurer
+            var firstClient = Object.keys(analysis.pendingByClient).find(function(cid){
+              return analysis.pendingByClient[cid]['a-mesurer'].length > 0;
+            });
+            if(firstClient){
+              window.currentClientId = firstClient;
+              showScreen('screen-synthese');
+              if(typeof renderSynthese === 'function') renderSynthese();
+            }
+          }
+        }
+      });
+    }
+    if(totalAConfirmer > 0){
+      items.push({
+        icon: '⏳',
+        color: '#9a4514',
+        bg: 'rgba(232,98,26,0.08)',
+        label: totalAConfirmer + ' travaux à confirmer client',
+        sub: 'À relancer par mail/téléphone',
+        action: function(){
+          var firstClient = Object.keys(analysis.pendingByClient).find(function(cid){
+            return analysis.pendingByClient[cid]['a-confirmer'].length > 0;
+          });
+          if(firstClient){
+            window.currentClientId = firstClient;
+            showScreen('screen-synthese');
+            if(typeof renderSynthese === 'function') renderSynthese();
+          }
+        }
+      });
+    }
+    if(totalAChiffrer > 0){
+      items.push({
+        icon: '💰',
+        color: '#4a3565',
+        bg: 'rgba(106,74,142,0.08)',
+        label: totalAChiffrer + ' travaux à chiffrer',
+        sub: 'À traiter au bureau',
+        action: function(){
+          var firstClient = Object.keys(analysis.pendingByClient).find(function(cid){
+            return analysis.pendingByClient[cid]['a-chiffrer'].length > 0;
+          });
+          if(firstClient){
+            window.currentClientId = firstClient;
+            showScreen('screen-synthese');
+            if(typeof renderSynthese === 'function') renderSynthese();
+          }
+        }
+      });
+    }
+    if(totalBloque > 0){
+      items.push({
+        icon: '⛔',
+        color: '#8a1e1e',
+        bg: 'rgba(198,40,40,0.08)',
+        label: totalBloque + ' travaux bloqués',
+        sub: 'Nécessitent une décision',
+        action: function(){
+          var firstClient = Object.keys(analysis.pendingByClient).find(function(cid){
+            return analysis.pendingByClient[cid]['bloque'].length > 0;
+          });
+          if(firstClient){
+            window.currentClientId = firstClient;
+            showScreen('screen-synthese');
+            if(typeof renderSynthese === 'function') renderSynthese();
+          }
+        }
+      });
+    }
+    if(analysis.incompletePieces.length > 0){
+      items.push({
+        icon: '📝',
+        color: '#3a4a5c',
+        bg: 'rgba(15,32,48,0.06)',
+        label: analysis.incompletePieces.length + ' pièce(s) inachevée(s)',
+        sub: 'Mesures, croquis ou travaux manquants',
+        action: function(){
+          var p = analysis.incompletePieces[0];
+          if(p && p.clientId){
+            window.currentClientId = p.clientId;
+            if(typeof openPiece === 'function') openPiece(p.id);
+          }
+        }
+      });
+    }
+    if(analysis.clientsWithUnpriced.length > 0){
+      var totalUnpriced = analysis.clientsWithUnpriced.reduce(function(n,x){ return n + x.count; }, 0);
+      items.push({
+        icon: '🏷',
+        color: '#7a5a30',
+        bg: 'rgba(201,169,110,0.10)',
+        label: totalUnpriced + ' interventions sans prix',
+        sub: 'Sur ' + analysis.clientsWithUnpriced.length + ' chantier(s)',
+        action: function(){
+          window.currentClientId = analysis.clientsWithUnpriced[0].clientId;
+          showScreen('screen-synthese');
+          if(typeof renderSynthese === 'function') renderSynthese();
+        }
+      });
+    }
+
+    if(!items.length){
+      banner.innerHTML = html + '<div style="text-align:center;color:#1d4d33;font-weight:600;font-size:13px;padding:8px;">✓ Tout est à jour, bon travail !</div>';
+    } else {
+      // Inject items as clickable rows
+      var itemsHtml = items.map(function(item, idx){
+        return '<div data-aj-rem-idx="' + idx + '" style="display:flex;align-items:center;gap:12px;padding:10px 12px;border-radius:8px;cursor:pointer;background:' + item.bg + ';margin-bottom:6px;transition:transform 0.1s;">' +
+          '<div style="font-size:20px;">' + item.icon + '</div>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:600;color:' + item.color + ';font-size:14px;">' + esc(item.label) + '</div>' +
+            '<div style="font-size:11px;color:#7a8896;">' + esc(item.sub) + '</div>' +
+          '</div>' +
+          '<div style="color:' + item.color + ';font-size:18px;">›</div>' +
+        '</div>';
+      }).join('');
+      banner.innerHTML = html + itemsHtml;
+    }
+
+    // Insert at top of home screen
+    screen.insertBefore(banner, screen.firstChild);
+
+    // Wire clicks
+    items.forEach(function(item, idx){
+      var el = banner.querySelector('[data-aj-rem-idx="' + idx + '"]');
+      if(el) el.onclick = item.action;
+    });
+  }
+
+  /* ─── 3) RAFRAÎCHIT À CHAQUE NAVIGATION VERS HOME ─── */
+  var _origShowScreen12 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen12.apply(this, arguments);
+    if(id === 'screen-home'){
+      setTimeout(injectHomeBanner, 200);
+    }
+    return r;
+  };
+  setTimeout(injectHomeBanner, 1200);
+
+  /* ─── 4) RAFRAÎCHIT QUAND ON CHANGE UN STATUT (via setInterventionStatus) ─── */
+  var _origSetIS12 = window.setInterventionStatus;
+  if(_origSetIS12){
+    window.setInterventionStatus = function(){
+      var r = _origSetIS12.apply(this, arguments);
+      if(currentScreen === 'screen-home') setTimeout(injectHomeBanner, 100);
+      return r;
+    };
+  }
+
+  console.log('[AJ PRO] Phase 12 chargée (notifications de relance sur accueil).');
+})();
 </script>
 </body>
 </html>
