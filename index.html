@@ -6071,6 +6071,593 @@ renderHome();
 
   console.log('[AJ PRO] Phase 2A chargée (statuts étendus, synthèse devis).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 2B.1 : EXPORT PDF
+   Génère un compte-rendu PDF complet d'un chantier (cover + synthèse + pièces)
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P2B_PDF_LOADED) return;
+  window.__AJ_P2B_PDF_LOADED = true;
+
+  var JSPDF_URL = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+
+  function loadJsPDF(cb){
+    if(window.jspdf && window.jspdf.jsPDF) return cb();
+    var s = document.createElement('script');
+    s.src = JSPDF_URL;
+    s.crossOrigin = 'anonymous';
+    s.onload = function(){
+      if(window.jspdf && window.jspdf.jsPDF) cb();
+      else showToast('Erreur chargement jsPDF (réessayez)');
+    };
+    s.onerror = function(){ showToast('⚠ Échec chargement jsPDF (vérifiez Internet)'); };
+    document.body.appendChild(s);
+  }
+
+  /* Strip emojis (jsPDF Helvetica ne les rend pas — on les retire pour avoir un PDF propre) */
+  function clean(s){
+    if(s == null) return '';
+    return String(s).replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F0FF}]/gu, '').replace(/\s+/g,' ').trim();
+  }
+
+  /* Couleurs AJ PRO (RGB 0-255) */
+  var COLORS = {
+    night:    [15, 32, 48],
+    primary:  [26, 51, 73],
+    gold:     [201, 169, 110],
+    cream:    [244, 239, 231],
+    border:   [227, 220, 204],
+    text:     [15, 32, 48],
+    textMuted:[122, 136, 150],
+    success:  [29, 77, 51],
+    warn:     [154, 69, 20],
+    info:     [13, 70, 144],
+    purple:   [74, 53, 101],
+    danger:   [138, 30, 30]
+  };
+  function rgb(arr){ return arr; }
+
+  function statusColor(status){
+    var map = {
+      'fini':       COLORS.success,
+      'a-confirmer':COLORS.warn,
+      'a-mesurer':  COLORS.info,
+      'a-chiffrer': COLORS.purple,
+      'bloque':     COLORS.danger,
+      'encours':    COLORS.textMuted,
+      'planifie':   COLORS.textMuted,
+      'avenir':     COLORS.textMuted
+    };
+    return map[status] || COLORS.textMuted;
+  }
+  function statusShort(status){
+    var SHORT = {
+      'fini':'Validé','a-confirmer':'À confirmer','a-mesurer':'À mesurer',
+      'a-chiffrer':'À chiffrer','bloque':'Bloqué','encours':'En cours',
+      'planifie':'Planifié','avenir':'À venir'
+    };
+    return SHORT[status] || status;
+  }
+
+  /* ── Génération PDF ── */
+  window.ajGeneratePDF = function(){
+    if(!currentClientId){ showToast('Sélectionnez un client'); return; }
+    showToast('Génération du PDF...');
+    loadJsPDF(function(){
+      try { buildPDF(); }
+      catch(e){
+        console.error(e);
+        showToast('⚠ Erreur PDF : ' + (e.message || e));
+      }
+    });
+  };
+
+  function buildPDF(){
+    var db = dbLoad();
+    var client = db.clients[currentClientId];
+    if(!client){ showToast('Client introuvable'); return; }
+    var pieces = Object.values(db.pieces)
+      .filter(function(p){ return p.clientId === currentClientId; })
+      .sort(function(a,b){ return (a.createdAt||0) - (b.createdAt||0); });
+
+    var doc = new window.jspdf.jsPDF({ unit:'mm', format:'a4', compress:true });
+    var pageW = 210, pageH = 297, margin = 15;
+    var contentW = pageW - 2*margin;
+
+    function setColor(c){ doc.setTextColor(c[0], c[1], c[2]); }
+    function setFill(c){ doc.setFillColor(c[0], c[1], c[2]); }
+    function setDraw(c){ doc.setDrawColor(c[0], c[1], c[2]); }
+
+    function ensureSpace(needed, currentY){
+      if(currentY + needed > pageH - margin){
+        doc.addPage();
+        return drawPageHeader();
+      }
+      return currentY;
+    }
+
+    var pageNum = 0;
+    function drawPageHeader(){
+      pageNum++;
+      // Bandeau haut discret
+      setFill(COLORS.night);
+      doc.rect(0, 0, pageW, 8, 'F');
+      // Texte top
+      setColor(COLORS.gold);
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(8);
+      doc.text('AJ PRO RÉNOVATION', margin, 5.5);
+      setColor([255,255,255]);
+      doc.setFont('helvetica','normal');
+      doc.text(clean(client.prenom + ' ' + client.nom), pageW - margin, 5.5, { align:'right' });
+      // Footer page number
+      setColor(COLORS.textMuted);
+      doc.setFontSize(8);
+      doc.text('Page ' + pageNum, pageW/2, pageH - 7, { align:'center' });
+      return 18; // y after header
+    }
+
+    /* ═══ COVER ═══ */
+    setFill(COLORS.night);
+    doc.rect(0, 0, pageW, 95, 'F');
+
+    // Bandeau gold accent
+    setFill(COLORS.gold);
+    doc.rect(0, 95, pageW, 1, 'F');
+
+    setColor(COLORS.gold);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(28);
+    doc.text('AJ PRO RÉNOVATION', pageW/2, 38, { align:'center' });
+
+    setColor([255,255,255]);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(11);
+    doc.text('Compte-rendu de visite chantier', pageW/2, 50, { align:'center' });
+
+    // Petit ornement
+    setDraw(COLORS.gold);
+    doc.setLineWidth(0.4);
+    doc.line(pageW/2 - 12, 60, pageW/2 + 12, 60);
+
+    // Bloc client
+    var coverY = 130;
+    setColor(COLORS.text);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(22);
+    doc.text(clean(client.prenom + ' ' + client.nom).toUpperCase(), pageW/2, coverY, { align:'center' });
+    coverY += 10;
+
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(11);
+    setColor(COLORS.textMuted);
+    if(client.adresse){ doc.text(clean(client.adresse), pageW/2, coverY, { align:'center' }); coverY += 6; }
+    if(client.tel){ doc.text('Tél : ' + clean(client.tel), pageW/2, coverY, { align:'center' }); coverY += 6; }
+    if(client.date){ doc.text('Visite réalisée le ' + clean(client.date), pageW/2, coverY, { align:'center' }); coverY += 6; }
+    if(client.type){ doc.text('Type : ' + clean(client.type), pageW/2, coverY, { align:'center' }); coverY += 6; }
+
+    // Stats
+    coverY += 10;
+    setColor(COLORS.gold);
+    doc.setFont('helvetica','bold');
+    doc.setFontSize(14);
+    doc.text(pieces.length + ' pièce' + (pieces.length>1?'s':'') + ' relevée' + (pieces.length>1?'s':''), pageW/2, coverY, { align:'center' });
+
+    var totalPhotos = pieces.reduce(function(n,p){ return n + (p.photos?p.photos.length:0); }, 0);
+    var totalNotes = pieces.reduce(function(n,p){ return n + (p.msNotes?p.msNotes.length:0); }, 0);
+    coverY += 7;
+    setColor(COLORS.textMuted);
+    doc.setFont('helvetica','normal');
+    doc.setFontSize(10);
+    doc.text(totalPhotos + ' photo' + (totalPhotos>1?'s':'') + '   ·   ' + totalNotes + ' note' + (totalNotes>1?'s':'') + ' manuscrite' + (totalNotes>1?'s':''), pageW/2, coverY, { align:'center' });
+
+    // Footer date génération
+    setColor(COLORS.textMuted);
+    doc.setFont('helvetica','italic');
+    doc.setFontSize(8);
+    doc.text('Document généré le ' + new Date().toLocaleDateString('fr-FR'), pageW/2, pageH - 15, { align:'center' });
+
+    /* ═══ SYNTHÈSE ═══ */
+    if(typeof buildTravauxData === 'function' && pieces.length){
+      doc.addPage();
+      pageNum++;
+      var y = drawPageHeader.call(null) || 18;
+      pageNum--; // drawPageHeader incremented; we already counted via addPage
+      pageNum++; // re-count
+
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(20);
+      setColor(COLORS.text);
+      doc.text('Synthèse des travaux', margin, y);
+      y += 4;
+      setDraw(COLORS.gold);
+      doc.setLineWidth(0.6);
+      doc.line(margin, y, margin + 30, y);
+      y += 10;
+
+      var data = buildTravauxData();
+      var allItems = [];
+      Object.keys(data).forEach(function(k){ data[k].forEach(function(it){ allItems.push(it); }); });
+
+      // KPIs en 5 colonnes
+      var byStatus = { fini:0, 'a-confirmer':0, 'a-mesurer':0, 'a-chiffrer':0, bloque:0 };
+      allItems.forEach(function(it){ if(byStatus[it.status] != null) byStatus[it.status]++; });
+      var kpis = [
+        { l:'Total', v:allItems.length, c:COLORS.text },
+        { l:'Validé', v:byStatus.fini, c:COLORS.success },
+        { l:'À confirmer', v:byStatus['a-confirmer'], c:COLORS.warn },
+        { l:'À mesurer', v:byStatus['a-mesurer'], c:COLORS.info },
+        { l:'À chiffrer', v:byStatus['a-chiffrer'], c:COLORS.purple }
+      ];
+      var kpiW = (contentW - 4*3) / 5;
+      kpis.forEach(function(k, idx){
+        var x = margin + idx*(kpiW + 3);
+        setDraw(COLORS.border);
+        doc.setLineWidth(0.3);
+        doc.roundedRect(x, y, kpiW, 18, 2, 2, 'S');
+        setColor(k.c);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(15);
+        doc.text(String(k.v), x + kpiW/2, y + 9, { align:'center' });
+        setColor(COLORS.textMuted);
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(7);
+        doc.text(k.l.toUpperCase(), x + kpiW/2, y + 14, { align:'center' });
+      });
+      y += 22;
+
+      // Sections "à action"
+      [
+        { st:'a-mesurer', title:'A MESURER (avant de partir)' },
+        { st:'a-confirmer', title:'A CONFIRMER (avec le client)' },
+        { st:'a-chiffrer', title:'A CHIFFRER PLUS TARD (au bureau)' },
+        { st:'bloque', title:'BLOQUÉ' }
+      ].forEach(function(group){
+        var its = allItems.filter(function(it){ return it.status === group.st; });
+        if(!its.length) return;
+        y = ensureSpace(20, y);
+        setColor(statusColor(group.st));
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        doc.text(group.title + ' (' + its.length + ')', margin, y);
+        y += 5;
+        setColor(COLORS.text);
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(9);
+        its.forEach(function(it){
+          y = ensureSpace(6, y);
+          var line = '- [' + clean(it.piece) + '] ' + clean(it.label) + ' — ' + clean(it.meta || 'à définir');
+          var split = doc.splitTextToSize(line, contentW - 5);
+          split.forEach(function(ln){
+            y = ensureSpace(5, y);
+            doc.text(ln, margin + 3, y);
+            y += 4.5;
+          });
+        });
+        y += 4;
+      });
+
+      // Par catégorie
+      var TRAVAUX_CATS_LOCAL = (typeof TRAVAUX_CATS !== 'undefined') ? TRAVAUX_CATS : [
+        {key:'mac',label:'Maçonnerie'},{key:'plomb',label:'Plomberie'},
+        {key:'elec',label:'Électricité'},{key:'peinture',label:'Peinture'},
+        {key:'sol',label:'Sol'},{key:'pf',label:'Portes & Fenêtres'}
+      ];
+      TRAVAUX_CATS_LOCAL.forEach(function(cat){
+        var its = data[cat.key] || [];
+        if(!its.length) return;
+        y = ensureSpace(15, y);
+        // Titre catégorie
+        setFill(COLORS.cream);
+        doc.rect(margin, y - 5, contentW, 9, 'F');
+        setColor(COLORS.text);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(13);
+        doc.text(clean(cat.label).toUpperCase() + '  (' + its.length + ')', margin + 2, y + 1);
+        y += 8;
+        // Items groupés par pièce
+        var byPiece = {};
+        its.forEach(function(it){ (byPiece[it.piece] = byPiece[it.piece] || []).push(it); });
+        Object.keys(byPiece).forEach(function(pn){
+          y = ensureSpace(8, y);
+          setColor(COLORS.textMuted);
+          doc.setFont('helvetica','bold');
+          doc.setFontSize(9);
+          doc.text(clean(pn).toUpperCase(), margin + 2, y);
+          y += 5;
+          byPiece[pn].forEach(function(it){
+            y = ensureSpace(6, y);
+            // Bullet
+            setColor(COLORS.text);
+            doc.setFont('helvetica','normal');
+            doc.setFontSize(9);
+            var label = clean(it.label);
+            var meta = clean(it.meta || '—');
+            var sShort = statusShort(it.status);
+            var line = '• ' + label + '   ' + meta;
+            var split = doc.splitTextToSize(line, contentW - 30);
+            split.forEach(function(ln, i){
+              doc.text(ln, margin + 4, y);
+              if(i === 0){
+                // Statut badge à droite
+                setColor(statusColor(it.status));
+                doc.setFont('helvetica','bold');
+                doc.setFontSize(8);
+                doc.text(sShort, pageW - margin - 1, y, { align:'right' });
+              }
+              y += 4.5;
+              doc.setFont('helvetica','normal');
+              doc.setFontSize(9);
+              setColor(COLORS.text);
+            });
+          });
+          y += 2;
+        });
+        y += 3;
+      });
+    }
+
+    /* ═══ PAR PIÈCE ═══ */
+    pieces.forEach(function(p){
+      doc.addPage();
+      var y = drawPageHeader();
+
+      // Titre
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(18);
+      setColor(COLORS.text);
+      doc.text(clean(p.nom).toUpperCase(), margin, y);
+      y += 3;
+      setDraw(COLORS.gold);
+      doc.setLineWidth(0.6);
+      doc.line(margin, y, margin + 25, y);
+      y += 8;
+
+      // Mesures
+      var m = p.mesures || {};
+      if(m.long || m.larg || m.haut){
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        setColor(COLORS.text);
+        doc.text('Dimensions', margin, y);
+        y += 5;
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(10);
+        setColor(COLORS.textMuted);
+        var dims = [];
+        var pf = function(x){ var n = parseFloat(String(x||'').replace(',','.')); return isNaN(n)?0:n; };
+        if(m.long) dims.push('Longueur ' + m.long + ' m');
+        if(m.larg) dims.push('Largeur ' + m.larg + ' m');
+        if(m.haut) dims.push('HSP ' + m.haut + ' m');
+        if(m.long && m.larg) dims.push('Sol ' + (pf(m.long)*pf(m.larg)).toFixed(1) + ' m²');
+        if(m.long && m.larg && m.haut) dims.push('Murs bruts ' + (2*(pf(m.long)+pf(m.larg))*pf(m.haut)).toFixed(1) + ' m²');
+        if(m.long && m.larg) dims.push('Périmètre ' + (2*(pf(m.long)+pf(m.larg))).toFixed(1) + ' ml');
+        var dimsText = dims.join('   ·   ');
+        var splitD = doc.splitTextToSize(dimsText, contentW);
+        splitD.forEach(function(ln){
+          y = ensureSpace(5, y);
+          doc.text(ln, margin, y);
+          y += 4.5;
+        });
+        y += 4;
+      }
+
+      // Croquis
+      if(p.croquis){
+        y = ensureSpace(60, y);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        setColor(COLORS.text);
+        doc.text('Croquis', margin, y);
+        y += 4;
+        try {
+          var imgW = Math.min(contentW, 130);
+          var imgH = imgW * 0.45;
+          setDraw(COLORS.border);
+          doc.setLineWidth(0.2);
+          doc.rect(margin, y, imgW, imgH);
+          doc.addImage(p.croquis, 'PNG', margin, y, imgW, imgH);
+          y += imgH + 6;
+        } catch(e){ console.error('croquis embed', e); }
+      }
+
+      // Travaux activés (rapide aperçu)
+      var t = p.travaux || {};
+      var cats = t.cats || {};
+      var actives = Object.keys(cats).filter(function(k){ return cats[k] === true; });
+      if(actives.length || (t.paintElems && t.paintElems.length)){
+        y = ensureSpace(15, y);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        setColor(COLORS.text);
+        doc.text('Travaux prévus', margin, y);
+        y += 5;
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(9);
+        setColor(COLORS.textMuted);
+        if(t.paintElems && t.paintElems.length){
+          y = ensureSpace(5, y);
+          doc.text('Peinture : ' + t.paintElems.join(', '), margin + 3, y);
+          y += 4.5;
+        }
+        if(actives.length){
+          var actLine = 'Autres : ' + actives.length + ' intervention' + (actives.length>1?'s':'');
+          y = ensureSpace(5, y);
+          doc.text(actLine, margin + 3, y);
+          y += 4.5;
+        }
+        y += 3;
+      }
+
+      // Observations
+      if(p.obs && p.obs.trim()){
+        y = ensureSpace(15, y);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        setColor(COLORS.text);
+        doc.text('Observations', margin, y);
+        y += 5;
+        doc.setFont('helvetica','normal');
+        doc.setFontSize(9);
+        setColor(COLORS.text);
+        var splitO = doc.splitTextToSize(clean(p.obs), contentW);
+        splitO.forEach(function(ln){
+          y = ensureSpace(5, y);
+          doc.text(ln, margin, y);
+          y += 4.5;
+        });
+        y += 3;
+      }
+
+      // Photos (2 par ligne, max 6 par pièce sur cette section)
+      if(p.photos && p.photos.length){
+        var photos = p.photos.slice(0, 8);
+        y = ensureSpace(20, y);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        setColor(COLORS.text);
+        doc.text('Photos (' + p.photos.length + ')', margin, y);
+        y += 5;
+        var phW = (contentW - 5) / 2;
+        var phH = phW * 0.7;
+        var col = 0;
+        photos.forEach(function(ph, idx){
+          if(idx > 0 && idx % 2 === 0){ y += phH + 4; col = 0; }
+          if(y + phH > pageH - margin){
+            doc.addPage(); y = drawPageHeader();
+            doc.setFont('helvetica','bold');
+            doc.setFontSize(11);
+            setColor(COLORS.text);
+            doc.text(clean(p.nom) + ' — photos (suite)', margin, y);
+            y += 6;
+            col = 0;
+          }
+          try {
+            var x = margin + col*(phW + 5);
+            setDraw(COLORS.border);
+            doc.setLineWidth(0.2);
+            doc.rect(x, y, phW, phH);
+            doc.addImage(ph.data, 'JPEG', x, y, phW, phH);
+            // tag annotated
+            if(ph.annotated){
+              setFill(COLORS.gold);
+              doc.rect(x, y, 18, 4, 'F');
+              setColor(COLORS.night);
+              doc.setFont('helvetica','bold');
+              doc.setFontSize(6);
+              doc.text('ANNOTÉE', x + 9, y + 3, { align:'center' });
+            }
+          } catch(e){ console.warn('photo embed', e); }
+          col++;
+        });
+        y += phH + 4;
+      }
+
+      // Notes manuscrites (1 par page si beaucoup, sinon en bas)
+      if(p.msNotes && p.msNotes.length){
+        p.msNotes.forEach(function(n, idx){
+          var nW = Math.min(contentW, 160);
+          var nH = 70;
+          if(y + nH + 8 > pageH - margin){
+            doc.addPage(); y = drawPageHeader();
+          }
+          doc.setFont('helvetica','bold');
+          doc.setFontSize(10);
+          setColor(COLORS.text);
+          doc.text('Note : ' + clean(n.title || ('Note ' + (idx+1))), margin, y);
+          y += 4;
+          try {
+            setDraw(COLORS.border);
+            doc.setLineWidth(0.2);
+            doc.rect(margin, y, nW, nH);
+            doc.addImage(n.data, 'PNG', margin, y, nW, nH);
+            y += nH + 5;
+          } catch(e){ console.warn('note embed', e); }
+        });
+      }
+
+      // Bloc-notes principal
+      if(p.blocNotes){
+        y = ensureSpace(80, y);
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(11);
+        setColor(COLORS.text);
+        doc.text('Bloc-notes', margin, y);
+        y += 4;
+        try {
+          var bW = contentW;
+          var bH = 80;
+          setDraw(COLORS.border);
+          doc.rect(margin, y, bW, bH);
+          doc.addImage(p.blocNotes, 'PNG', margin, y, bW, bH);
+          y += bH + 5;
+        } catch(e){}
+      }
+    });
+
+    /* ═══ SAVE ═══ */
+    var nameSafe = clean(client.nom || 'chantier').replace(/[^a-zA-Z0-9-]/g, '-');
+    var fname = 'AJ-PRO-' + nameSafe + '-' + new Date().toISOString().slice(0,10) + '.pdf';
+    doc.save(fname);
+    showToast('PDF généré ✓ (' + fname + ')');
+  }
+
+  /* ─── Bouton "📄 Générer PDF" sur l'écran Synthèse ─── */
+  function injectPDFButton(){
+    var screen = document.getElementById('screen-synthese');
+    if(!screen) return;
+    // Ajoute le bouton dans la barre d'actions de la synthèse
+    var actionRow = screen.querySelector('div[style*="gap:8px"]');
+    if(!actionRow) return;
+    if(actionRow.querySelector('[data-aj-pdf]')) return;
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-primary';
+    btn.setAttribute('data-aj-pdf','1');
+    btn.style.cssText = 'background:#c9a96e;color:#0f2030;font-weight:600;border:1px solid #a8884e;';
+    btn.textContent = '📄 Générer PDF';
+    btn.onclick = function(){ ajGeneratePDF(); };
+    actionRow.insertBefore(btn, actionRow.firstChild);
+  }
+
+  /* ─── Bouton "📄 PDF" sur la fiche client (à côté du bouton Récap) ─── */
+  function injectClientPDFButton(){
+    var clientScreen = document.getElementById('screen-client');
+    if(!clientScreen) return;
+    if(clientScreen.querySelector('[data-aj-pdf-client]')) return;
+    // Cherche le bouton "Récap" pour s'aligner à côté
+    var btns = clientScreen.querySelectorAll('button');
+    var hostBtn = null;
+    for(var i=0;i<btns.length;i++){
+      var t = (btns[i].textContent||'').toLowerCase();
+      if(t.indexOf('récap')>=0 || t.indexOf('recap')>=0){ hostBtn = btns[i]; break; }
+    }
+    if(!hostBtn) return;
+    var btn = document.createElement('button');
+    btn.className = hostBtn.className;
+    btn.setAttribute('data-aj-pdf-client','1');
+    btn.textContent = '📄 PDF';
+    btn.style.marginLeft = '8px';
+    btn.onclick = function(){ ajGeneratePDF(); };
+    if(hostBtn.parentElement) hostBtn.parentElement.insertBefore(btn, hostBtn.nextSibling);
+  }
+
+  // Patch showScreen pour injecter les boutons quand on entre sur les écrans concernés
+  var _origShowScreen3 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen3.apply(this, arguments);
+    if(id === 'screen-synthese') setTimeout(injectPDFButton, 120);
+    if(id === 'screen-client') setTimeout(injectClientPDFButton, 120);
+    return r;
+  };
+  // Init au cas où
+  setTimeout(function(){
+    injectPDFButton();
+    injectClientPDFButton();
+  }, 700);
+
+  console.log('[AJ PRO] Phase 2B-PDF chargée (export PDF chantier).');
+})();
 </script>
 </body>
 </html>
