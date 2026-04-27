@@ -11342,6 +11342,501 @@ renderHome();
 
   console.log('[AJ PRO] Phase 21 chargée (mode présentation client).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — CORRECTIF LÉGAL : NUMÉROTATION + VERROUILLAGE DOCUMENTS
+   Conformité minimale française : devis et factures avec numérotation
+   chronologique, immutables après émission.
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_LEGAL_LOADED) return;
+  window.__AJ_LEGAL_LOADED = true;
+
+  /* ─── 1) NUMÉROTATION ─── */
+  var TYPE_PREFIX = { devis: 'DEV', facture: 'FAC', avoir: 'AVR' };
+  var TYPE_LABEL  = { devis: 'Devis', facture: 'Facture', avoir: 'Avoir' };
+
+  function generateNumber(type){
+    var db = dbLoad();
+    db.numbering = db.numbering || {};
+    var thisYear = new Date().getFullYear();
+    var current = db.numbering[type];
+    if(!current || current.year !== thisYear){
+      current = { year: thisYear, counter: 0 };
+    }
+    current.counter += 1;
+    db.numbering[type] = current;
+    safeSave(db);
+    var prefix = TYPE_PREFIX[type] || 'DOC';
+    return prefix + '-' + thisYear + '-' + String(current.counter).padStart(3, '0');
+  }
+
+  /* ─── 2) ÉMISSION D'UN DOCUMENT (snapshot immutable) ─── */
+  function takeSnapshot(){
+    var db = dbLoad();
+    if(!currentClientId) return null;
+    var client = db.clients[currentClientId];
+    if(!client) return null;
+    var pieces = Object.values(db.pieces || {})
+      .filter(function(p){ return p.clientId === currentClientId; })
+      .map(function(p){ return JSON.parse(JSON.stringify(p)); });
+    var prices = Object.assign({}, db.interventionPrices || {});
+    var statuses = Object.assign({}, db.interventionStatus || {});
+    var materials = Object.assign({}, db.interventionMaterials || {});
+    var pricing = JSON.parse(localStorage.getItem('aj-pricing-settings-v1') || '{"tva":10,"marge":20}');
+    return {
+      client: JSON.parse(JSON.stringify(client)),
+      pieces: pieces,
+      interventionPrices: prices,
+      interventionStatus: statuses,
+      interventionMaterials: materials,
+      pricing: pricing,
+      timestamp: Date.now()
+    };
+  }
+
+  function computeTotals(snapshot){
+    if(!snapshot) return { htBrut:0, htMarge:0, ttc:0, tva:10, marge:20 };
+    var pricing = snapshot.pricing || { tva:10, marge:20 };
+    var htBrut = 0;
+    snapshot.pieces.forEach(function(p){
+      var t = p.travaux || {};
+      Object.keys(t.cats || {}).forEach(function(k){
+        if(t.cats[k] !== true) return;
+        var iid = p.id + '::' + k;
+        var price = snapshot.interventionPrices[iid];
+        if(!price) return;
+        var qm = (k.match(/([0-9]+(?:[.,][0-9]+)?)/) || [])[1];
+        var qty = qm ? parseFloat(qm.replace(',','.')) : 1;
+        htBrut += price * qty;
+      });
+    });
+    var htMarge = htBrut * (1 + pricing.marge / 100);
+    var ttc = htMarge * (1 + pricing.tva / 100);
+    return { htBrut:htBrut, htMarge:htMarge, ttc:ttc, tva:pricing.tva, marge:pricing.marge };
+  }
+
+  window.ajEmitDocument = function(type){
+    if(!currentClientId){ showToast('Sélectionnez un client'); return; }
+    if(!TYPE_PREFIX[type]){ return; }
+    var snapshot = takeSnapshot();
+    if(!snapshot){ showToast('Erreur snapshot'); return; }
+    var totals = computeTotals(snapshot);
+
+    var msg = 'Vous êtes sur le point d\'émettre un ' + TYPE_LABEL[type].toLowerCase() + ' OFFICIEL.\n\n' +
+              '⚠ Une fois émis, ce document ne peut PLUS être modifié ni supprimé (obligation légale).\n' +
+              'Pour le corriger, vous devrez créer un avoir ou un nouveau document.\n\n' +
+              'Total TTC : ' + totals.ttc.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' €';
+
+    customConfirm(msg,
+      function(){
+        var db = dbLoad();
+        var number = generateNumber(type);
+        var doc = {
+          id: 'doc_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          type: type,
+          number: number,
+          date: new Date().toISOString().slice(0, 10),
+          emittedAt: Date.now(),
+          clientId: currentClientId,
+          snapshot: snapshot,
+          totals: totals,
+          locked: true,
+          status: 'emis'
+        };
+        db.documents = db.documents || [];
+        db.documents.push(doc);
+        safeSave(db);
+        showToast('✓ ' + TYPE_LABEL[type] + ' émis : ' + number);
+        // Génère le PDF immédiatement
+        setTimeout(function(){ ajGenerateLegalPDF(doc.id); }, 200);
+        // Refresh doc list if open
+        if(typeof renderDocumentsList === 'function') renderDocumentsList();
+      },
+      { title: 'Émettre ' + TYPE_LABEL[type] + ' officiel ?', okLabel: 'Émettre — verrouillage immédiat' });
+  };
+
+  /* ─── 3) PDF DEVIS LÉGAL ─── */
+  function loadJsPDF(cb){
+    if(window.jspdf && window.jspdf.jsPDF) return cb();
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = function(){ if(window.jspdf && window.jspdf.jsPDF) cb(); };
+    s.onerror = function(){ showToast('⚠ Échec chargement jsPDF'); };
+    document.body.appendChild(s);
+  }
+
+  window.ajGenerateLegalPDF = function(docId){
+    var db = dbLoad();
+    var doc = (db.documents || []).find(function(d){ return d.id === docId; });
+    if(!doc){ showToast('Document introuvable'); return; }
+
+    loadJsPDF(function(){
+      var pdf = new window.jspdf.jsPDF({ unit:'mm', format:'a4', compress:true });
+      var pageW = 210, pageH = 297, margin = 18;
+      var contentW = pageW - 2*margin;
+      var clean = function(s){ if(s==null) return ''; return String(s).replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F0FF}]/gu,'').replace(/\s+/g,' ').trim(); };
+      var s = doc.snapshot;
+      var c = s.client;
+      var t = doc.totals;
+
+      // Header
+      pdf.setFillColor(15, 32, 48);
+      pdf.rect(0, 0, pageW, 32, 'F');
+      pdf.setFillColor(201, 169, 110);
+      pdf.rect(0, 32, pageW, 0.6, 'F');
+      pdf.setTextColor(201, 169, 110);
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(20);
+      pdf.text('AJ PRO RÉNOVATION', margin, 16);
+      pdf.setTextColor(255,255,255);
+      pdf.setFont('helvetica','normal');
+      pdf.setFontSize(10);
+      pdf.text(TYPE_LABEL[doc.type].toUpperCase() + ' N° ' + doc.number, margin, 24);
+
+      // Numero + date à droite
+      pdf.setFontSize(9);
+      pdf.text('Date : ' + new Date(doc.date).toLocaleDateString('fr-FR'), pageW - margin, 16, { align:'right' });
+      pdf.text('Document verrouillé', pageW - margin, 22, { align:'right' });
+
+      var y = 42;
+
+      // Bloc émetteur (placeholder — à compléter avec vraies infos entreprise)
+      pdf.setTextColor(15, 32, 48);
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(11);
+      pdf.text('ÉMETTEUR', margin, y);
+      y += 5;
+      pdf.setFont('helvetica','normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(58, 74, 92);
+      var emetteur = JSON.parse(localStorage.getItem('aj-emetteur-v1') || 'null') || {
+        nom: 'AJ PRO RÉNOVATION',
+        adresse: '[À compléter dans Paramètres devis]',
+        siret: '[SIRET requis]',
+        tva: '[N° TVA intracommunautaire]'
+      };
+      pdf.text(clean(emetteur.nom), margin, y); y += 4;
+      pdf.text(clean(emetteur.adresse), margin, y); y += 4;
+      if(emetteur.tel) { pdf.text('Tél : ' + clean(emetteur.tel), margin, y); y += 4; }
+      if(emetteur.email) { pdf.text('Email : ' + clean(emetteur.email), margin, y); y += 4; }
+      pdf.text('SIRET : ' + clean(emetteur.siret), margin, y); y += 4;
+      pdf.text('TVA : ' + clean(emetteur.tva), margin, y); y += 8;
+
+      // Bloc destinataire (à droite)
+      var yClient = 42;
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(11);
+      pdf.setTextColor(15, 32, 48);
+      pdf.text('CLIENT', pageW/2 + 10, yClient); yClient += 5;
+      pdf.setFont('helvetica','normal');
+      pdf.setFontSize(9);
+      pdf.setTextColor(58, 74, 92);
+      pdf.text(clean(c.prenom + ' ' + c.nom), pageW/2 + 10, yClient); yClient += 4;
+      if(c.adresse) { pdf.text(clean(c.adresse), pageW/2 + 10, yClient); yClient += 4; }
+      if(c.tel) { pdf.text('Tél : ' + clean(c.tel), pageW/2 + 10, yClient); yClient += 4; }
+      if(c.email) { pdf.text('Email : ' + clean(c.email), pageW/2 + 10, yClient); yClient += 4; }
+
+      y = Math.max(y, yClient + 4);
+
+      // Tableau des prestations
+      pdf.setDrawColor(15, 32, 48);
+      pdf.setLineWidth(0.4);
+      pdf.line(margin, y, pageW - margin, y);
+      y += 5;
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(9);
+      pdf.setTextColor(15, 32, 48);
+      pdf.text('DÉSIGNATION', margin + 2, y);
+      pdf.text('QTÉ', pageW - margin - 60, y, { align:'right' });
+      pdf.text('PU HT', pageW - margin - 35, y, { align:'right' });
+      pdf.text('TOTAL HT', pageW - margin - 2, y, { align:'right' });
+      y += 3;
+      pdf.line(margin, y, pageW - margin, y);
+      y += 5;
+
+      pdf.setFont('helvetica','normal');
+      pdf.setFontSize(9);
+
+      var totalLignes = 0;
+      s.pieces.forEach(function(p){
+        var t2 = p.travaux || {};
+        var pieceItems = [];
+        Object.keys(t2.cats || {}).forEach(function(k){
+          if(t2.cats[k] !== true) return;
+          var iid = p.id + '::' + k;
+          var price = s.interventionPrices[iid];
+          if(!price) return;
+          var qm = (k.match(/([0-9]+(?:[.,][0-9]+)?)/) || [])[1];
+          var qty = qm ? parseFloat(qm.replace(',','.')) : 1;
+          pieceItems.push({ key: k, qty: qty, price: price, total: qty * price });
+        });
+        if(!pieceItems.length) return;
+
+        if(y > pageH - 60){ pdf.addPage(); y = margin; }
+        pdf.setFont('helvetica','bold');
+        pdf.setTextColor(15, 32, 48);
+        pdf.text(clean(p.nom), margin + 2, y);
+        y += 5;
+        pdf.setFont('helvetica','normal');
+        pdf.setTextColor(58, 74, 92);
+        pieceItems.forEach(function(item){
+          if(y > pageH - 50){ pdf.addPage(); y = margin; }
+          var label = item.key.replace(/^(mac|elec|sol|pf|paint|plomb|macdup)-/, '').replace(/-/g, ' ');
+          pdf.text('  ' + clean(label), margin + 2, y, { maxWidth: contentW - 70 });
+          pdf.text(String(item.qty), pageW - margin - 60, y, { align:'right' });
+          pdf.text(item.price.toLocaleString('fr-FR') + ' €', pageW - margin - 35, y, { align:'right' });
+          pdf.text(item.total.toLocaleString('fr-FR') + ' €', pageW - margin - 2, y, { align:'right' });
+          y += 5;
+          totalLignes++;
+        });
+        y += 2;
+      });
+
+      if(!totalLignes){
+        pdf.setTextColor(122, 136, 150);
+        pdf.text('Aucune prestation chiffrée — saisissez les prix dans la Synthèse devis avant émission.', margin + 2, y);
+        y += 6;
+      }
+
+      // Totaux
+      y += 4;
+      pdf.setDrawColor(15, 32, 48);
+      pdf.line(pageW/2, y, pageW - margin, y);
+      y += 6;
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica','normal');
+      pdf.setTextColor(58, 74, 92);
+      pdf.text('Sous-total HT', pageW/2 + 5, y);
+      pdf.text(t.htBrut.toLocaleString('fr-FR') + ' €', pageW - margin - 2, y, { align:'right' });
+      y += 5;
+      if(t.marge > 0){
+        pdf.text('Marge entreprise (' + t.marge + '%)', pageW/2 + 5, y);
+        pdf.text((t.htMarge - t.htBrut).toLocaleString('fr-FR') + ' €', pageW - margin - 2, y, { align:'right' });
+        y += 5;
+      }
+      pdf.setFont('helvetica','bold');
+      pdf.setTextColor(15, 32, 48);
+      pdf.text('Total HT', pageW/2 + 5, y);
+      pdf.text(t.htMarge.toLocaleString('fr-FR') + ' €', pageW - margin - 2, y, { align:'right' });
+      y += 5;
+      pdf.setFont('helvetica','normal');
+      pdf.text('TVA ' + t.tva + '%', pageW/2 + 5, y);
+      pdf.text((t.ttc - t.htMarge).toLocaleString('fr-FR') + ' €', pageW - margin - 2, y, { align:'right' });
+      y += 6;
+      pdf.setFillColor(201, 169, 110);
+      pdf.rect(pageW/2, y - 4, pageW/2 - margin, 8, 'F');
+      pdf.setFont('helvetica','bold');
+      pdf.setFontSize(12);
+      pdf.setTextColor(15, 32, 48);
+      pdf.text('TOTAL TTC', pageW/2 + 5, y + 2);
+      pdf.text(t.ttc.toLocaleString('fr-FR') + ' €', pageW - margin - 2, y + 2, { align:'right' });
+      y += 14;
+
+      // Mentions légales
+      y = Math.max(y, pageH - 50);
+      pdf.setFont('helvetica','italic');
+      pdf.setFontSize(8);
+      pdf.setTextColor(122, 136, 150);
+      var mentions = [
+        'Devis valable 3 mois à compter de la date d\'émission. Acompte de 30% à la signature.',
+        'TVA non applicable, art. 293 B du CGI — OU — TVA récupérée sur les débits.',
+        'En cas de retard de paiement : pénalités au taux légal + indemnité forfaitaire de 40 € (art. L.441-10 C. com.).',
+        'Document généré le ' + new Date(doc.emittedAt).toLocaleDateString('fr-FR') + ' à ' + new Date(doc.emittedAt).toLocaleTimeString('fr-FR').slice(0,5) + ' — Numéro : ' + doc.number
+      ];
+      mentions.forEach(function(m){
+        var split = pdf.splitTextToSize(m, contentW);
+        pdf.text(split, margin, y);
+        y += split.length * 3.5;
+      });
+
+      // Footer
+      pdf.setTextColor(160, 160, 160);
+      pdf.setFontSize(7);
+      pdf.text('Document verrouillé — toute modification nécessite un avoir ou un nouveau document', pageW/2, pageH - 6, { align:'center' });
+
+      var fname = doc.number + '-' + (c.nom || 'client').replace(/[^a-zA-Z0-9-]/g, '-') + '.pdf';
+      pdf.save(fname);
+      showToast('PDF ' + doc.number + ' téléchargé ✓');
+    });
+  };
+
+  /* ─── 4) ÉCRAN "DOCUMENTS ÉMIS" ─── */
+  function ensureDocsScreen(){
+    if(document.getElementById('screen-docs')) return;
+    var mc = document.querySelector('.main-content');
+    if(!mc) return;
+    var s = document.createElement('div');
+    s.className = 'screen';
+    s.id = 'screen-docs';
+    s.innerHTML =
+      '<div style="padding:0 0 80px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px;">' +
+          '<div>' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:#0f2030;">Documents émis</div>' +
+            '<div style="font-size:13px;color:#3a4a5c;margin-top:4px;">Devis et factures officiels — verrouillés et numérotés chronologiquement</div>' +
+          '</div>' +
+          '<button onclick="ajOpenEmetteurSettings()" style="padding:9px 14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;">⚙ Infos émetteur</button>' +
+        '</div>' +
+        '<div id="aj-docs-body"></div>' +
+      '</div>';
+    mc.appendChild(s);
+  }
+
+  window.renderDocumentsList = function(){
+    ensureDocsScreen();
+    var body = document.getElementById('aj-docs-body');
+    if(!body) return;
+    var db = dbLoad();
+    var docs = (db.documents || []).slice().sort(function(a,b){ return b.emittedAt - a.emittedAt; });
+
+    if(!docs.length){
+      body.innerHTML =
+        '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:40px 20px;text-align:center;font-family:Inter,sans-serif;">' +
+          '<div style="font-size:40px;margin-bottom:14px;">📄</div>' +
+          '<div style="font-weight:600;color:#0f2030;margin-bottom:6px;">Aucun document émis</div>' +
+          '<div style="font-size:13px;color:#3a4a5c;line-height:1.5;max-width:400px;margin:0 auto;">Pour émettre un devis officiel : ouvre la Synthèse devis d\'un chantier, saisis les prix, puis clique sur <b>Émettre devis officiel</b>.</div>' +
+        '</div>';
+      return;
+    }
+
+    body.innerHTML = docs.map(function(d){
+      var c = d.snapshot.client;
+      var typeLbl = TYPE_LABEL[d.type];
+      var typeBg = { devis:'#0d4690', facture:'#1d4d33', avoir:'#9a4514' }[d.type];
+      return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:12px;padding:14px 18px;margin-bottom:10px;font-family:Inter,sans-serif;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
+        '<div style="background:'+typeBg+';color:#fff;padding:5px 10px;border-radius:6px;font-size:11px;font-weight:700;letter-spacing:0.5px;">' + typeLbl.toUpperCase() + '</div>' +
+        '<div style="flex:1;min-width:200px;">' +
+          '<div style="font-weight:700;color:#0f2030;font-size:15px;">' + d.number + '</div>' +
+          '<div style="font-size:12px;color:#7a8896;">' + esc(c.prenom + ' ' + c.nom) + ' · émis le ' + new Date(d.date).toLocaleDateString('fr-FR') + ' · 🔒 verrouillé</div>' +
+        '</div>' +
+        '<div style="text-align:right;min-width:120px;">' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:18px;font-weight:600;color:#c9a96e;">' + d.totals.ttc.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' € TTC</div>' +
+          '<div style="font-size:11px;color:#7a8896;">' + d.totals.htMarge.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' € HT</div>' +
+        '</div>' +
+        '<button onclick="ajGenerateLegalPDF(\''+d.id+'\')" style="padding:9px 14px;background:#c9a96e;color:#0f2030;border:none;border-radius:7px;cursor:pointer;font-weight:600;font-size:12px;">📄 PDF</button>' +
+      '</div>';
+    }).join('');
+  };
+
+  /* ─── 5) ÉCRAN PARAMÈTRES ÉMETTEUR ─── */
+  window.ajOpenEmetteurSettings = function(){
+    var current = JSON.parse(localStorage.getItem('aj-emetteur-v1') || 'null') || {
+      nom: 'AJ PRO RÉNOVATION', adresse: '', tel: '', email: '', siret: '', tva: ''
+    };
+    if(!document.getElementById('aj-emetteur-modal')){
+      var m = document.createElement('div');
+      m.id = 'aj-emetteur-modal';
+      m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.7);z-index:300;backdrop-filter:blur(4px);padding:20px;overflow-y:auto;';
+      m.innerHTML =
+        '<div style="max-width:480px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;font-family:Inter,sans-serif;">' +
+          '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;padding:18px 20px;">' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:20px;font-weight:600;color:#c9a96e;">Infos émetteur</div>' +
+            '<div style="font-size:11px;color:rgba(255,255,255,0.85);margin-top:2px;">Apparaissent sur tous tes devis/factures officiels (mentions légales obligatoires)</div>' +
+          '</div>' +
+          '<div style="padding:18px 20px;">' +
+            '<label style="font-size:11px;color:#3a4a5c;font-weight:600;">Raison sociale</label>' +
+            '<input id="em-nom" style="width:100%;padding:9px 11px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:13px;margin:4px 0 10px;" />' +
+            '<label style="font-size:11px;color:#3a4a5c;font-weight:600;">Adresse complète</label>' +
+            '<input id="em-adresse" style="width:100%;padding:9px 11px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:13px;margin:4px 0 10px;" />' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
+              '<div><label style="font-size:11px;color:#3a4a5c;font-weight:600;">Téléphone</label><input id="em-tel" style="width:100%;padding:9px 11px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:13px;margin:4px 0 10px;" /></div>' +
+              '<div><label style="font-size:11px;color:#3a4a5c;font-weight:600;">Email</label><input id="em-email" type="email" style="width:100%;padding:9px 11px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:13px;margin:4px 0 10px;" /></div>' +
+            '</div>' +
+            '<label style="font-size:11px;color:#3a4a5c;font-weight:600;">SIRET (14 chiffres)</label>' +
+            '<input id="em-siret" placeholder="123 456 789 00012" style="width:100%;padding:9px 11px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:13px;margin:4px 0 10px;font-family:monospace;" />' +
+            '<label style="font-size:11px;color:#3a4a5c;font-weight:600;">N° TVA intracommunautaire (FR + 11 chiffres)</label>' +
+            '<input id="em-tva" placeholder="FR12345678901" style="width:100%;padding:9px 11px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:13px;margin:4px 0 16px;font-family:monospace;" />' +
+            '<div style="display:flex;gap:8px;">' +
+              '<button onclick="document.getElementById(\'aj-emetteur-modal\').style.display=\'none\'" style="flex:1;padding:11px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;color:#7a8896;font-weight:500;">Annuler</button>' +
+              '<button onclick="ajSaveEmetteur()" style="flex:1;padding:11px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;cursor:pointer;font-weight:700;">Enregistrer</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(m);
+    }
+    document.getElementById('em-nom').value = current.nom || '';
+    document.getElementById('em-adresse').value = current.adresse || '';
+    document.getElementById('em-tel').value = current.tel || '';
+    document.getElementById('em-email').value = current.email || '';
+    document.getElementById('em-siret').value = current.siret || '';
+    document.getElementById('em-tva').value = current.tva || '';
+    document.getElementById('aj-emetteur-modal').style.display = 'block';
+  };
+
+  window.ajSaveEmetteur = function(){
+    var data = {
+      nom: document.getElementById('em-nom').value.trim(),
+      adresse: document.getElementById('em-adresse').value.trim(),
+      tel: document.getElementById('em-tel').value.trim(),
+      email: document.getElementById('em-email').value.trim(),
+      siret: document.getElementById('em-siret').value.trim(),
+      tva: document.getElementById('em-tva').value.trim()
+    };
+    localStorage.setItem('aj-emetteur-v1', JSON.stringify(data));
+    document.getElementById('aj-emetteur-modal').style.display = 'none';
+    showToast('Infos émetteur enregistrées ✓');
+  };
+
+  /* ─── 6) NAV + BOUTONS ─── */
+  function injectDocsNav(){
+    var nav = document.querySelector('.sidebar-nav');
+    if(!nav || document.getElementById('aj-nav-docs')) return;
+    var item = document.createElement('div');
+    item.className = 'nav-item';
+    item.id = 'aj-nav-docs';
+    item.innerHTML =
+      '<span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></span>' +
+      '<span>Documents émis</span>';
+    item.onclick = function(){
+      if(typeof closeSidebar === 'function' && window.innerWidth <= 980) closeSidebar();
+      screenHistory = [];
+      ensureDocsScreen();
+      showScreen('screen-docs');
+      renderDocumentsList();
+    };
+    nav.appendChild(item);
+  }
+  setTimeout(injectDocsNav, 1100);
+
+  var _origUpdateNavL = window.updateNav;
+  window.updateNav = function(){
+    var r = _origUpdateNavL.apply(this, arguments);
+    var item = document.getElementById('aj-nav-docs');
+    if(item){ item.classList.toggle('active', currentScreen === 'screen-docs'); }
+    return r;
+  };
+  var _origShowScreenL = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreenL.apply(this, arguments);
+    if(id === 'screen-docs') setTimeout(renderDocumentsList, 50);
+    return r;
+  };
+
+  /* Bouton "Émettre devis officiel" sur la synthèse */
+  function injectEmitButton(){
+    var screen = document.getElementById('screen-synthese');
+    if(!screen) return;
+    var actionRow = screen.querySelector('div[style*="gap:8px"]');
+    if(!actionRow || actionRow.querySelector('[data-aj-emit]')) return;
+    var btn = document.createElement('button');
+    btn.setAttribute('data-aj-emit','1');
+    btn.style.cssText = 'background:#1d4d33;color:#fff;border:none;padding:10px 16px;border-radius:8px;font-weight:700;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;';
+    btn.textContent = '📋 Émettre devis officiel';
+    btn.title = 'Crée un devis numéroté et verrouillé (immutable)';
+    btn.onclick = function(){ ajEmitDocument('devis'); };
+    actionRow.insertBefore(btn, actionRow.firstChild);
+  }
+  var _origShowScreenL2 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreenL2.apply(this, arguments);
+    if(id === 'screen-synthese') setTimeout(injectEmitButton, 250);
+    return r;
+  };
+  setTimeout(injectEmitButton, 1200);
+
+  console.log('[AJ PRO] Correctif légal chargé (numérotation + verrou anti-modification).');
+})();
 </script>
 </body>
 </html>
