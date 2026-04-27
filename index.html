@@ -8304,6 +8304,411 @@ renderHome();
 
   console.log('[AJ PRO] Phase 8 chargée (PWA installable + offline mode).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 9 : SIGNATURE CLIENT + BON DE VISITE
+   • Modal de signature au stylet sur la tablette
+   • Génère un PDF "Bon de visite" avec travaux convenus + signature
+   • Historique des signatures par client
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P9_LOADED) return;
+  window.__AJ_P9_LOADED = true;
+
+  /* ─── 1) MODAL DE SIGNATURE ─── */
+  function ensureSignatureModal(){
+    if(document.getElementById('aj-sig-modal')) return;
+    var m = document.createElement('div');
+    m.id = 'aj-sig-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.7);z-index:300;backdrop-filter:blur(4px);padding:20px;overflow-y:auto;';
+    m.innerHTML =
+      '<div style="max-width:760px;margin:30px auto;background:#fff;border-radius:14px;overflow:hidden;font-family:Inter,sans-serif;">' +
+        '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;padding:20px 24px;">' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:24px;font-weight:600;color:#c9a96e;">Bon de visite</div>' +
+          '<div id="aj-sig-client" style="font-size:13px;color:rgba(255,255,255,0.85);margin-top:4px;"></div>' +
+        '</div>' +
+        '<div style="padding:20px 24px;">' +
+          '<div style="font-weight:600;color:#0f2030;margin-bottom:8px;">Travaux convenus</div>' +
+          '<div id="aj-sig-items" style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:12px;max-height:200px;overflow-y:auto;font-size:13px;color:#3a4a5c;line-height:1.6;"></div>' +
+          '<div id="aj-sig-total" style="margin-top:10px;text-align:right;font-size:14px;color:#0f2030;font-weight:600;"></div>' +
+          '<div style="margin-top:18px;font-size:12px;color:#3a4a5c;font-style:italic;line-height:1.5;">Bon pour accord sur les travaux ci-dessus tels que présentés. Le devis détaillé suit selon nos conditions générales.</div>' +
+          '<div style="margin-top:14px;font-weight:600;color:#0f2030;font-size:14px;">Signature du client</div>' +
+          '<div style="margin-top:6px;font-size:11px;color:#7a8896;">Signez ci-dessous au stylet</div>' +
+          '<div style="margin-top:8px;border:2px dashed #c9a96e;border-radius:10px;background:#fff;position:relative;">' +
+            '<canvas id="aj-sig-canvas" style="width:100%;height:180px;display:block;touch-action:none;cursor:crosshair;"></canvas>' +
+            '<div id="aj-sig-placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#c9a96e;font-size:13px;pointer-events:none;font-style:italic;">— Signez ici —</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap;">' +
+            '<button onclick="ajClearSignature()" style="flex:1;min-width:100px;padding:12px;background:#fff;border:1px solid #e3dccc;border-radius:8px;cursor:pointer;font-weight:500;color:#3a4a5c;">↺ Effacer</button>' +
+            '<button onclick="ajCancelSignature()" style="flex:1;min-width:100px;padding:12px;background:#fff;border:1px solid #e3dccc;border-radius:8px;cursor:pointer;font-weight:500;color:#7a8896;">Annuler</button>' +
+            '<button onclick="ajConfirmSignature()" style="flex:2;min-width:160px;padding:12px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;font-weight:700;cursor:pointer;">✓ Signer &amp; Générer PDF</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(m);
+  }
+
+  var sigCanvas = null, sigCtx = null, sigDrawing = false, sigEmpty = true;
+  function setupSigCanvas(){
+    sigCanvas = document.getElementById('aj-sig-canvas');
+    if(!sigCanvas) return;
+    var rect = sigCanvas.getBoundingClientRect();
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    sigCanvas.width = Math.round(rect.width * dpr);
+    sigCanvas.height = Math.round(rect.height * dpr);
+    sigCtx = sigCanvas.getContext('2d');
+    sigCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    sigCtx.fillStyle = '#fff';
+    sigCtx.fillRect(0, 0, rect.width, rect.height);
+    sigCtx.strokeStyle = '#0f2030';
+    sigCtx.lineWidth = 2.2;
+    sigCtx.lineCap = 'round';
+    sigCtx.lineJoin = 'round';
+    sigEmpty = true;
+
+    function pos(e){
+      var r = sigCanvas.getBoundingClientRect();
+      return [e.clientX - r.left, e.clientY - r.top];
+    }
+    var lastX = 0, lastY = 0;
+    sigCanvas.addEventListener('pointerdown', function(e){
+      e.preventDefault();
+      try { sigCanvas.setPointerCapture(e.pointerId); } catch(_){}
+      sigDrawing = true;
+      var p = pos(e);
+      lastX = p[0]; lastY = p[1];
+      sigCtx.beginPath();
+      sigCtx.arc(p[0], p[1], 1.1, 0, Math.PI*2);
+      sigCtx.fillStyle = '#0f2030';
+      sigCtx.fill();
+      sigEmpty = false;
+      var ph = document.getElementById('aj-sig-placeholder');
+      if(ph) ph.style.display = 'none';
+    });
+    sigCanvas.addEventListener('pointermove', function(e){
+      if(!sigDrawing) return;
+      e.preventDefault();
+      var p = pos(e);
+      var midX = (lastX + p[0]) / 2, midY = (lastY + p[1]) / 2;
+      sigCtx.beginPath();
+      sigCtx.moveTo(lastX, lastY);
+      sigCtx.quadraticCurveTo(lastX, lastY, midX, midY);
+      sigCtx.stroke();
+      sigCtx.beginPath();
+      sigCtx.moveTo(midX, midY);
+      sigCtx.lineTo(p[0], p[1]);
+      sigCtx.stroke();
+      lastX = p[0]; lastY = p[1];
+    });
+    var endDraw = function(e){ sigDrawing = false; sigCtx.beginPath(); };
+    sigCanvas.addEventListener('pointerup', endDraw);
+    sigCanvas.addEventListener('pointercancel', endDraw);
+    sigCanvas.addEventListener('pointerleave', function(e){ if(sigDrawing) endDraw(e); });
+  }
+
+  window.ajClearSignature = function(){
+    if(!sigCtx || !sigCanvas) return;
+    var rect = sigCanvas.getBoundingClientRect();
+    sigCtx.fillStyle = '#fff';
+    sigCtx.fillRect(0, 0, rect.width, rect.height);
+    sigEmpty = true;
+    var ph = document.getElementById('aj-sig-placeholder');
+    if(ph) ph.style.display = 'flex';
+  };
+
+  window.ajCancelSignature = function(){
+    var m = document.getElementById('aj-sig-modal');
+    if(m) m.style.display = 'none';
+  };
+
+  window.ajOpenBonVisite = function(){
+    if(!currentClientId){ showToast('Sélectionnez un client'); return; }
+    var db = dbLoad();
+    var client = db.clients[currentClientId]; if(!client) return;
+    ensureSignatureModal();
+    var m = document.getElementById('aj-sig-modal');
+    var clientLine = document.getElementById('aj-sig-client');
+    if(clientLine) clientLine.textContent = client.prenom + ' ' + client.nom + (client.adresse ? ' · ' + client.adresse : '') + ' · ' + new Date().toLocaleDateString('fr-FR');
+
+    // Construit la liste des travaux convenus (statut fini / validé client)
+    var data = (typeof buildTravauxData === 'function') ? buildTravauxData() : {};
+    var prices = db.interventionPrices || {};
+    var validatedItems = [];
+    Object.keys(data).forEach(function(catKey){
+      (data[catKey] || []).forEach(function(it){
+        if(it.status === 'fini') validatedItems.push({ item: it, catKey: catKey });
+      });
+    });
+    var itemsEl = document.getElementById('aj-sig-items');
+    var totalEl = document.getElementById('aj-sig-total');
+    var grandTotal = 0;
+    if(!validatedItems.length){
+      itemsEl.innerHTML = '<div style="color:#7a8896;text-align:center;padding:20px;">Aucun travail marqué "Validé client" pour le moment.<br><span style="font-size:11px;">Marque les interventions convenues comme "✓ Validé client" avant de générer le bon.</span></div>';
+      totalEl.textContent = '';
+    } else {
+      itemsEl.innerHTML = validatedItems.map(function(v){
+        var it = v.item;
+        var price = prices[it.id];
+        var qty = (it.meta || '').match(/([0-9]+(?:[.,][0-9]+)?)/);
+        var qtyN = qty ? parseFloat(qty[1].replace(',','.')) : 1;
+        var sub = price ? (qtyN * price) : 0;
+        if(price) grandTotal += sub;
+        return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed rgba(15,32,48,0.08);">' +
+          '<div style="flex:1;min-width:0;"><b>' + esc(it.label) + '</b> <span style="color:#7a8896;font-size:11px;">— ' + esc(it.piece) + '</span><br><span style="font-size:11px;color:#7a8896;">' + esc(it.meta || '—') + '</span></div>' +
+          '<div style="text-align:right;font-weight:600;color:#0f2030;min-width:90px;">' + (price ? sub.toLocaleString('fr-FR') + ' €' : '—') + '</div>' +
+        '</div>';
+      }).join('');
+      if(grandTotal > 0){
+        totalEl.innerHTML = 'TOTAL HT : <span style="font-size:18px;color:#c9a96e;">' + grandTotal.toLocaleString('fr-FR') + ' €</span>';
+      } else {
+        totalEl.innerHTML = '<span style="color:#7a8896;font-size:12px;font-style:italic;">Prix à compléter dans la Synthèse devis pour afficher le total.</span>';
+      }
+    }
+    window._ajSigContext = { client:client, items:validatedItems, total:grandTotal };
+
+    m.style.display = 'block';
+    setTimeout(setupSigCanvas, 100);
+  };
+
+  /* ─── 2) CONFIRM SIGNATURE → SAVE + GENERATE PDF ─── */
+  window.ajConfirmSignature = function(){
+    if(sigEmpty){ showToast('⚠ Veuillez signer'); return; }
+    var ctx = window._ajSigContext;
+    if(!ctx){ ajCancelSignature(); return; }
+    var sigData = sigCanvas.toDataURL('image/png');
+    // Save signature to DB
+    var db = dbLoad();
+    db.signatures = db.signatures || {};
+    db.signatures[ctx.client.id] = db.signatures[ctx.client.id] || [];
+    var sigRec = {
+      id: 'sig_' + Date.now().toString(36),
+      date: new Date().toISOString(),
+      dataURL: sigData,
+      total: ctx.total,
+      itemsCount: ctx.items.length
+    };
+    db.signatures[ctx.client.id].push(sigRec);
+    safeSave(db);
+    showToast('Signature enregistrée ✓');
+    ajCancelSignature();
+    // Generate Bon de visite PDF
+    setTimeout(function(){ ajGenerateBonVisite(ctx, sigData, sigRec); }, 200);
+  };
+
+  /* ─── 3) GENERATE PDF "BON DE VISITE" ─── */
+  function loadJsPDF(cb){
+    if(window.jspdf && window.jspdf.jsPDF) return cb();
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.crossOrigin = 'anonymous';
+    s.onload = function(){ if(window.jspdf && window.jspdf.jsPDF) cb(); else showToast('Erreur jsPDF'); };
+    s.onerror = function(){ showToast('⚠ Échec chargement jsPDF'); };
+    document.body.appendChild(s);
+  }
+
+  window.ajGenerateBonVisite = function(ctx, sigData, sigRec){
+    loadJsPDF(function(){
+      var doc = new window.jspdf.jsPDF({ unit:'mm', format:'a4', compress:true });
+      var pageW = 210, pageH = 297, margin = 18;
+      var contentW = pageW - 2*margin;
+      var clean = function(s){ if(s==null) return ''; return String(s).replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F0FF}]/gu,'').replace(/\s+/g,' ').trim(); };
+
+      // ── HEADER bandeau ──
+      doc.setFillColor(15, 32, 48);
+      doc.rect(0, 0, pageW, 38, 'F');
+      doc.setFillColor(201, 169, 110);
+      doc.rect(0, 38, pageW, 0.6, 'F');
+
+      doc.setTextColor(201, 169, 110);
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(22);
+      doc.text('AJ PRO RÉNOVATION', margin, 18);
+      doc.setTextColor(255, 255, 255);
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(11);
+      doc.text('Bon de visite — accord sur travaux', margin, 26);
+      doc.setFontSize(9);
+      doc.text(new Date().toLocaleDateString('fr-FR'), pageW - margin, 26, { align:'right' });
+
+      var y = 50;
+
+      // ── CLIENT BLOCK ──
+      doc.setTextColor(15, 32, 48);
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(13);
+      doc.text('CLIENT', margin, y);
+      y += 6;
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(11);
+      doc.text(clean(ctx.client.prenom + ' ' + ctx.client.nom), margin, y);
+      y += 5;
+      if(ctx.client.adresse){ doc.text(clean(ctx.client.adresse), margin, y); y += 5; }
+      if(ctx.client.tel){ doc.text('Tél : ' + clean(ctx.client.tel), margin, y); y += 5; }
+      y += 4;
+
+      // ── TRAVAUX CONVENUS ──
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(13);
+      doc.text('TRAVAUX CONVENUS', margin, y);
+      y += 5;
+      doc.setDrawColor(201, 169, 110);
+      doc.setLineWidth(0.5);
+      doc.line(margin, y, margin + 25, y);
+      y += 6;
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica','normal');
+      doc.setTextColor(58, 74, 92);
+      var prices = (function(){ try { return dbLoad().interventionPrices || {}; } catch(e){ return {}; } })();
+      ctx.items.forEach(function(v){
+        var it = v.item;
+        var price = prices[it.id];
+        var qty = (it.meta || '').match(/([0-9]+(?:[.,][0-9]+)?)/);
+        var qtyN = qty ? parseFloat(qty[1].replace(',','.')) : 1;
+        var sub = price ? (qtyN * price) : 0;
+
+        if(y > pageH - 80){ doc.addPage(); y = margin; }
+
+        // Titre + meta + prix
+        doc.setFont('helvetica','bold');
+        doc.setTextColor(15, 32, 48);
+        doc.setFontSize(11);
+        var line1 = '• ' + clean(it.label) + ' — ' + clean(it.piece);
+        var split1 = doc.splitTextToSize(line1, contentW - 35);
+        doc.text(split1, margin, y);
+        if(price){
+          doc.setFontSize(11);
+          doc.text(sub.toLocaleString('fr-FR') + ' EUR', pageW - margin, y, { align:'right' });
+        }
+        y += split1.length * 4.5;
+
+        if(it.meta){
+          doc.setFont('helvetica','normal');
+          doc.setFontSize(9);
+          doc.setTextColor(122, 136, 150);
+          var split2 = doc.splitTextToSize('  ' + clean(it.meta), contentW - 35);
+          doc.text(split2, margin, y);
+          y += split2.length * 4 + 1;
+        }
+        y += 1;
+      });
+
+      // ── TOTAL ──
+      if(ctx.total > 0){
+        y += 4;
+        doc.setDrawColor(15, 32, 48);
+        doc.setLineWidth(0.4);
+        doc.line(margin, y, pageW - margin, y);
+        y += 6;
+        doc.setFont('helvetica','bold');
+        doc.setFontSize(14);
+        doc.setTextColor(15, 32, 48);
+        doc.text('TOTAL HT', margin, y);
+        doc.setTextColor(201, 169, 110);
+        doc.setFontSize(16);
+        doc.text(ctx.total.toLocaleString('fr-FR') + ' EUR', pageW - margin, y, { align:'right' });
+        y += 8;
+      }
+
+      // ── MENTIONS ──
+      y = Math.max(y, pageH - 100);
+      doc.setFont('helvetica','italic');
+      doc.setFontSize(9);
+      doc.setTextColor(122, 136, 150);
+      var mention = 'Bon pour accord sur les travaux listés ci-dessus tels que présentés. Le devis détaillé sera transmis ultérieurement et fera référence à ce bon de visite. Conditions générales applicables sur demande.';
+      var splitM = doc.splitTextToSize(mention, contentW);
+      doc.text(splitM, margin, y);
+      y += splitM.length * 4 + 8;
+
+      // ── SIGNATURE ──
+      doc.setFont('helvetica','bold');
+      doc.setFontSize(11);
+      doc.setTextColor(15, 32, 48);
+      doc.text('Signature du client', margin, y);
+      doc.text('Date', pageW / 2 + 10, y);
+      y += 4;
+
+      // Insère l'image de signature (à gauche)
+      if(sigData){
+        try {
+          var sigW = 80, sigH = 28;
+          doc.setDrawColor(227, 220, 204);
+          doc.setLineWidth(0.3);
+          doc.rect(margin, y, sigW, sigH);
+          doc.addImage(sigData, 'PNG', margin, y, sigW, sigH);
+        } catch(e){}
+      }
+      // Date à droite
+      doc.setFont('helvetica','normal');
+      doc.setFontSize(11);
+      doc.text(new Date().toLocaleDateString('fr-FR'), pageW / 2 + 10, y + 10);
+      doc.setDrawColor(227, 220, 204);
+      doc.line(pageW / 2 + 10, y + 18, pageW - margin, y + 18);
+
+      y += 36;
+
+      // ── FOOTER ──
+      doc.setFontSize(8);
+      doc.setTextColor(122, 136, 150);
+      doc.setFont('helvetica','normal');
+      doc.text('AJ PRO RÉNOVATION — Document généré le ' + new Date().toLocaleDateString('fr-FR') + ' à ' + new Date().toLocaleTimeString('fr-FR').slice(0,5), pageW/2, pageH - 8, { align:'center' });
+
+      // ── SAVE ──
+      var nameSafe = clean(ctx.client.nom || 'client').replace(/[^a-zA-Z0-9-]/g, '-');
+      var fname = 'AJ-PRO-BonVisite-' + nameSafe + '-' + new Date().toISOString().slice(0,10) + '.pdf';
+      doc.save(fname);
+      showToast('Bon de visite PDF généré ✓');
+    });
+  };
+
+  /* ─── 4) BOUTON "BON DE VISITE" SUR FICHE CLIENT + SYNTHÈSE ─── */
+  function injectBonVisiteButton(){
+    // Sur écran client
+    var clientScreen = document.getElementById('screen-client');
+    if(clientScreen && !clientScreen.querySelector('[data-aj-bv]')){
+      var btns = clientScreen.querySelectorAll('button');
+      var hostBtn = null;
+      for(var i=0;i<btns.length;i++){
+        var t = (btns[i].textContent||'').toLowerCase();
+        if(t.indexOf('récap') >= 0 || t.indexOf('recap') >= 0 || t.indexOf('pdf') >= 0){ hostBtn = btns[i]; break; }
+      }
+      if(hostBtn){
+        var btn = document.createElement('button');
+        btn.className = hostBtn.className;
+        btn.setAttribute('data-aj-bv','1');
+        btn.textContent = '✍ Bon de visite';
+        btn.style.marginLeft = '8px';
+        btn.onclick = function(){ ajOpenBonVisite(); };
+        if(hostBtn.parentElement) hostBtn.parentElement.insertBefore(btn, hostBtn.nextSibling);
+      }
+    }
+    // Sur la synthèse
+    var synthScreen = document.getElementById('screen-synthese');
+    if(synthScreen){
+      var actionRow = synthScreen.querySelector('div[style*="gap:8px"]');
+      if(actionRow && !actionRow.querySelector('[data-aj-bv-s]')){
+        var b = document.createElement('button');
+        b.className = 'btn btn-secondary';
+        b.setAttribute('data-aj-bv-s','1');
+        b.textContent = '✍ Bon de visite';
+        b.onclick = function(){ ajOpenBonVisite(); };
+        actionRow.insertBefore(b, actionRow.firstChild);
+      }
+    }
+  }
+
+  var _origShowScreen9 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen9.apply(this, arguments);
+    if(id === 'screen-client' || id === 'screen-synthese'){
+      setTimeout(injectBonVisiteButton, 150);
+    }
+    return r;
+  };
+  setTimeout(injectBonVisiteButton, 900);
+
+  console.log('[AJ PRO] Phase 9 chargée (signature client + bon de visite PDF).');
+})();
 </script>
 </body>
 </html>
