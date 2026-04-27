@@ -4853,6 +4853,835 @@ seedDemoData();
 var _fdate=document.getElementById('f-date');
 if(_fdate)_fdate.value=new Date().toISOString().slice(0,10);
 renderHome();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 1 ENHANCEMENTS
+   • Moteur dessin HiDPI + pression S Pen + 3 épaisseurs + gomme variable + undo/redo
+   • Annotation de photos
+   • Fiabilité sauvegarde (toast, alerte quota, export/import)
+   • Checklist de pièce
+   • Mode rendez-vous (breadcrumb + actions flottantes)
+   • Saisie mesures (mémoire HSP, dupliquer pièce, normalisation virgule)
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P1_LOADED) return;
+  window.__AJ_P1_LOADED = true;
+  var DPR = Math.min(window.devicePixelRatio || 1, 3);
+
+  /* ─── 1) HIGH-DPI HELPERS ─── */
+  function hidpiSize(canvas, cssW, cssH){
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    canvas.width  = Math.round(cssW * DPR);
+    canvas.height = Math.round(cssH * DPR);
+    var ctx = canvas.getContext('2d');
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    canvas._cssW = cssW; canvas._cssH = cssH;
+    return ctx;
+  }
+  function canvasState(canvas){
+    if(!canvas._aj) canvas._aj = { penWidth:2.4, eraserSize:28, usePressure:true, undoStack:[], redoStack:[] };
+    return canvas._aj;
+  }
+  function snapshotCanvas(canvas){
+    try {
+      var st = canvasState(canvas);
+      st.undoStack.push(canvas.toDataURL('image/png'));
+      if(st.undoStack.length > 18) st.undoStack.shift();
+      st.redoStack = [];
+    } catch(e){}
+  }
+  function restoreSnapshot(canvas, data, onDone){
+    var ctx = canvas.getContext('2d');
+    var img = new Image();
+    img.onload = function(){
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      if(typeof onDone === 'function') onDone();
+    };
+    img.onerror = function(){ if(typeof onDone === 'function') onDone(); };
+    img.src = data;
+  }
+  function undoCanvas(canvas, onChange){
+    var st = canvasState(canvas);
+    if(st.undoStack.length < 2) return;
+    st.redoStack.push(st.undoStack.pop());
+    restoreSnapshot(canvas, st.undoStack[st.undoStack.length-1], onChange);
+  }
+  function redoCanvas(canvas, onChange){
+    var st = canvasState(canvas);
+    if(!st.redoStack.length) return;
+    var d = st.redoStack.pop();
+    st.undoStack.push(d);
+    restoreSnapshot(canvas, d, onChange);
+  }
+
+  /* ─── 2) NEW SETUPDRAW (pression + courbes lissées + undo/redo) ─── */
+  window.setupDraw = function(canvas, ctx, getTool, getColor, onChange, onStrokeEnd){
+    if(canvas._ajWired) return;
+    canvas._ajWired = true;
+    var st = canvasState(canvas);
+    var draw=false, activeId=null, penActive=false, lastX=0, lastY=0, lastW=2, currentStroke=null;
+    ctx.lineCap='round'; ctx.lineJoin='round'; canvas.style.touchAction='none';
+
+    function pos(e){ var r=canvas.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; }
+    function widthFromPressure(e){
+      var base = st.penWidth || 2.4;
+      if(e.pointerType==='pen' && st.usePressure && typeof e.pressure==='number' && e.pressure>0){
+        var p = Math.max(0.05, Math.min(1, e.pressure));
+        return base * (0.55 + p * 1.25);
+      }
+      return base;
+    }
+    function eraseAt(x, y){
+      var sz = st.eraserSize;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, sz/2, 0, Math.PI*2);
+      ctx.clip();
+      ctx.clearRect(x-sz, y-sz, sz*2, sz*2);
+      ctx.restore();
+    }
+    function onDown(e){
+      if(penActive && e.pointerType==='touch') return;
+      if(activeId!==null) return;
+      activeId = e.pointerId;
+      if(e.pointerType==='pen') penActive=true;
+      e.preventDefault();
+      try{ canvas.setPointerCapture(e.pointerId); }catch(_){}
+      var p=pos(e); draw=true; lastX=p[0]; lastY=p[1]; lastW=widthFromPressure(e);
+      snapshotCanvas(canvas);
+      if(getTool()!=='erase' && typeof onStrokeEnd==='function'){
+        currentStroke = [{x:p[0], y:p[1], t:Date.now()}];
+      }
+      if(getTool()==='erase'){
+        eraseAt(p[0], p[1]);
+      } else {
+        ctx.fillStyle = getColor();
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], Math.max(0.5, lastW/2), 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+    function onMove(e){
+      if(!draw || e.pointerId!==activeId) return;
+      if(penActive && e.pointerType==='touch') return;
+      e.preventDefault();
+      var p=pos(e);
+      if(getTool()==='erase'){
+        var sz=st.eraserSize, dx=p[0]-lastX, dy=p[1]-lastY;
+        var dist=Math.sqrt(dx*dx+dy*dy);
+        var steps=Math.max(1, Math.floor(dist/Math.max(1, sz/4)));
+        for(var i=1;i<=steps;i++){
+          var tx=lastX+dx*i/steps, ty=lastY+dy*i/steps;
+          eraseAt(tx, ty);
+        }
+      } else {
+        var w = widthFromPressure(e);
+        var midX = (lastX+p[0])/2, midY = (lastY+p[1])/2;
+        ctx.strokeStyle = getColor();
+        ctx.lineWidth = (lastW + w) / 2;
+        ctx.beginPath();
+        ctx.moveTo(lastX, lastY);
+        ctx.quadraticCurveTo(lastX, lastY, midX, midY);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.lineWidth = w;
+        ctx.moveTo(midX, midY);
+        ctx.lineTo(p[0], p[1]);
+        ctx.stroke();
+        if(currentStroke){
+          var lst = currentStroke[currentStroke.length-1];
+          var ddx=p[0]-lst.x, ddy=p[1]-lst.y;
+          if(ddx*ddx+ddy*ddy>=4) currentStroke.push({x:p[0], y:p[1], t:Date.now()});
+        }
+        lastW = w;
+      }
+      lastX=p[0]; lastY=p[1];
+    }
+    function onUp(e){
+      if(e.pointerId!==activeId) return;
+      draw=false; activeId=null;
+      ctx.beginPath();
+      try{ canvas.releasePointerCapture(e.pointerId); }catch(_){}
+      if(e.pointerType==='pen') penActive=false;
+      if(currentStroke && currentStroke.length>=2 && typeof onStrokeEnd==='function'){
+        onStrokeEnd(currentStroke);
+      }
+      currentStroke=null;
+      if(typeof onChange==='function') onChange();
+    }
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onMove);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointercancel', onUp);
+    canvas.addEventListener('pointerleave', function(e){ if(draw && e.pointerId===activeId) onUp(e); });
+    canvas.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+
+    canvas._ajUndo = function(){ undoCanvas(canvas, onChange); };
+    canvas._ajRedo = function(){ redoCanvas(canvas, onChange); };
+    canvas._ajOnChange = onChange || null;
+  };
+
+  /* ─── 3) PATCH initMainCanvas / initBlocCanvas / initPlombCanvas (HiDPI) ─── */
+  var _initMain = window.initMainCanvas;
+  window.initMainCanvas = function(){
+    var canvas = document.getElementById('main-canvas');
+    var zone   = document.getElementById('croquis-zone');
+    if(!canvas || !zone) return;
+    canvas._ajWired = false; canvas._aj = null;
+    var ctx = hidpiSize(canvas, zone.clientWidth, 280);
+    window.mainCtx = ctx;
+    var p = dbLoad().pieces[currentPieceId];
+    if(p && p.croquis){
+      var img = new Image();
+      img.onload = function(){
+        ctx.setTransform(1,0,0,1,0,0);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+        snapshotCanvas(canvas);
+      };
+      img.src = p.croquis;
+    } else {
+      setTimeout(function(){ snapshotCanvas(canvas); }, 30);
+    }
+    window.croquisStrokes = (p && p.croquisStrokes) ? JSON.parse(JSON.stringify(p.croquisStrokes)) : [];
+    setupDraw(canvas, ctx,
+      function(){ return curTool; },
+      function(){ return curColor; },
+      saveCroquis,
+      function(stroke){
+        croquisStrokes.push(stroke);
+        var db = dbLoad(); var pp = db.pieces[currentPieceId];
+        if(pp){ pp.croquisStrokes = croquisStrokes; safeSave(db); }
+      }
+    );
+  };
+  // Patch initBlocCanvas / initPlombCanvas if they exist (they use canvas IDs we know)
+  var _initBloc = window.initBlocCanvas;
+  if(_initBloc){
+    window.initBlocCanvas = function(){
+      var c = document.getElementById('bloc-canvas');
+      var z = document.getElementById('bloc-zone');
+      if(!c || !z) return;
+      c._ajWired = false; c._aj = null;
+      var savedHeight = (function(){
+        var p = dbLoad().pieces[currentPieceId];
+        return (p && p.blocNotesHeight) ? p.blocNotesHeight : 800;
+      })();
+      var ctx = hidpiSize(c, z.clientWidth, savedHeight);
+      window.blocCtx = ctx;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c._cssW, c._cssH);
+      var p = dbLoad().pieces[currentPieceId];
+      if(p && p.blocNotes){
+        var img = new Image();
+        img.onload = function(){
+          ctx.setTransform(1,0,0,1,0,0);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          snapshotCanvas(c);
+        };
+        img.src = p.blocNotes;
+      } else {
+        setTimeout(function(){ snapshotCanvas(c); }, 30);
+      }
+      setupDraw(c, ctx,
+        function(){ return (typeof blocTool!=='undefined') ? blocTool : 'pen'; },
+        function(){ return (typeof blocColor!=='undefined') ? blocColor : '#1a1a2e'; },
+        function(){
+          if(!currentPieceId) return;
+          var db = dbLoad(); var p = db.pieces[currentPieceId]; if(!p) return;
+          p.blocNotes = c.toDataURL('image/png');
+          p.blocNotesHeight = c._cssH;
+          safeSave(db);
+        }
+      );
+    };
+  }
+  var _initPlomb = window.initPlombCanvas;
+  if(_initPlomb){
+    window.initPlombCanvas = function(){
+      var c = document.getElementById('plomb-canvas');
+      var z = document.getElementById('plomb-zone');
+      if(!c || !z) return;
+      c._ajWired = false; c._aj = null;
+      var ctx = hidpiSize(c, z.clientWidth, 280);
+      window.plombCtx = ctx;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c._cssW, c._cssH);
+      var p = dbLoad().pieces[currentPieceId];
+      if(p && p.travaux && p.travaux.plomberieCroquis){
+        var img = new Image();
+        img.onload = function(){
+          ctx.setTransform(1,0,0,1,0,0);
+          ctx.drawImage(img, 0, 0, c.width, c.height);
+          ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+          snapshotCanvas(c);
+        };
+        img.src = p.travaux.plomberieCroquis;
+      } else {
+        setTimeout(function(){ snapshotCanvas(c); }, 30);
+      }
+      setupDraw(c, ctx,
+        function(){ return (typeof plombTool!=='undefined') ? plombTool : 'pen'; },
+        function(){ return (typeof plombColor!=='undefined') ? plombColor : '#1a1a2e'; },
+        function(){
+          if(!currentPieceId) return;
+          var db = dbLoad(); var p = db.pieces[currentPieceId]; if(!p) return;
+          p.travaux = p.travaux || {};
+          p.travaux.plomberieCroquis = c.toDataURL('image/png');
+          safeSave(db);
+        }
+      );
+    };
+  }
+  // Patch openCanvas to do HiDPI sizing on the overlay canvas
+  var _origOpen = window.openCanvas;
+  window.openCanvas = function(title, opts){
+    window.ovTitle = title; window.ovOpts = opts || null;
+    var setText = window.setText || function(id,t){var e=document.getElementById(id);if(e)e.textContent=t;};
+    setText('canvas-ov-title', title);
+    var ov = document.getElementById('canvas-overlay'); if(!ov) return;
+    ov.classList.add('open');
+    setTimeout(function(){
+      var c = document.getElementById('overlay-canvas'),
+          modal = document.querySelector('.canvas-modal');
+      if(!c || !modal) return;
+      c._ajWired = false; c._aj = null;
+      var cssW = modal.clientWidth;
+      var cssH = Math.max(300, window.innerHeight - 200);
+      var ctx = hidpiSize(c, cssW, cssH);
+      window.ovCtx = ctx;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, cssW, cssH);
+      // Précharger image existante
+      function drawImg(src){
+        var img = new Image();
+        img.onload = function(){
+          var ratio = Math.min(c._cssW/img.width, c._cssH/img.height, 1);
+          var w = img.width*ratio, h = img.height*ratio;
+          ctx.drawImage(img, 0, 0, w, h);
+          snapshotCanvas(c);
+        };
+        img.src = src;
+      }
+      if(opts && opts.prefillFrom){
+        var src = document.getElementById(opts.prefillFrom);
+        if(src) drawImg(src.toDataURL('image/png'));
+      } else if(opts && opts.prefillImage){
+        drawImg(opts.prefillImage);
+      } else {
+        setTimeout(function(){ snapshotCanvas(c); }, 30);
+      }
+      setupDraw(c, ctx,
+        function(){ return ovTool; },
+        function(){ return ovColor; }
+      );
+    }, 50);
+  };
+
+  /* ─── 4) UI : injecte boutons épaisseur / gomme / undo / redo dans les toolbars ─── */
+  function injectToolbarExtras(){
+    var STYLES = {
+      btn: 'min-width:34px;height:34px;padding:0 8px;border:1px solid var(--c-border,#e3dccc);background:#fff;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-family:Inter,system-ui,sans-serif;font-size:13px;color:#0f2030;font-weight:500;',
+      btnActive: 'background:rgba(201,169,110,0.18);border-color:#c9a96e;color:#0f2030;'
+    };
+    document.querySelectorAll('.canvas-toolbar').forEach(function(tb){
+      if(tb._ajExtras) return;
+      tb._ajExtras = true;
+      var canvas = tb.parentElement && tb.parentElement.querySelector('canvas');
+      if(!canvas) return;
+      var st = canvasState(canvas);
+
+      // Conteneur "épaisseur"
+      var widthGroup = document.createElement('div');
+      widthGroup.style.cssText = 'display:inline-flex;gap:2px;margin-left:6px;align-items:center;';
+      [
+        {label:'•',  v:1.6, t:'Stylo fin'},
+        {label:'●',  v:2.6, t:'Stylo moyen'},
+        {label:'⬤', v:4.0, t:'Stylo épais'}
+      ].forEach(function(opt, i){
+        var b = document.createElement('button');
+        b.type='button';
+        b.title = opt.t;
+        b.textContent = opt.label;
+        b.style.cssText = STYLES.btn + (i===1 ? STYLES.btnActive : '');
+        b.onclick = function(){
+          st.penWidth = opt.v;
+          [].forEach.call(widthGroup.children, function(child){
+            child.style.cssText = STYLES.btn;
+          });
+          b.style.cssText = STYLES.btn + STYLES.btnActive;
+        };
+        widthGroup.appendChild(b);
+      });
+      tb.appendChild(widthGroup);
+
+      // Tailles de gomme (visibles seulement quand outil = erase, mais on simplifie)
+      var eraseGroup = document.createElement('div');
+      eraseGroup.style.cssText = 'display:inline-flex;gap:2px;margin-left:6px;';
+      [
+        {label:'⌫₁', v:14, t:'Petite gomme'},
+        {label:'⌫₂', v:28, t:'Moyenne gomme'},
+        {label:'⌫₃', v:56, t:'Grosse gomme'}
+      ].forEach(function(opt, i){
+        var b = document.createElement('button');
+        b.type='button';
+        b.title = opt.t;
+        b.textContent = opt.label;
+        b.style.cssText = STYLES.btn + (i===1 ? STYLES.btnActive : '') + 'font-size:11px;';
+        b.onclick = function(){
+          st.eraserSize = opt.v;
+          [].forEach.call(eraseGroup.children, function(child){
+            child.style.cssText = STYLES.btn + 'font-size:11px;';
+          });
+          b.style.cssText = STYLES.btn + STYLES.btnActive + 'font-size:11px;';
+        };
+        eraseGroup.appendChild(b);
+      });
+      tb.appendChild(eraseGroup);
+
+      // Undo / Redo
+      var undoBtn = document.createElement('button');
+      undoBtn.type='button';
+      undoBtn.title = 'Annuler (undo)';
+      undoBtn.textContent = '↶';
+      undoBtn.style.cssText = STYLES.btn + 'margin-left:6px;font-size:18px;';
+      undoBtn.onclick = function(){ if(canvas._ajUndo) canvas._ajUndo(); };
+      tb.appendChild(undoBtn);
+
+      var redoBtn = document.createElement('button');
+      redoBtn.type='button';
+      redoBtn.title = 'Rétablir (redo)';
+      redoBtn.textContent = '↷';
+      redoBtn.style.cssText = STYLES.btn + 'margin-left:2px;font-size:18px;';
+      redoBtn.onclick = function(){ if(canvas._ajRedo) canvas._ajRedo(); };
+      tb.appendChild(redoBtn);
+    });
+  }
+  // Appel initial + sur chaque changement d'écran
+  setTimeout(injectToolbarExtras, 200);
+  var _origShowScreen = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen.apply(this, arguments);
+    setTimeout(injectToolbarExtras, 80);
+    setTimeout(updateBreadcrumb, 80);
+    setTimeout(refreshChecklist, 100);
+    setTimeout(updateFloatingActions, 120);
+    return r;
+  };
+  var _origSwitchStep = window.switchStep;
+  if(_origSwitchStep){
+    window.switchStep = function(n, btn){
+      var r = _origSwitchStep.apply(this, arguments);
+      setTimeout(injectToolbarExtras, 80);
+      setTimeout(updateBreadcrumb, 80);
+      setTimeout(refreshChecklist, 100);
+      window._currentStep = n;
+      return r;
+    };
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     ANNOTATION DE PHOTOS
+     ════════════════════════════════════════════════════════════════════ */
+  // Override renderPhotos pour ajouter clic = annoter
+  var _origRenderPhotos = window.renderPhotos;
+  window.renderPhotos = function(photos){
+    _origRenderPhotos.apply(this, arguments);
+    var grid = document.getElementById('photo-grid');
+    if(!grid) return;
+    // Pour chaque thumb (sauf la 1ère = bouton ajouter), on attache un clic d'annotation
+    var thumbs = grid.querySelectorAll('.photo-thumb');
+    (photos || []).forEach(function(ph, idx){
+      var thumb = thumbs[idx + 1]; // +1 car le 1er est "ajouter"
+      if(!thumb || thumb._ajAnnotateWired) return;
+      thumb._ajAnnotateWired = true;
+      var img = thumb.querySelector('img');
+      if(img){
+        img.style.cursor = 'pointer';
+        img.title = 'Cliquer pour annoter au stylet';
+        img.addEventListener('click', function(e){
+          e.stopPropagation();
+          openPhotoAnnotation(ph.id);
+        });
+      }
+      // Petit badge "✎" en bas à gauche
+      if(!thumb.querySelector('.aj-annot-badge')){
+        var badge = document.createElement('div');
+        badge.className = 'aj-annot-badge';
+        badge.textContent = '✎';
+        badge.title = 'Annoter';
+        badge.style.cssText = 'position:absolute;bottom:4px;left:4px;width:26px;height:26px;border-radius:50%;background:rgba(15,32,48,0.85);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;cursor:pointer;border:1px solid rgba(201,169,110,0.4);';
+        badge.onclick = function(e){ e.stopPropagation(); openPhotoAnnotation(ph.id); };
+        thumb.style.position = 'relative';
+        thumb.appendChild(badge);
+      }
+    });
+  };
+
+  function openPhotoAnnotation(photoId){
+    var db = dbLoad(); var p = db.pieces[currentPieceId]; if(!p) return;
+    var ph = (p.photos || []).find(function(x){ return x.id === photoId; });
+    if(!ph) return;
+    // On ouvre l'overlay canvas avec la photo en fond + un opts spécial annotPhoto
+    window.ovOpts = { annotPhotoId: photoId };
+    openCanvas('Annoter la photo', { prefillImage: ph.data, annotPhotoId: photoId });
+  }
+
+  // Patch saveOvCanvas pour gérer le mode "annotation photo"
+  var _origSaveOv = window.saveOvCanvas;
+  if(_origSaveOv){
+    window.saveOvCanvas = function(){
+      if(window.ovOpts && window.ovOpts.annotPhotoId){
+        var canvas = document.getElementById('overlay-canvas'); if(!canvas) return;
+        var photoId = window.ovOpts.annotPhotoId;
+        // Capture haute résolution puis recompresse (max 1600px côté, JPEG 0.82)
+        var rawData = canvas.toDataURL('image/jpeg', 0.95);
+        if(typeof _compressImage === 'function'){
+          _compressImage(rawData, 1600, 0.82, function(compressed){
+            var db = dbLoad(); var p = db.pieces[currentPieceId]; if(!p){ closeCanvas(); return; }
+            var ph = (p.photos || []).find(function(x){ return x.id === photoId; });
+            if(ph){
+              ph.data = compressed;
+              ph.date = new Date().toLocaleDateString('fr-FR');
+              ph.annotated = true;
+              safeSave(db);
+              renderPhotos(p.photos);
+              showToast('Photo annotée ✓');
+            }
+            closeCanvas();
+            window.ovOpts = null;
+          });
+        } else {
+          var db2 = dbLoad(); var p2 = db2.pieces[currentPieceId]; if(p2){
+            var ph2 = (p2.photos || []).find(function(x){ return x.id === photoId; });
+            if(ph2){ ph2.data = rawData; ph2.annotated = true; safeSave(db2); renderPhotos(p2.photos); }
+          }
+          closeCanvas();
+          window.ovOpts = null;
+        }
+        return;
+      }
+      return _origSaveOv.apply(this, arguments);
+    };
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     SAFE SAVE (try/catch + alerte quota) + EXPORT/IMPORT
+     ════════════════════════════════════════════════════════════════════ */
+  var _origDbSave = window.dbSave;
+  window.safeSave = function(db){
+    try {
+      var s = JSON.stringify(db);
+      var sizeMB = s.length / 1024 / 1024;
+      localStorage.setItem(DB_KEY, s);
+      // Alerte si > 4 Mo (limite pratique avant overflow ~5 Mo)
+      if(sizeMB > 4 && !window._ajQuotaWarned){
+        window._ajQuotaWarned = true;
+        showToast('⚠ Stockage à ' + sizeMB.toFixed(1) + ' Mo — pensez à exporter une sauvegarde');
+      }
+      return true;
+    } catch(e){
+      showToast('⚠ Sauvegarde impossible (stockage plein). Exportez et videz d\'anciens chantiers.');
+      console.error('dbSave failed:', e);
+      return false;
+    }
+  };
+  // On remplace dbSave global par safeSave pour que tout le code existant en bénéficie
+  window.dbSave = function(db){ return window.safeSave(db); };
+
+  // Export sauvegarde
+  window.ajExportBackup = function(){
+    var db = dbLoad();
+    var blob = new Blob([JSON.stringify(db, null, 2)], { type:'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'aj-pro-sauvegarde-' + new Date().toISOString().slice(0,10) + '.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    showToast('Sauvegarde exportée ✓');
+  };
+  // Import sauvegarde
+  window.ajImportBackup = function(){
+    var inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'application/json,.json';
+    inp.onchange = function(){
+      if(!inp.files || !inp.files[0]) return;
+      var fr = new FileReader();
+      fr.onload = function(){
+        try {
+          var data = JSON.parse(fr.result);
+          if(!data.clients || !data.pieces) throw new Error('Format invalide');
+          customConfirm('Cette sauvegarde va REMPLACER toutes les données actuelles. Continuer ?',
+            function(){
+              localStorage.setItem(DB_KEY, fr.result);
+              showToast('Sauvegarde importée ✓');
+              setTimeout(function(){ location.reload(); }, 800);
+            },
+            { title:'Importer cette sauvegarde ?', danger:true, okLabel:'Importer' });
+        } catch(e){
+          showToast('⚠ Fichier invalide');
+        }
+      };
+      fr.readAsText(inp.files[0]);
+    };
+    inp.click();
+  };
+
+  // Boutons Export/Import dans l'écran DB
+  function injectDbButtons(){
+    var dbScreen = document.getElementById('screen-db');
+    if(!dbScreen || dbScreen._ajWired) return;
+    dbScreen._ajWired = true;
+    var bar = document.createElement('div');
+    bar.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;';
+    bar.innerHTML =
+      '<button class="btn btn-primary" onclick="ajExportBackup()" style="flex:1;min-width:160px">📥 Exporter sauvegarde</button>' +
+      '<button class="btn btn-secondary" onclick="ajImportBackup()" style="flex:1;min-width:160px">📤 Importer sauvegarde</button>';
+    // Insère après le 1er enfant (titre)
+    if(dbScreen.firstChild) dbScreen.insertBefore(bar, dbScreen.children[1] || null);
+    else dbScreen.appendChild(bar);
+  }
+  setTimeout(injectDbButtons, 300);
+
+  /* ════════════════════════════════════════════════════════════════════
+     CHECKLIST DE PIÈCE
+     ════════════════════════════════════════════════════════════════════ */
+  function pieceCompletion(piece){
+    if(!piece) return { croquis:false, mesures:false, travaux:false, photos:false, notes:false };
+    var m = piece.mesures || {};
+    var t = piece.travaux || {};
+    return {
+      croquis:  !!piece.croquis,
+      mesures:  !!(m.long && m.larg && m.haut),
+      travaux:  !!(t.cats && Object.values(t.cats).some(function(v){ return v===true; })) || (t.paintElems||[]).length>0,
+      photos:   !!(piece.photos && piece.photos.length),
+      notes:    !!piece.blocNotes || !!(piece.msNotes && piece.msNotes.length)
+    };
+  }
+  function renderChecklistHTML(c){
+    function chip(ok, label){
+      var bg = ok ? 'background:rgba(45,106,79,0.15);color:#1d4d33;border-color:rgba(45,106,79,0.35);' : 'background:rgba(184,140,84,0.10);color:#7a5a30;border-color:rgba(184,140,84,0.30);';
+      var icon = ok ? '✓' : '◯';
+      return '<span class="aj-cl-chip" style="display:inline-flex;align-items:center;gap:4px;padding:4px 9px;border-radius:99px;border:1px solid;font-size:11px;font-weight:600;font-family:Inter,system-ui,sans-serif;'+bg+'"><span>'+icon+'</span>'+label+'</span>';
+    }
+    return chip(c.croquis,'Croquis')+chip(c.mesures,'Mesures')+chip(c.travaux,'Travaux')+chip(c.photos,'Photos')+chip(c.notes,'Notes');
+  }
+  function refreshChecklist(){
+    var bar = document.getElementById('aj-checklist-bar');
+    var screen = document.getElementById('screen-piece');
+    if(!screen || !screen.classList.contains('active')) return;
+    if(!currentPieceId) return;
+    if(!bar){
+      bar = document.createElement('div');
+      bar.id = 'aj-checklist-bar';
+      bar.style.cssText = 'position:sticky;top:72px;z-index:25;background:rgba(244,239,231,0.97);backdrop-filter:blur(8px);padding:8px 12px;margin:-12px -12px 12px;border-bottom:1px solid var(--c-border,#e3dccc);display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
+      screen.insertBefore(bar, screen.firstChild);
+    }
+    var p = dbLoad().pieces[currentPieceId];
+    var comp = pieceCompletion(p);
+    var done = Object.values(comp).filter(Boolean).length;
+    var total = Object.keys(comp).length;
+    bar.innerHTML = '<span style="font-family:Inter,system-ui,sans-serif;font-size:12px;color:var(--c-text-2,#3a4a5c);font-weight:600;margin-right:4px">'+done+'/'+total+'</span>'+renderChecklistHTML(comp);
+  }
+  // Refresh sur autosave
+  var _origAutosave = window.autosave;
+  window.autosave = function(){
+    var r = _origAutosave.apply(this, arguments);
+    setTimeout(refreshChecklist, 700);
+    return r;
+  };
+
+  /* ════════════════════════════════════════════════════════════════════
+     BREADCRUMB DANS LA TOPBAR
+     ════════════════════════════════════════════════════════════════════ */
+  var STEP_NAMES = ['Infos','Croquis','Mesures','Peinture','Travaux','Photos','Notes'];
+  function updateBreadcrumb(){
+    var ctx = document.getElementById('topbar-context');
+    if(!ctx) return;
+    if(currentScreen === 'screen-piece' && currentPieceId){
+      var p = dbLoad().pieces[currentPieceId];
+      var cl = currentClientId ? dbLoad().clients[currentClientId] : null;
+      var step = (typeof window._currentStep === 'number') ? window._currentStep : 0;
+      var parts = [];
+      if(cl) parts.push(esc(cl.prenom + ' ' + cl.nom));
+      if(p)  parts.push(esc(p.nom));
+      parts.push(STEP_NAMES[step] || '');
+      ctx.innerHTML = parts.filter(Boolean).join(' <span style="opacity:0.4;margin:0 4px">›</span> ');
+    }
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     ACTIONS FLOTTANTES (mode rendez-vous)
+     ════════════════════════════════════════════════════════════════════ */
+  function ensureFloatingActions(){
+    if(document.getElementById('aj-fab')) return;
+    var fab = document.createElement('div');
+    fab.id = 'aj-fab';
+    fab.style.cssText = 'position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:40;display:none;gap:8px;background:rgba(15,32,48,0.96);padding:8px 10px;border-radius:14px;box-shadow:0 12px 32px rgba(0,0,0,0.35);border:1px solid rgba(201,169,110,0.35);';
+    fab.innerHTML =
+      '<button id="aj-fab-photo" type="button" title="Ajouter une photo" style="width:46px;height:46px;border:none;border-radius:10px;background:#c9a96e;color:#0f2030;font-size:20px;cursor:pointer;font-weight:600;">📷</button>' +
+      '<button id="aj-fab-sketch" type="button" title="Ouvrir le croquis" style="width:46px;height:46px;border:none;border-radius:10px;background:#fbf8f2;color:#0f2030;font-size:20px;cursor:pointer;">✏️</button>' +
+      '<button id="aj-fab-note" type="button" title="Note manuscrite rapide" style="width:46px;height:46px;border:none;border-radius:10px;background:#fbf8f2;color:#0f2030;font-size:20px;cursor:pointer;">📝</button>' +
+      '<button id="aj-fab-recap" type="button" title="Voir checklist / récap" style="width:46px;height:46px;border:none;border-radius:10px;background:#fbf8f2;color:#0f2030;font-size:20px;cursor:pointer;">✓</button>';
+    document.body.appendChild(fab);
+
+    document.getElementById('aj-fab-photo').onclick = function(){
+      // Si pas sur step photos, on switch ; sinon ouvre directement
+      if(currentScreen === 'screen-piece'){
+        var b = document.querySelectorAll('.step-btn')[4];
+        if(b) switchStep(4, b);
+        setTimeout(function(){ if(typeof addPhoto==='function') addPhoto(); }, 250);
+      }
+    };
+    document.getElementById('aj-fab-sketch').onclick = function(){
+      if(currentScreen === 'screen-piece'){
+        var b = document.querySelectorAll('.step-btn')[1];
+        if(b) switchStep(1, b);
+      }
+    };
+    document.getElementById('aj-fab-note').onclick = function(){
+      if(currentScreen === 'screen-piece' && typeof openCanvas === 'function'){
+        // Demande titre rapide
+        var t = prompt('Titre de la note :', 'Note ' + new Date().toLocaleTimeString('fr-FR').slice(0,5));
+        if(t) openCanvas(t);
+      }
+    };
+    document.getElementById('aj-fab-recap').onclick = function(){
+      if(currentScreen === 'screen-piece' && currentClientId){
+        if(typeof showRecap==='function') showRecap();
+      }
+    };
+  }
+  function updateFloatingActions(){
+    ensureFloatingActions();
+    var fab = document.getElementById('aj-fab');
+    if(!fab) return;
+    fab.style.display = (currentScreen === 'screen-piece') ? 'flex' : 'none';
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     MÉMOIRE HSP + DUPLIQUER PIÈCE + NORMALISATION VIRGULE
+     ════════════════════════════════════════════════════════════════════ */
+  var HSP_KEY = 'aj-last-hsp';
+  // Mémorise HSP à chaque saisie
+  var _origCalcM = window.calcM;
+  if(_origCalcM){
+    window.calcM = function(){
+      var r = _origCalcM.apply(this, arguments);
+      try {
+        var h = (document.getElementById('m-haut') || {}).value;
+        if(h && parseFloat((''+h).replace(',','.')) > 1.5){
+          localStorage.setItem(HSP_KEY, h);
+        }
+      } catch(e){}
+      return r;
+    };
+  }
+  // Quand on ouvre une pièce sans HSP, on suggère la dernière connue
+  var _origOpenPiece = window.openPiece;
+  if(_origOpenPiece){
+    window.openPiece = function(id){
+      var r = _origOpenPiece.apply(this, arguments);
+      setTimeout(function(){
+        try {
+          var p = dbLoad().pieces[id];
+          if(p && (!p.mesures || !p.mesures.haut)){
+            var last = localStorage.getItem(HSP_KEY);
+            var inp = document.getElementById('m-haut');
+            if(last && inp && !inp.value){
+              inp.placeholder = 'Dernière HSP : ' + last + ' (cliquez pour appliquer)';
+              inp.title = 'Cliquer ici pour appliquer ' + last + ' m';
+              inp.addEventListener('focus', function once(){
+                if(!inp.value){ inp.value = last; if(typeof calcM==='function') calcM(); }
+                inp.removeEventListener('focus', once);
+              });
+            }
+          }
+        } catch(e){}
+        refreshChecklist();
+        updateBreadcrumb();
+        updateFloatingActions();
+      }, 200);
+      return r;
+    };
+  }
+
+  // Dupliquer une pièce — bouton ajouté dans la liste
+  window.ajDuplicatePiece = function(id){
+    var db = dbLoad(); var src = db.pieces[id]; if(!src) return;
+    customConfirm('La nouvelle pièce reprendra mesures, croquis et structure de travaux. Photos et notes ne sont PAS dupliquées.',
+      function(){
+        var clone = JSON.parse(JSON.stringify(src));
+        clone.id = uid();
+        clone.nom = src.nom + ' (copie)';
+        clone.createdAt = Date.now();
+        clone.updatedAt = Date.now();
+        clone.photos = [];
+        clone.msNotes = [];
+        clone.blocNotes = null;
+        db.pieces[clone.id] = clone;
+        safeSave(db);
+        renderPiecesList();
+        showToast('Pièce dupliquée ✓');
+      },
+      { title:'Dupliquer cette pièce ?', okLabel:'Dupliquer' });
+  };
+  // Patch renderPiecesList pour ajouter le bouton "Dupliquer"
+  var _origRenderPL = window.renderPiecesList;
+  if(_origRenderPL){
+    window.renderPiecesList = function(){
+      var r = _origRenderPL.apply(this, arguments);
+      // Ajoute un bouton dupliquer à chaque carte
+      document.querySelectorAll('#pieces-list .piece-card').forEach(function(card){
+        if(card._ajDupWired) return;
+        card._ajDupWired = true;
+        var actions = card.querySelector('.piece-actions');
+        if(!actions) return;
+        var pid = (function(){
+          var match = card.innerHTML.match(/openPiece\('([^']+)'\)/);
+          return match ? match[1] : null;
+        })();
+        if(!pid) return;
+        var dupBtn = document.createElement('button');
+        dupBtn.className = 'btn btn-secondary btn-sm';
+        dupBtn.title = 'Dupliquer cette pièce';
+        dupBtn.textContent = '⎘';
+        dupBtn.style.marginRight = '4px';
+        dupBtn.onclick = function(e){ e.stopPropagation(); ajDuplicatePiece(pid); };
+        actions.insertBefore(dupBtn, actions.firstChild);
+      });
+      return r;
+    };
+  }
+
+  // Normalisation virgule → point sur tous les inputs decimal
+  document.addEventListener('blur', function(e){
+    var t = e.target;
+    if(t && t.tagName === 'INPUT' && (t.inputMode === 'decimal' || t.type === 'number')){
+      if(t.value && t.value.indexOf(',') >= 0){
+        t.value = t.value.replace(',', '.');
+      }
+    }
+  }, true);
+
+  /* ════════════════════════════════════════════════════════════════════
+     MIGRATIONS DOMContentLoaded — attache aux écrans déjà présents
+     ════════════════════════════════════════════════════════════════════ */
+  setTimeout(function(){
+    injectToolbarExtras();
+    injectDbButtons();
+    ensureFloatingActions();
+    updateFloatingActions();
+    refreshChecklist();
+    updateBreadcrumb();
+  }, 400);
+
+  console.log('[AJ PRO] Phase 1 enhancements chargées (HiDPI ×' + DPR + ', undo/redo, annotation photos, checklist, FAB, HSP memory).');
+})();
 </script>
 </body>
 </html>
