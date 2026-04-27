@@ -2,7 +2,7 @@
    Stratégie : cache-first pour le shell, network-first avec fallback cache pour le reste.
    Permet à l'app de fonctionner hors-ligne (utile en chantier sans wifi). */
 
-const CACHE_VERSION = 'aj-pro-v2-2026-04-27-cachefix';
+const CACHE_VERSION = 'aj-pro-v3-2026-04-27-bathmodule';
 const SHELL_CACHE = 'aj-pro-shell-' + CACHE_VERSION;
 const RUNTIME_CACHE = 'aj-pro-runtime';
 
@@ -11,7 +11,8 @@ const SHELL_FILES = [
   '/index.html',
   '/manifest.json',
   '/icon-192.png',
-  '/icon-512.png'
+  '/icon-512.png',
+  '/bathroom-quote.js'
 ];
 
 /* Install : pré-cache du shell */
