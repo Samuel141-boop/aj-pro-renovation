@@ -7268,6 +7268,270 @@ renderHome();
 
   console.log('[AJ PRO] Phase 4 chargée (croquis v2 : segments détaillés, dimensions on-canvas, ruban virtuel).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 5 : DEVIS ENRICHI
+   • Prix unitaire optionnel par intervention (€)
+   • Total estimé par catégorie et grand total
+   • Export CSV (compatible Excel) prêt pour devis
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P5_LOADED) return;
+  window.__AJ_P5_LOADED = true;
+
+  /* ─── 1) STOCKAGE DES PRIX (par intervention id) ─── */
+  function getPrices(){
+    var db = dbLoad();
+    return db.interventionPrices || {};
+  }
+  function setPrice(intervId, unitPrice){
+    var db = dbLoad();
+    db.interventionPrices = db.interventionPrices || {};
+    if(unitPrice == null || unitPrice === '' || isNaN(parseFloat(unitPrice))){
+      delete db.interventionPrices[intervId];
+    } else {
+      db.interventionPrices[intervId] = parseFloat(unitPrice);
+    }
+    safeSave(db);
+  }
+
+  function fmtEur(v){
+    if(!v && v !== 0) return '—';
+    return v.toLocaleString('fr-FR', { minimumFractionDigits:0, maximumFractionDigits:0 }) + ' €';
+  }
+
+  /* Quantité numérique extraite d'un meta string (ou 1 par défaut) */
+  function extractQty(item){
+    var m = item.meta || '';
+    var match = m.match(/([0-9]+(?:[.,][0-9]+)?)/);
+    if(match) return parseFloat(match[1].replace(',','.'));
+    return 1;
+  }
+
+  /* ─── 2) ENRICHIR LA SYNTHÈSE AVEC PRIX ET TOTAUX ─── */
+  // On wrap renderSynthese pour ajouter une couche d'enrichissement
+  var _origRenderSynthese = window.renderSynthese;
+  if(_origRenderSynthese){
+    window.renderSynthese = function(){
+      var r = _origRenderSynthese.apply(this, arguments);
+      setTimeout(enhanceSyntheseWithPrices, 50);
+      return r;
+    };
+  }
+
+  function enhanceSyntheseWithPrices(){
+    var body = document.getElementById('synthese-body');
+    if(!body) return;
+    var prices = getPrices();
+    if(!currentClientId) return;
+    if(typeof buildTravauxData !== 'function') return;
+    var data = buildTravauxData();
+    var allItems = [];
+    Object.keys(data).forEach(function(k){ data[k].forEach(function(it){ allItems.push(it); }); });
+
+    // Calcul des totaux
+    var grandTotal = 0;
+    var categoryTotals = {};
+    allItems.forEach(function(it){
+      var unit = prices[it.id];
+      if(!unit) return;
+      var qty = extractQty(it);
+      var sub = unit * qty;
+      grandTotal += sub;
+      var catKey = catKeyForItem(it);
+      categoryTotals[catKey] = (categoryTotals[catKey] || 0) + sub;
+    });
+
+    // Ajoute / met à jour la barre "Estimation devis" en haut
+    var oldBar = document.getElementById('aj-price-summary');
+    if(oldBar) oldBar.remove();
+    if(allItems.length){
+      var bar = document.createElement('div');
+      bar.id = 'aj-price-summary';
+      bar.style.cssText = 'background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;border-radius:14px;padding:18px 20px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;';
+      var pricedCount = allItems.filter(function(it){ return prices[it.id]; }).length;
+      bar.innerHTML =
+        '<div>' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#c9a96e;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;">Estimation devis</div>' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:42px;font-weight:600;color:#fff;line-height:1;margin-top:4px;">' + fmtEur(grandTotal) + '</div>' +
+          '<div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;font-family:Inter,sans-serif;">' + pricedCount + ' / ' + allItems.length + ' intervention(s) chiffrée(s)</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+          '<button class="btn" onclick="ajExportSyntheseCSV()" style="background:#c9a96e;color:#0f2030;border:none;padding:12px 18px;border-radius:8px;font-weight:600;font-family:Inter,sans-serif;cursor:pointer;">📊 Exporter CSV (Excel)</button>' +
+          '<button class="btn" onclick="ajClearAllPrices()" style="background:rgba(255,255,255,0.1);color:#fff;border:1px solid rgba(255,255,255,0.25);padding:12px 14px;border-radius:8px;font-family:Inter,sans-serif;cursor:pointer;font-size:12px;">🗑 Reset prix</button>' +
+        '</div>';
+      // Insère tout en haut
+      body.insertBefore(bar, body.firstChild);
+    }
+
+    // Pour chaque élément cliquable d'intervention, ajoute un input prix
+    var lines = body.querySelectorAll('div[onclick*="openInterventionMenu"]');
+    lines.forEach(function(line){
+      // Récupère l'id depuis le onclick
+      var oc = line.getAttribute('onclick') || '';
+      var m = oc.match(/openInterventionMenu\('([^']+)'/);
+      if(!m) return;
+      var iid = m[1];
+      // Évite les doublons
+      if(line.querySelector('[data-aj-price]')) return;
+      var unit = prices[iid] || '';
+      var qty = 1;
+      // Trouve l'item dans data pour la quantité
+      var found = null;
+      Object.keys(data).forEach(function(k){ data[k].forEach(function(it){ if(it.id === iid) found = it; }); });
+      if(found) qty = extractQty(found);
+
+      var wrap = document.createElement('div');
+      wrap.setAttribute('data-aj-price','1');
+      wrap.style.cssText = 'display:flex;align-items:center;gap:6px;margin-left:8px;';
+      wrap.onclick = function(e){ e.stopPropagation(); };
+      wrap.innerHTML =
+        '<input type="number" inputmode="decimal" step="1" placeholder="Prix HT" value="' + (unit !== '' ? unit : '') + '" ' +
+        'data-aj-iid="' + iid + '" ' +
+        'style="width:80px;padding:5px 8px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:12px;font-family:Inter,sans-serif;text-align:right;" />' +
+        '<span style="font-size:11px;color:#7a8896;font-family:Inter,sans-serif;">€</span>';
+      var inp = wrap.querySelector('input');
+      inp.addEventListener('click', function(e){ e.stopPropagation(); });
+      inp.addEventListener('input', function(e){ e.stopPropagation(); });
+      inp.addEventListener('blur', function(){
+        var v = this.value.replace(',','.');
+        setPrice(iid, v);
+        // Re-render pour mettre à jour les totaux
+        if(typeof renderSynthese === 'function') renderSynthese();
+      });
+      inp.addEventListener('keydown', function(e){
+        if(e.key === 'Enter'){ inp.blur(); }
+      });
+      // Append before the status badge if present
+      line.appendChild(wrap);
+    });
+  }
+
+  function catKeyForItem(item){
+    var k = item.key || '';
+    if(k.indexOf('mac-') === 0 || k.indexOf('macdup-') === 0) return 'mac';
+    if(k.indexOf('plomb') >= 0) return 'plomb';
+    if(k.indexOf('elec-') === 0) return 'elec';
+    if(k.indexOf('paint-') === 0) return 'peinture';
+    if(k.indexOf('sol-') === 0) return 'sol';
+    if(k.indexOf('pf-') === 0) return 'pf';
+    return 'autre';
+  }
+
+  /* ─── 3) RESET DES PRIX ─── */
+  window.ajClearAllPrices = function(){
+    customConfirm('Cela efface tous les prix saisis pour ce chantier (les statuts et travaux sont conservés).',
+      function(){
+        var db = dbLoad();
+        db.interventionPrices = {};
+        safeSave(db);
+        if(typeof renderSynthese === 'function') renderSynthese();
+        showToast('Prix réinitialisés');
+      },
+      { title:'Effacer tous les prix ?', danger:true, okLabel:'Effacer' });
+  };
+
+  /* ─── 4) EXPORT CSV (compatible Excel) ─── */
+  function csvEscape(s){
+    if(s == null) return '';
+    s = String(s);
+    if(s.indexOf(';') >= 0 || s.indexOf('"') >= 0 || s.indexOf('\n') >= 0){
+      return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+  }
+
+  // Détection unité (dupliquée localement pour ne pas dépendre de Phase 2A)
+  function detectUnitLocal(item){
+    var k = (item.key || '').toLowerCase();
+    var meta = (item.meta || '').toLowerCase();
+    if(meta.indexOf('m²') >= 0 || meta.indexOf('surface') >= 0) return 'm²';
+    if(meta.indexOf(' ml') >= 0 || meta.indexOf('périm') >= 0) return 'ml';
+    if(meta.indexOf('unit') >= 0 || meta.indexOf('qté') >= 0) return 'unité';
+    if(k.indexOf('plinthe') >= 0 || k.indexOf('corniche') >= 0) return 'ml';
+    if(k.indexOf('cloison') >= 0) return 'ml';
+    if(k.indexOf('paint-mur') >= 0 || k.indexOf('paint-plafond') >= 0 || k.indexOf('paint-biblio') >= 0 || k.indexOf('paint-sol') >= 0) return 'm²';
+    if(k.indexOf('elec-') === 0 || k.indexOf('mac-pose-porte') >= 0 || k.indexOf('paint-radiateur') >= 0 || k.indexOf('paint-fenetre') >= 0 || k.indexOf('paint-porte') >= 0 || k.indexOf('paint-placard') >= 0 || k.indexOf('paint-int-placard') >= 0 || k.indexOf('pf-') === 0) return 'unité';
+    return 'forfait';
+  }
+
+  function statusShortLocal(s){
+    var SHORT = {
+      'fini':'Validé','a-confirmer':'À confirmer','a-mesurer':'À mesurer',
+      'a-chiffrer':'À chiffrer','bloque':'Bloqué','encours':'En cours',
+      'planifie':'Planifié','avenir':'À venir'
+    };
+    return SHORT[s] || s || '';
+  }
+
+  function catLabel(catKey){
+    if(typeof TRAVAUX_CATS === 'undefined') return catKey;
+    var c = TRAVAUX_CATS.find(function(x){ return x.key === catKey; });
+    return c ? c.label : catKey;
+  }
+
+  window.ajExportSyntheseCSV = function(){
+    if(!currentClientId){ showToast('Sélectionnez un client'); return; }
+    var db = dbLoad();
+    var client = db.clients[currentClientId]; if(!client) return;
+    var data = (typeof buildTravauxData === 'function') ? buildTravauxData() : {};
+    var prices = getPrices();
+
+    var rows = [];
+    // Métadonnées
+    rows.push(['# AJ PRO RÉNOVATION — Synthèse devis']);
+    rows.push(['# Client', client.prenom + ' ' + client.nom]);
+    if(client.adresse) rows.push(['# Adresse', client.adresse]);
+    if(client.date)    rows.push(['# Visite', client.date]);
+    rows.push(['# Généré le', new Date().toLocaleDateString('fr-FR') + ' ' + new Date().toLocaleTimeString('fr-FR').slice(0,5)]);
+    rows.push([]);
+    // En-tête colonnes
+    rows.push(['Pièce','Catégorie','Travail','Quantité','Unité','Prix unitaire HT','Total HT','Statut','Note']);
+
+    var grandTotal = 0;
+    Object.keys(data).forEach(function(catKey){
+      (data[catKey] || []).forEach(function(it){
+        var qty = extractQty(it);
+        var unit = detectUnitLocal(it);
+        var price = prices[it.id] || '';
+        var total = price ? (qty * price) : '';
+        if(total) grandTotal += total;
+        var note = (it.meta || '').replace(/[\r\n]/g, ' ');
+        rows.push([
+          it.piece,
+          catLabel(catKey),
+          it.label,
+          qty.toString().replace('.', ','),
+          unit,
+          price ? String(price).replace('.', ',') : '',
+          total ? total.toFixed(2).replace('.', ',') : '',
+          statusShortLocal(it.status),
+          note
+        ]);
+      });
+    });
+    rows.push([]);
+    rows.push(['','','','','','TOTAL HT', grandTotal.toFixed(2).replace('.', ','), '', '']);
+
+    // Construit le CSV
+    var csv = rows.map(function(row){
+      return (row || []).map(csvEscape).join(';');
+    }).join('\r\n');
+
+    // BOM UTF-8 pour Excel
+    var blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var fname = 'AJ-PRO-' + (client.nom || 'chantier').replace(/[^a-zA-Z0-9-]/g, '-') + '-' + new Date().toISOString().slice(0,10) + '.csv';
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    showToast('CSV exporté ✓ (' + fname + ')');
+  };
+
+  console.log('[AJ PRO] Phase 5 chargée (devis enrichi : prix par intervention, total, export CSV).');
+})();
 </script>
 </body>
 </html>
