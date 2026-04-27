@@ -5682,6 +5682,395 @@ renderHome();
 
   console.log('[AJ PRO] Phase 1 enhancements chargées (HiDPI ×' + DPR + ', undo/redo, annotation photos, checklist, FAB, HSP memory).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 2A ENHANCEMENTS
+   • Statuts métier étendus : validé / à confirmer / à mesurer / à chiffrer
+   • Badges colorés sur chaque intervention
+   • Nouvel écran "Synthèse devis" (sidebar)
+   • Détection automatique des unités (m² / ml / unité)
+   • Note : l'analyse de croquis existe déjà (analyzeCroquis) — vérifiée OK avec HiDPI
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P2A_LOADED) return;
+  window.__AJ_P2A_LOADED = true;
+
+  /* ─── 1) DÉFINITIONS DE STATUTS ─── */
+  var STATUS_DEFS = {
+    'fini':         { label:'Validé client',       icon:'✓',  bg:'rgba(45,106,79,0.15)',   color:'#1d4d33', border:'rgba(45,106,79,0.40)',  short:'Validé' },
+    'a-confirmer':  { label:'À confirmer',         icon:'⏳', bg:'rgba(232,98,26,0.15)',    color:'#9a4514', border:'rgba(232,98,26,0.40)',   short:'À confirmer' },
+    'a-mesurer':    { label:'À mesurer',           icon:'📐', bg:'rgba(21,101,192,0.13)',   color:'#0d4690', border:'rgba(21,101,192,0.35)',  short:'À mesurer' },
+    'a-chiffrer':   { label:'À chiffrer plus tard',icon:'💰', bg:'rgba(106,74,142,0.15)',   color:'#4a3565', border:'rgba(106,74,142,0.40)',  short:'À chiffrer' },
+    'bloque':       { label:'Bloqué',              icon:'⛔', bg:'rgba(198,40,40,0.12)',    color:'#8a1e1e', border:'rgba(198,40,40,0.35)',   short:'Bloqué' },
+    'encours':      { label:'En cours',            icon:'•',  bg:'rgba(15,32,48,0.06)',     color:'#3a4a5c', border:'rgba(15,32,48,0.18)',    short:'En cours' },
+    'planifie':     { label:'Planifié',            icon:'•',  bg:'rgba(15,32,48,0.04)',     color:'#3a4a5c', border:'rgba(15,32,48,0.12)',    short:'Planifié' },
+    'avenir':       { label:'À venir',             icon:'•',  bg:'rgba(15,32,48,0.04)',     color:'#7a8896', border:'rgba(15,32,48,0.10)',    short:'À venir' }
+  };
+  function statusBadgeHTML(status){
+    var d = STATUS_DEFS[status] || STATUS_DEFS['planifie'];
+    return '<span class="aj-status-badge" data-status="'+status+'" style="display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:99px;background:'+d.bg+';color:'+d.color+';border:1px solid '+d.border+';font-size:11px;font-weight:600;font-family:Inter,system-ui,sans-serif;white-space:nowrap;">'+d.icon+' '+d.short+'</span>';
+  }
+
+  /* ─── 2) Override openInterventionMenu pour proposer les nouveaux statuts ─── */
+  window.openInterventionMenu = function(intervId, currentStatus){
+    var STATUS_OPTS = [
+      { label:'✓ Validé client (terminé)',          value:'fini' },
+      { label:'⏳ À confirmer (avec le client)',     value:'a-confirmer' },
+      { label:'📐 À mesurer (mesure manquante)',    value:'a-mesurer' },
+      { label:'💰 À chiffrer plus tard (au bureau)', value:'a-chiffrer' },
+      { label:'⛔ Bloqué',                            value:'bloque' },
+      { label:'↻ Réinitialiser le statut',           value:'reset' }
+    ];
+    customPrompt('Statut de l\'intervention', STATUS_OPTS, function(value){
+      if(value === null || value === undefined) return;
+      setInterventionStatus(intervId, value);
+    });
+  };
+
+  /* ─── 3a) Patch buildTravauxData pour appliquer les nouveaux statuts ─── */
+  var _origBuild = window.buildTravauxData;
+  if(_origBuild){
+    window.buildTravauxData = function(){
+      var data = _origBuild.apply(this, arguments);
+      var db = dbLoad();
+      var overrides = db.interventionStatus || {};
+      var EXTRA = ['a-confirmer','a-mesurer','a-chiffrer'];
+      Object.keys(data).forEach(function(catKey){
+        data[catKey].forEach(function(it){
+          var ov = overrides[it.id];
+          if(ov && EXTRA.indexOf(ov) >= 0){
+            it.status = ov;
+          }
+        });
+      });
+      return data;
+    };
+  }
+
+  /* ─── 3b) Étendre setInterventionStatus ─── */
+  var _origSetIS = window.setInterventionStatus;
+  window.setInterventionStatus = function(intervId, status){
+    var db = dbLoad();
+    db.interventionStatus = db.interventionStatus || {};
+    if(status === 'reset') delete db.interventionStatus[intervId];
+    else db.interventionStatus[intervId] = status;
+    safeSave(db);
+    if(typeof renderTravauxSplit === 'function') renderTravauxSplit();
+    if(typeof renderSynthese === 'function' && currentScreen === 'screen-synthese') renderSynthese();
+    var lbl = (STATUS_DEFS[status] || {}).label || 'Statut réinitialisé';
+    showToast(status === 'reset' ? 'Statut réinitialisé' : 'Marqué : ' + lbl);
+  };
+
+  /* ─── 4) Override renderTravauxDetail pour remplacer les badges natifs par les nouveaux ─── */
+  var _origRTD = window.renderTravauxDetail;
+  if(_origRTD){
+    window.renderTravauxDetail = function(){
+      var r = _origRTD.apply(this, arguments);
+      // Après le rendu, on remplace le contenu des badges .travaux-int-status par nos badges colorés
+      // (on garde le conteneur pour préserver la mise en page grid)
+      setTimeout(function(){
+        var nodes = document.querySelectorAll('.travaux-int-status');
+        nodes.forEach(function(n){
+          var classes = n.className.split(/\s+/);
+          var status = null;
+          for(var i=0;i<classes.length;i++){
+            if(classes[i] !== 'travaux-int-status' && STATUS_DEFS[classes[i]]){ status = classes[i]; break; }
+          }
+          if(!status) status = 'planifie';
+          n.innerHTML = statusBadgeHTML(status);
+          n.style.cssText = 'background:none;border:none;padding:0;display:flex;align-items:center;justify-content:flex-end;';
+        });
+      }, 30);
+      return r;
+    };
+  }
+
+  /* ─── 5) DÉTECTION D'UNITÉ POUR UNE INTERVENTION ─── */
+  function detectUnit(item){
+    // Item shape: { id, key, label, piece, pieceId, meta, status, hasData }
+    var k = (item.key || '').toLowerCase();
+    var meta = (item.meta || '').toLowerCase();
+    if(meta.indexOf('m²') >= 0 || meta.indexOf('surface') >= 0) return 'm²';
+    if(meta.indexOf(' ml') >= 0 || meta.indexOf('périm') >= 0) return 'ml';
+    if(meta.indexOf('unit') >= 0 || meta.indexOf('qté') >= 0) return 'unité';
+    // Par défaut selon clé
+    if(k.indexOf('plinthe') >= 0 || k.indexOf('corniche') >= 0 || k === 'paint-plinthe' || k === 'paint-corniche') return 'ml';
+    if(k.indexOf('cloison') >= 0) return 'ml';
+    if(k.indexOf('paint-mur') >= 0 || k.indexOf('paint-plafond') >= 0 || k.indexOf('paint-biblio') >= 0 || k.indexOf('paint-sol') >= 0 || k === 'paint-sol-paint') return 'm²';
+    if(k.indexOf('elec-') === 0 || k.indexOf('mac-pose-porte') >= 0 || k.indexOf('paint-radiateur') >= 0 || k.indexOf('paint-fenetre') >= 0 || k.indexOf('paint-porte') >= 0 || k.indexOf('paint-placard') >= 0 || k.indexOf('paint-int-placard') >= 0 || k.indexOf('pf-') === 0) return 'unité';
+    return 'forfait';
+  }
+  function extractQuantity(item){
+    var m = item.meta || '';
+    var match = m.match(/([0-9]+(?:[.,][0-9]+)?)/);
+    return match ? parseFloat(match[1].replace(',','.')) : 0;
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     6) ÉCRAN "SYNTHÈSE DEVIS"
+     ════════════════════════════════════════════════════════════════════ */
+  function ensureSyntheseScreen(){
+    if(document.getElementById('screen-synthese')) return;
+    var mc = document.querySelector('.main-content');
+    if(!mc) return;
+    var sc = document.createElement('div');
+    sc.className = 'screen';
+    sc.id = 'screen-synthese';
+    sc.innerHTML =
+      '<div style="padding:0 0 24px;">' +
+        '<div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;flex-wrap:wrap;gap:12px;">' +
+          '<div>' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:#0f2030;letter-spacing:0.3px;">Synthèse devis</div>' +
+            '<div id="synthese-sub" style="font-size:13px;color:#3a4a5c;margin-top:4px;">Sélectionnez un client</div>' +
+          '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<button class="btn btn-secondary" onclick="ajExportSyntheseTxt()" id="synthese-export-btn" style="display:none">📋 Copier en texte</button>' +
+            '<button class="btn btn-secondary" onclick="renderSynthese()">↻ Actualiser</button>' +
+          '</div>' +
+        '</div>' +
+        '<div id="synthese-body"></div>' +
+      '</div>';
+    mc.appendChild(sc);
+  }
+
+  function statKpi(value, label, color){
+    return '<div style="flex:1;min-width:120px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:12px;padding:14px 16px;">' +
+      '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:'+(color||'#0f2030')+';line-height:1;">'+value+'</div>' +
+      '<div style="font-size:12px;color:#3a4a5c;margin-top:6px;text-transform:uppercase;letter-spacing:0.6px;font-family:Inter,sans-serif;font-weight:500;">'+label+'</div>' +
+    '</div>';
+  }
+
+  window.renderSynthese = function(){
+    ensureSyntheseScreen();
+    var body = document.getElementById('synthese-body');
+    var sub  = document.getElementById('synthese-sub');
+    var exportBtn = document.getElementById('synthese-export-btn');
+    if(!body) return;
+
+    if(!currentClientId){
+      var db = dbLoad();
+      var clients = Object.values(db.clients).sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
+      if(clients.length) currentClientId = clients[0].id;
+    }
+    if(!currentClientId){
+      body.innerHTML = '<div style="text-align:center;padding:40px;color:#3a4a5c;font-family:Inter,sans-serif;">Aucun client. Créez un chantier pour voir la synthèse.</div>';
+      if(exportBtn) exportBtn.style.display = 'none';
+      return;
+    }
+    var dbAll = dbLoad();
+    var client = dbAll.clients[currentClientId];
+    if(!client){
+      body.innerHTML = '<div style="text-align:center;padding:40px;color:#3a4a5c;font-family:Inter,sans-serif;">Client introuvable.</div>';
+      return;
+    }
+    if(sub) sub.textContent = client.prenom + ' ' + client.nom + (client.adresse ? ' — ' + client.adresse : '');
+
+    var data = buildTravauxData();
+    if(exportBtn) exportBtn.style.display = 'inline-flex';
+
+    /* ── KPIs globaux ── */
+    var allItems = [];
+    Object.keys(data).forEach(function(k){ data[k].forEach(function(it){ allItems.push(it); }); });
+    var byStatus = { fini:0, 'a-confirmer':0, 'a-mesurer':0, 'a-chiffrer':0, bloque:0, encours:0, planifie:0, avenir:0 };
+    allItems.forEach(function(it){
+      byStatus[it.status] = (byStatus[it.status]||0) + 1;
+    });
+
+    var kpis = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;">' +
+      statKpi(allItems.length, 'Travaux total', '#0f2030') +
+      statKpi(byStatus['fini']||0, 'Validés', '#1d4d33') +
+      statKpi(byStatus['a-confirmer']||0, 'À confirmer', '#9a4514') +
+      statKpi(byStatus['a-mesurer']||0, 'À mesurer', '#0d4690') +
+      statKpi(byStatus['a-chiffrer']||0, 'À chiffrer', '#4a3565') +
+    '</div>';
+
+    /* ── Sections "à action" en haut ── */
+    var actionSections = '';
+    [
+      { st:'a-mesurer',   title:'📐 À mesurer (mesure manquante)',  hint:'Avant de partir, ajoutez ces mesures.' },
+      { st:'a-confirmer', title:'⏳ À confirmer avec le client',     hint:'Renvoyer un mail / appel pour valider.' },
+      { st:'a-chiffrer',  title:'💰 À chiffrer plus tard (bureau)',  hint:'À traiter pendant la rédaction du devis.' },
+      { st:'bloque',      title:'⛔ Bloqué',                          hint:'Travaux qui ne peuvent pas avancer.' }
+    ].forEach(function(group){
+      var its = allItems.filter(function(it){ return it.status === group.st; });
+      if(!its.length) return;
+      actionSections +=
+        '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:14px 16px;margin-bottom:14px;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+            '<div style="font-weight:700;font-family:Inter,sans-serif;font-size:15px;color:#0f2030;">'+group.title+' <span style="color:#7a8896;font-weight:500;">('+its.length+')</span></div>' +
+          '</div>' +
+          '<div style="font-size:12px;color:#7a8896;margin-bottom:10px;font-family:Inter,sans-serif;">'+group.hint+'</div>' +
+          '<div>' + its.map(function(it){
+            var unit = detectUnit(it);
+            return '<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid rgba(15,32,48,0.06);font-family:Inter,sans-serif;font-size:13px;cursor:pointer;" onclick="openInterventionMenu(\''+it.id+'\',\''+it.status+'\')">' +
+              '<div style="flex:1;min-width:0;">' +
+                '<div style="font-weight:600;color:#0f2030;">'+esc(it.label)+' <span style="color:#7a8896;font-weight:400;">· '+esc(it.piece)+'</span></div>' +
+                '<div style="font-size:11px;color:#7a8896;margin-top:2px;">'+esc(it.meta||'—')+' <span style="opacity:0.6;">· '+unit+'</span></div>' +
+              '</div>' +
+              statusBadgeHTML(it.status) +
+            '</div>';
+          }).join('') + '</div>' +
+        '</div>';
+    });
+
+    /* ── Par catégorie ── */
+    var TRAVAUX_CATS_LOCAL = (typeof TRAVAUX_CATS !== 'undefined') ? TRAVAUX_CATS : [
+      { key:'mac', label:'Maçonnerie' },
+      { key:'plomb', label:'Plomberie' },
+      { key:'elec', label:'Électricité' },
+      { key:'peinture', label:'Peinture' },
+      { key:'sol', label:'Sol' },
+      { key:'pf', label:'Portes & Fenêtres' }
+    ];
+    var catSections = TRAVAUX_CATS_LOCAL.map(function(cat){
+      var its = data[cat.key] || [];
+      if(!its.length) return '';
+      // Calcule totaux par unité
+      var totals = { 'm²':0, 'ml':0, 'unité':0, 'forfait':0 };
+      its.forEach(function(it){
+        var u = detectUnit(it);
+        var q = extractQuantity(it);
+        if(q && totals.hasOwnProperty(u)) totals[u] += q;
+        else if(u === 'forfait') totals['forfait']++;
+      });
+      var totalsHtml = Object.keys(totals).filter(function(u){ return totals[u]>0; }).map(function(u){
+        return '<span style="display:inline-block;padding:3px 9px;border-radius:99px;background:rgba(201,169,110,0.15);color:#7a5a30;font-size:11px;font-weight:600;font-family:Inter,sans-serif;margin-right:6px;">'+totals[u].toFixed(u==='unité'||u==='forfait'?0:1)+' '+u+'</span>';
+      }).join('');
+      // Group by piece
+      var byPiece = {};
+      its.forEach(function(it){
+        if(!byPiece[it.piece]) byPiece[it.piece] = [];
+        byPiece[it.piece].push(it);
+      });
+      var piecesHtml = Object.keys(byPiece).map(function(pieceName){
+        return '<div style="margin-top:10px;">' +
+          '<div style="font-size:12px;font-weight:600;color:#3a4a5c;text-transform:uppercase;letter-spacing:0.6px;margin-bottom:6px;">'+esc(pieceName)+'</div>' +
+          byPiece[pieceName].map(function(it){
+            var unit = detectUnit(it);
+            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-top:1px solid rgba(15,32,48,0.05);font-family:Inter,sans-serif;font-size:13px;cursor:pointer;" onclick="openInterventionMenu(\''+it.id+'\',\''+it.status+'\')">' +
+              '<div style="flex:1;min-width:0;">' +
+                '<div style="color:#0f2030;font-weight:500;">'+esc(it.label)+'</div>' +
+                '<div style="font-size:11px;color:#7a8896;">'+esc(it.meta||'—')+' <span style="opacity:0.6;">· '+unit+'</span></div>' +
+              '</div>' +
+              statusBadgeHTML(it.status) +
+            '</div>';
+          }).join('') +
+        '</div>';
+      }).join('');
+      return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:14px 16px;margin-bottom:14px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;">'+cat.label+' <span style="font-family:Inter,sans-serif;font-size:13px;color:#7a8896;font-weight:500;">· '+its.length+' intervention'+(its.length>1?'s':'')+'</span></div>' +
+          '<div>'+totalsHtml+'</div>' +
+        '</div>' +
+        piecesHtml +
+      '</div>';
+    }).join('');
+
+    if(!allItems.length){
+      body.innerHTML = kpis + '<div style="text-align:center;padding:40px;color:#3a4a5c;font-family:Inter,sans-serif;background:#fff;border-radius:14px;">Aucune intervention saisie pour ce chantier.<br><span style="font-size:13px;opacity:0.7;">Activez les travaux dans les fiches pièces.</span></div>';
+      return;
+    }
+    body.innerHTML = kpis + actionSections + catSections;
+  };
+
+  /* ─── 7) EXPORT TEXTE DE LA SYNTHÈSE (presse-papier) ─── */
+  window.ajExportSyntheseTxt = function(){
+    if(!currentClientId) return;
+    var dbAll = dbLoad();
+    var client = dbAll.clients[currentClientId]; if(!client) return;
+    var data = buildTravauxData();
+    var lines = [];
+    lines.push('═══════════════════════════════════════');
+    lines.push('SYNTHÈSE DEVIS — ' + client.prenom + ' ' + client.nom);
+    if(client.adresse) lines.push(client.adresse);
+    if(client.date)    lines.push('Visité le ' + client.date);
+    lines.push('═══════════════════════════════════════');
+    lines.push('');
+    var TRAVAUX_CATS_LOCAL = (typeof TRAVAUX_CATS !== 'undefined') ? TRAVAUX_CATS : [];
+    TRAVAUX_CATS_LOCAL.forEach(function(cat){
+      var its = data[cat.key] || []; if(!its.length) return;
+      lines.push('━━ ' + cat.label.toUpperCase() + ' ━━');
+      var byPiece = {};
+      its.forEach(function(it){ (byPiece[it.piece] = byPiece[it.piece] || []).push(it); });
+      Object.keys(byPiece).forEach(function(pn){
+        lines.push('  • ' + pn);
+        byPiece[pn].forEach(function(it){
+          var unit = detectUnit(it);
+          var st = (STATUS_DEFS[it.status]||{}).short || it.status;
+          lines.push('     - ' + it.label + ' (' + (it.meta || '—') + ' · ' + unit + ') [' + st + ']');
+        });
+      });
+      lines.push('');
+    });
+    var actions = ['a-mesurer','a-confirmer','a-chiffrer','bloque'];
+    actions.forEach(function(st){
+      var its = []; Object.keys(data).forEach(function(k){ data[k].forEach(function(it){ if(it.status===st) its.push(it); }); });
+      if(!its.length) return;
+      var def = STATUS_DEFS[st];
+      lines.push('━━ ' + def.label.toUpperCase() + ' ━━');
+      its.forEach(function(it){
+        lines.push('  • [' + it.piece + '] ' + it.label + ' — ' + (it.meta || '—'));
+      });
+      lines.push('');
+    });
+    var txt = lines.join('\n');
+    try {
+      navigator.clipboard.writeText(txt);
+      showToast('Synthèse copiée dans le presse-papier ✓');
+    } catch(e){
+      // Fallback : ouvrir une fenêtre avec le texte
+      var win = window.open('', '_blank');
+      if(win){ win.document.write('<pre style="font-family:monospace;white-space:pre-wrap;padding:20px">'+txt.replace(/</g,'&lt;')+'</pre>'); }
+    }
+  };
+
+  /* ─── 8) AJOUT D'UN NAV-ITEM "SYNTHÈSE DEVIS" DANS LA SIDEBAR ─── */
+  function injectSyntheseNav(){
+    var nav = document.querySelector('.sidebar-nav');
+    if(!nav || document.getElementById('aj-nav-synthese')) return;
+    var item = document.createElement('div');
+    item.className = 'nav-item';
+    item.id = 'aj-nav-synthese';
+    item.setAttribute('data-screen','screen-synthese');
+    item.innerHTML =
+      '<span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-6a2 2 0 0 0-2-2h-4"/><path d="M12 3v12"/><path d="M7 8l5-5 5 5"/></svg></span>' +
+      '<span>Synthèse devis</span>';
+    item.onclick = function(){
+      // Reset history pour navigation directe
+      if(typeof closeSidebar === 'function' && window.innerWidth <= 980) closeSidebar();
+      screenHistory = [];
+      ensureSyntheseScreen();
+      showScreen('screen-synthese');
+      renderSynthese();
+    };
+    nav.appendChild(item);
+  }
+
+  /* Patch updateNav pour activer le bon état sur l'item Synthèse */
+  var _origUpdateNav = window.updateNav;
+  window.updateNav = function(){
+    var r = _origUpdateNav.apply(this, arguments);
+    var item = document.getElementById('aj-nav-synthese');
+    if(item){ item.classList.toggle('active', currentScreen === 'screen-synthese'); }
+    return r;
+  };
+
+  /* Patch showScreen pour rendre la synthèse à l'ouverture */
+  var _origShowScreen2 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen2.apply(this, arguments);
+    if(id === 'screen-synthese' && typeof renderSynthese === 'function') setTimeout(renderSynthese, 50);
+    return r;
+  };
+
+  /* ─── INIT ─── */
+  setTimeout(function(){
+    ensureSyntheseScreen();
+    injectSyntheseNav();
+  }, 500);
+
+  console.log('[AJ PRO] Phase 2A chargée (statuts étendus, synthèse devis).');
+})();
 </script>
 </body>
 </html>
