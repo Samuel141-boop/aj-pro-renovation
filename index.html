@@ -7532,6 +7532,375 @@ renderHome();
 
   console.log('[AJ PRO] Phase 5 chargée (devis enrichi : prix par intervention, total, export CSV).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 6 : ROBUSTESSE + INDEXEDDB OPT-IN
+   • Validation structure DB au chargement
+   • Auto-backup automatique quand stockage > 3.5 Mo
+   • IndexedDB photo offload (opt-in) pour stockage étendu
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P6_LOADED) return;
+  window.__AJ_P6_LOADED = true;
+
+  /* ─── 1) VALIDATION DE LA STRUCTURE DB AU CHARGEMENT ─── */
+  function validateDB(){
+    try {
+      var raw = localStorage.getItem(DB_KEY);
+      if(!raw) return { ok:true, fixed:0, errors:[] };
+      var db;
+      try { db = JSON.parse(raw); }
+      catch(e){
+        return { ok:false, fixed:0, errors:['JSON corrompu : ' + e.message] };
+      }
+      if(!db || typeof db !== 'object') return { ok:false, fixed:0, errors:['DB n\'est pas un objet'] };
+      var errors = [], fixed = 0;
+      // Forçage de la structure
+      if(!db.clients || typeof db.clients !== 'object'){ db.clients = {}; fixed++; errors.push('clients reset'); }
+      if(!db.pieces || typeof db.pieces !== 'object'){ db.pieces = {}; fixed++; errors.push('pieces reset'); }
+      if(!db.interventionStatus || typeof db.interventionStatus !== 'object'){ db.interventionStatus = {}; }
+      if(!db.interventionPrices || typeof db.interventionPrices !== 'object'){ db.interventionPrices = {}; }
+      // Vérifie chaque pièce
+      Object.keys(db.pieces).forEach(function(pid){
+        var p = db.pieces[pid];
+        if(!p || typeof p !== 'object'){ delete db.pieces[pid]; fixed++; errors.push('piece ' + pid + ' invalide'); return; }
+        if(!p.id) p.id = pid;
+        if(!p.travaux) p.travaux = {};
+        if(!p.mesures) p.mesures = {};
+        if(!Array.isArray(p.photos)) p.photos = [];
+        if(!Array.isArray(p.msNotes)) p.msNotes = [];
+        // Cascade : si clientId pointe vers un client supprimé, on garde quand même la pièce mais on log
+        if(p.clientId && !db.clients[p.clientId]){
+          errors.push('piece ' + (p.nom||pid) + ' orpheline (client supprimé)');
+        }
+      });
+      if(fixed > 0){
+        try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch(e){ errors.push('save fix failed'); }
+      }
+      return { ok: errors.length === 0, fixed: fixed, errors: errors };
+    } catch(e){
+      return { ok:false, fixed:0, errors:[e.message] };
+    }
+  }
+
+  /* Run validation au chargement */
+  setTimeout(function(){
+    var v = validateDB();
+    if(v.fixed > 0){
+      console.warn('[AJ PRO] DB validation : ' + v.fixed + ' corrections appliquées. ', v.errors);
+    }
+    if(!v.ok && v.errors.length > 5){
+      showToast('⚠ Données partiellement réparées au chargement (voir console)');
+    }
+  }, 600);
+
+  /* ─── 2) AUTO-BACKUP SI STOCKAGE > 3.5 MO ─── */
+  function getStorageSize(){
+    var raw = localStorage.getItem(DB_KEY) || '';
+    return raw.length / 1024 / 1024;
+  }
+
+  function maybeAutoBackup(){
+    try {
+      var sizeMB = getStorageSize();
+      var lastBackup = parseInt(localStorage.getItem('aj-last-auto-backup') || '0', 10);
+      var now = Date.now();
+      var dayInMs = 24 * 60 * 60 * 1000;
+      // Sauvegarde si > 3.5 Mo OU si on n'a jamais sauvegardé OU si dernière sauvegarde > 3 jours
+      if(sizeMB > 3.5 || (now - lastBackup) > 3 * dayInMs){
+        if(!window.__AJ_BACKUP_PROMPTED){
+          window.__AJ_BACKUP_PROMPTED = true;
+          // Affiche une bannière non-bloquante
+          showBackupReminder(sizeMB);
+        }
+      }
+    } catch(e){}
+  }
+
+  function showBackupReminder(sizeMB){
+    if(document.getElementById('aj-backup-banner')) return;
+    var banner = document.createElement('div');
+    banner.id = 'aj-backup-banner';
+    banner.style.cssText = 'position:fixed;bottom:80px;right:18px;z-index:60;background:#fff;border:1px solid #c9a96e;border-left:4px solid #c9a96e;border-radius:10px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,0.15);max-width:300px;font-family:Inter,sans-serif;';
+    banner.innerHTML =
+      '<div style="font-weight:600;color:#0f2030;margin-bottom:4px;font-size:13px;">💾 Sauvegarde recommandée</div>' +
+      '<div style="font-size:12px;color:#3a4a5c;margin-bottom:10px;">Stockage à ' + sizeMB.toFixed(1) + ' Mo. Pensez à exporter pour ne rien perdre.</div>' +
+      '<div style="display:flex;gap:6px;">' +
+        '<button onclick="ajExportBackup();this.parentElement.parentElement.remove();" style="flex:1;padding:6px 10px;background:#c9a96e;color:#0f2030;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">📥 Exporter</button>' +
+        '<button onclick="this.parentElement.parentElement.remove();localStorage.setItem(\'aj-last-auto-backup\',Date.now());" style="flex:1;padding:6px 10px;background:#fff;color:#7a8896;border:1px solid #e3dccc;border-radius:6px;font-size:12px;cursor:pointer;">Plus tard</button>' +
+      '</div>';
+    document.body.appendChild(banner);
+  }
+
+  // Hook lazy après quelques secondes pour ne pas perturber le chargement
+  setTimeout(maybeAutoBackup, 2500);
+
+  /* ─── 3) INDEXEDDB PHOTO OFFLOAD (OPT-IN) ─── */
+  var IDB_NAME = 'aj-pro-photos';
+  var IDB_VERSION = 1;
+  var IDB_STORE = 'photos';
+  var idbPromise = null;
+  var idbAvailable = ('indexedDB' in window);
+  var IDB_FLAG_KEY = 'aj-idb-photos-enabled';
+
+  function isIDBEnabled(){ return localStorage.getItem(IDB_FLAG_KEY) === '1'; }
+  function setIDBEnabled(v){ localStorage.setItem(IDB_FLAG_KEY, v ? '1' : '0'); }
+
+  function openIDB(){
+    if(!idbAvailable) return Promise.reject(new Error('IDB non supporté'));
+    if(idbPromise) return idbPromise;
+    idbPromise = new Promise(function(resolve, reject){
+      var req = indexedDB.open(IDB_NAME, IDB_VERSION);
+      req.onupgradeneeded = function(){
+        var db = req.result;
+        if(!db.objectStoreNames.contains(IDB_STORE)){
+          db.createObjectStore(IDB_STORE, { keyPath:'id' });
+        }
+      };
+      req.onsuccess = function(){ resolve(req.result); };
+      req.onerror = function(){ reject(req.error); };
+    });
+    return idbPromise;
+  }
+
+  function idbPut(record){
+    return openIDB().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction([IDB_STORE], 'readwrite');
+        var store = tx.objectStore(IDB_STORE);
+        var req = store.put(record);
+        req.onsuccess = function(){ resolve(); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+  function idbGet(id){
+    return openIDB().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction([IDB_STORE], 'readonly');
+        var store = tx.objectStore(IDB_STORE);
+        var req = store.get(id);
+        req.onsuccess = function(){ resolve(req.result); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+  function idbDelete(id){
+    return openIDB().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction([IDB_STORE], 'readwrite');
+        var store = tx.objectStore(IDB_STORE);
+        var req = store.delete(id);
+        req.onsuccess = function(){ resolve(); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+  function idbCount(){
+    return openIDB().then(function(db){
+      return new Promise(function(resolve, reject){
+        var tx = db.transaction([IDB_STORE], 'readonly');
+        var store = tx.objectStore(IDB_STORE);
+        var req = store.count();
+        req.onsuccess = function(){ resolve(req.result); };
+        req.onerror = function(){ reject(req.error); };
+      });
+    });
+  }
+
+  /* Migration : déplace toutes les photos inline vers IDB */
+  window.ajMigratePhotosToIDB = function(){
+    if(!idbAvailable){ showToast('⚠ IndexedDB non disponible sur ce navigateur'); return; }
+    customConfirm('Cette action déplace TOUTES les photos vers le stockage étendu (IndexedDB). Cela libère localStorage. Vos photos resteront accessibles normalement.',
+      function(){
+        showToast('Migration en cours...');
+        var db = dbLoad();
+        var pieces = Object.values(db.pieces);
+        var total = 0, migrated = 0, failed = 0;
+        pieces.forEach(function(p){ if(p.photos) total += p.photos.length; });
+        if(!total){ showToast('Aucune photo à migrer'); return; }
+
+        var tasks = [];
+        pieces.forEach(function(p){
+          (p.photos || []).forEach(function(ph){
+            if(ph.ref && ph.ref.indexOf('idb:') === 0) return; // déjà migrée
+            if(!ph.data) return;
+            tasks.push(
+              idbPut({ id: ph.id, data: ph.data })
+                .then(function(){
+                  ph.ref = 'idb:' + ph.id;
+                  delete ph.data;
+                  migrated++;
+                })
+                .catch(function(e){
+                  console.error('Migration photo échouée', ph.id, e);
+                  failed++;
+                })
+            );
+          });
+        });
+        Promise.all(tasks).then(function(){
+          if(migrated > 0){
+            safeSave(db);
+            setIDBEnabled(true);
+            showToast('Migration : ' + migrated + ' / ' + total + ' photos déplacées' + (failed?' (' + failed + ' échouées)':''));
+          } else {
+            showToast('Aucune photo à migrer (déjà dans IDB ?)');
+          }
+          // Re-render écran courant
+          if(currentScreen === 'screen-piece' && typeof renderPhotos === 'function'){
+            var pp = dbLoad().pieces[currentPieceId];
+            if(pp) renderPhotos(pp.photos);
+          }
+        });
+      },
+      { title:'Activer le stockage étendu pour les photos ?', okLabel:'Migrer' });
+  };
+
+  /* Patch renderPhotos : si une photo a ph.ref='idb:...', on charge async depuis IDB */
+  var _origRP = window.renderPhotos;
+  if(_origRP){
+    window.renderPhotos = function(photos){
+      var r = _origRP.apply(this, arguments);
+      // Pour chaque thumb, si ph.ref → charger IDB
+      var grid = document.getElementById('photo-grid');
+      if(!grid) return r;
+      var thumbs = grid.querySelectorAll('.photo-thumb');
+      (photos || []).forEach(function(ph, idx){
+        var thumb = thumbs[idx + 1];
+        if(!thumb) return;
+        if(ph.ref && ph.ref.indexOf('idb:') === 0 && !ph.data){
+          var img = thumb.querySelector('img');
+          if(img && (!img.src || img.src === '' || img.src.indexOf('data:image') !== 0)){
+            // Charge depuis IDB
+            idbGet(ph.id).then(function(rec){
+              if(rec && rec.data && img){ img.src = rec.data; }
+            }).catch(function(e){
+              console.warn('IDB photo load failed', ph.id, e);
+            });
+          }
+        }
+      });
+      return r;
+    };
+  }
+
+  /* Patch deletePhoto : si IDB ref, supprime aussi de IDB */
+  var _origDel = window.deletePhoto;
+  if(_origDel){
+    window.deletePhoto = function(phId){
+      // Avant suppression, récupère la ref
+      var db = dbLoad();
+      var p = db.pieces[currentPieceId];
+      if(p){
+        var ph = (p.photos || []).find(function(x){ return x.id === phId; });
+        if(ph && ph.ref && ph.ref.indexOf('idb:') === 0){
+          idbDelete(phId).catch(function(e){ console.warn('IDB delete failed', e); });
+        }
+      }
+      return _origDel.apply(this, arguments);
+    };
+  }
+
+  /* Hook addPhoto : si IDB activé, écrit dans IDB plutôt qu'inline */
+  // On wrap _compressImage callback... mais c'est complexe. Approche plus simple :
+  // après chaque ajout, on auto-migre vers IDB si activé.
+  var _origHandlePhoto = window.handlePhoto;
+  if(_origHandlePhoto){
+    window.handlePhoto = function(inp){
+      var r = _origHandlePhoto.apply(this, arguments);
+      if(isIDBEnabled()){
+        // Migrate any new inline photos to IDB after a delay
+        setTimeout(function(){
+          var db = dbLoad();
+          var p = db.pieces[currentPieceId]; if(!p || !p.photos) return;
+          var changed = false;
+          var tasks = [];
+          p.photos.forEach(function(ph){
+            if(ph.data && !ph.ref){
+              tasks.push(idbPut({ id: ph.id, data: ph.data }).then(function(){
+                ph.ref = 'idb:' + ph.id;
+                delete ph.data;
+                changed = true;
+              }).catch(function(){}));
+            }
+          });
+          Promise.all(tasks).then(function(){
+            if(changed) safeSave(db);
+          });
+        }, 800);
+      }
+      return r;
+    };
+  }
+
+  /* Patch PDF : si la photo est IDB-only, on la charge avant de l'ajouter au PDF */
+  // Pour simplicité, on prefetch avant la génération
+  var _origGenPDF = window.ajGeneratePDF;
+  if(_origGenPDF){
+    window.ajGeneratePDF = function(){
+      // Précharge toutes les photos IDB pour le client courant
+      if(!currentClientId){ return _origGenPDF.apply(this, arguments); }
+      var db = dbLoad();
+      var pieces = Object.values(db.pieces).filter(function(p){ return p.clientId === currentClientId; });
+      var tasks = [];
+      pieces.forEach(function(p){
+        (p.photos || []).forEach(function(ph){
+          if(ph.ref && ph.ref.indexOf('idb:') === 0 && !ph.data){
+            tasks.push(idbGet(ph.id).then(function(rec){ if(rec) ph.data = rec.data; }));
+          }
+        });
+      });
+      if(!tasks.length){ return _origGenPDF.apply(this, arguments); }
+      showToast('Chargement des photos...');
+      Promise.all(tasks).then(function(){
+        // Note : on a hydraté les photos en mémoire mais pas réécrit le DB (volontaire)
+        _origGenPDF.apply(window, []);
+      });
+    };
+  }
+
+  /* Bouton "Activer stockage étendu" + stats dans l'écran DB */
+  function injectIDBButton(){
+    var dbScreen = document.getElementById('screen-db');
+    if(!dbScreen || dbScreen._ajIDB) return;
+    dbScreen._ajIDB = true;
+    var bar = document.createElement('div');
+    bar.style.cssText = 'background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:12px;padding:14px 16px;margin:14px 0;font-family:Inter,sans-serif;';
+    var idbStatus = isIDBEnabled() ? '<span style="color:#1d4d33;font-weight:600;">✓ Activé</span>' : '<span style="color:#7a8896;">Désactivé</span>';
+    bar.innerHTML =
+      '<div style="font-weight:700;color:#0f2030;font-size:14px;margin-bottom:4px;">💾 Stockage étendu pour les photos</div>' +
+      '<div style="font-size:12px;color:#3a4a5c;margin-bottom:10px;">Limite localStorage = ~5 Mo. IndexedDB = plusieurs centaines de Mo. Recommandé si vous avez beaucoup de photos.</div>' +
+      '<div style="font-size:12px;color:#3a4a5c;margin-bottom:10px;">Statut : ' + idbStatus + ' <span id="aj-idb-count" style="margin-left:10px;color:#7a8896;"></span></div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<button class="btn btn-primary" onclick="ajMigratePhotosToIDB()">📦 Migrer photos vers stockage étendu</button>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#7a8896;margin-top:8px;font-style:italic;">⚠ Avant de migrer, exportez d\'abord une sauvegarde complète. Les photos restent visibles normalement.</div>';
+    dbScreen.appendChild(bar);
+    // Affiche le count IDB
+    if(idbAvailable){
+      idbCount().then(function(n){
+        var el = document.getElementById('aj-idb-count');
+        if(el) el.textContent = '· ' + n + ' photo(s) en stockage étendu';
+      }).catch(function(){});
+    }
+  }
+  setTimeout(injectIDBButton, 800);
+
+  /* Patch showScreen pour réinjecter quand on revient sur DB */
+  var _origShowScreen6 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen6.apply(this, arguments);
+    if(id === 'screen-db'){
+      var dbScreen = document.getElementById('screen-db');
+      if(dbScreen){ dbScreen._ajIDB = false; }
+      setTimeout(injectIDBButton, 100);
+    }
+    return r;
+  };
+
+  console.log('[AJ PRO] Phase 6 chargée (validation DB, auto-backup, IndexedDB photo offload ' + (idbAvailable?'OK':'non disponible') + ').');
+})();
 </script>
 </body>
 </html>
