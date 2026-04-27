@@ -10756,6 +10756,592 @@ renderHome();
 
   console.log('[AJ PRO] Phase 17 chargée (tutoriel onboarding ' + STEPS.length + ' étapes).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 18 : PARTAGE / EMAIL
+   • Bouton "Partager" sur la synthèse + bon de visite (Web Share API)
+   • Génère un mailto: pré-rempli avec sujet + corps de texte
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P18_LOADED) return;
+  window.__AJ_P18_LOADED = true;
+
+  function buildEmailBody(client, total){
+    var lines = [];
+    lines.push('Bonjour ' + (client.prenom || '') + ',');
+    lines.push('');
+    lines.push('Suite à notre rendez-vous du ' + (client.date || new Date().toLocaleDateString('fr-FR')) + ', voici un récapitulatif des travaux convenus :');
+    lines.push('');
+    if(currentClientId && typeof buildTravauxData === 'function'){
+      var data = buildTravauxData();
+      var prices = (function(){ try { return dbLoad().interventionPrices || {}; } catch(e){ return {}; } })();
+      var TRAVAUX_CATS_LOCAL = (typeof TRAVAUX_CATS !== 'undefined') ? TRAVAUX_CATS : [];
+      TRAVAUX_CATS_LOCAL.forEach(function(cat){
+        var its = data[cat.key] || []; if(!its.length) return;
+        lines.push('— ' + cat.label + ' —');
+        its.forEach(function(it){
+          if(it.status !== 'fini') return; // seulement les validés
+          var line = '  • ' + it.label + ' (' + it.piece + ')';
+          if(it.meta) line += ' — ' + it.meta;
+          if(prices[it.id]) line += ' = ' + prices[it.id] + ' EUR/u';
+          lines.push(line);
+        });
+      });
+      lines.push('');
+      if(total){
+        lines.push('Total estimé HT : ' + total.toLocaleString('fr-FR') + ' EUR');
+        lines.push('');
+      }
+    }
+    lines.push('Le devis détaillé suivra par mail séparé sous quelques jours.');
+    lines.push('');
+    lines.push('Cordialement,');
+    lines.push('AJ PRO RÉNOVATION');
+    return lines.join('\n');
+  }
+
+  window.ajShareSynthese = function(){
+    if(!currentClientId){ showToast('Sélectionnez un client'); return; }
+    var db = dbLoad();
+    var client = db.clients[currentClientId]; if(!client) return;
+    // Calcul total HT brut
+    var total = 0;
+    if(typeof buildTravauxData === 'function'){
+      var data = buildTravauxData();
+      var prices = db.interventionPrices || {};
+      Object.keys(data).forEach(function(k){
+        data[k].forEach(function(it){
+          if(prices[it.id] && it.status === 'fini'){
+            var qm = (it.meta || '').match(/([0-9]+(?:[.,][0-9]+)?)/);
+            var qty = qm ? parseFloat(qm[1].replace(',','.')) : 1;
+            total += prices[it.id] * qty;
+          }
+        });
+      });
+    }
+
+    var subject = 'Compte-rendu de visite — AJ PRO RÉNOVATION';
+    var body = buildEmailBody(client, total);
+
+    // Modal de choix : email / Web Share / copier
+    if(!document.getElementById('aj-share-modal')){
+      var m = document.createElement('div');
+      m.id = 'aj-share-modal';
+      m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.7);z-index:300;backdrop-filter:blur(4px);padding:20px;overflow-y:auto;';
+      m.innerHTML =
+        '<div style="max-width:440px;margin:60px auto;background:#fff;border-radius:14px;overflow:hidden;font-family:Inter,sans-serif;">' +
+          '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;padding:18px 20px;">' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:20px;font-weight:600;color:#c9a96e;">Partager avec le client</div>' +
+            '<div id="aj-share-client" style="font-size:12px;color:rgba(255,255,255,0.85);margin-top:2px;"></div>' +
+          '</div>' +
+          '<div style="padding:18px 20px;">' +
+            '<button id="aj-share-email" style="width:100%;padding:14px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:8px;">📧 Envoyer par email</button>' +
+            '<button id="aj-share-native" style="width:100%;padding:14px;background:#fff;color:#0f2030;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;margin-bottom:8px;">📤 Partager (WhatsApp / SMS / autre)</button>' +
+            '<button id="aj-share-copy" style="width:100%;padding:14px;background:#fff;color:#0f2030;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;font-weight:600;font-size:14px;margin-bottom:8px;">📋 Copier le texte</button>' +
+            '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px;margin-top:14px;font-size:11px;color:#7a8896;line-height:1.5;">' +
+              '💡 Le PDF complet (croquis + photos) doit être partagé séparément. Génère-le via le bouton "📄 PDF" et joins-le manuellement à ton email.' +
+            '</div>' +
+            '<button onclick="document.getElementById(\'aj-share-modal\').style.display=\'none\'" style="width:100%;padding:11px;background:transparent;border:none;color:#7a8896;cursor:pointer;margin-top:12px;font-family:Inter,sans-serif;">Fermer</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(m);
+      m.addEventListener('click', function(e){ if(e.target === m) m.style.display = 'none'; });
+    }
+
+    var modalEl = document.getElementById('aj-share-modal');
+    document.getElementById('aj-share-client').textContent = client.prenom + ' ' + client.nom + (client.tel ? ' · ' + client.tel : '');
+
+    document.getElementById('aj-share-email').onclick = function(){
+      var to = (client.email || '').trim();
+      var url = 'mailto:' + encodeURIComponent(to) + '?subject=' + encodeURIComponent(subject) + '&body=' + encodeURIComponent(body);
+      window.location.href = url;
+      modalEl.style.display = 'none';
+    };
+    document.getElementById('aj-share-native').onclick = function(){
+      if(navigator.share){
+        navigator.share({ title: subject, text: body }).catch(function(){});
+      } else {
+        showToast('Partage natif non supporté — essaie "Copier le texte"');
+      }
+      modalEl.style.display = 'none';
+    };
+    document.getElementById('aj-share-copy').onclick = function(){
+      try {
+        navigator.clipboard.writeText(subject + '\n\n' + body);
+        showToast('Texte copié ✓');
+      } catch(e){
+        var w = window.open('', '_blank');
+        if(w) w.document.write('<pre>' + (subject + '\n\n' + body).replace(/</g,'&lt;') + '</pre>');
+      }
+      modalEl.style.display = 'none';
+    };
+
+    modalEl.style.display = 'block';
+  };
+
+  /* Bouton "Partager" sur synthèse */
+  function injectShareButton(){
+    var screen = document.getElementById('screen-synthese');
+    if(!screen) return;
+    var actionRow = screen.querySelector('div[style*="gap:8px"]');
+    if(!actionRow || actionRow.querySelector('[data-aj-share]')) return;
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-secondary';
+    btn.setAttribute('data-aj-share','1');
+    btn.textContent = '📤 Partager';
+    btn.onclick = function(){ ajShareSynthese(); };
+    actionRow.insertBefore(btn, actionRow.firstChild);
+  }
+  var _origShowScreen18 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen18.apply(this, arguments);
+    if(id === 'screen-synthese') setTimeout(injectShareButton, 200);
+    return r;
+  };
+  setTimeout(injectShareButton, 1100);
+
+  /* Ajoute champ email au formulaire client */
+  function injectEmailField(){
+    if(document.getElementById('f-email')) return;
+    var telField = document.getElementById('f-tel');
+    if(!telField) return;
+    var fg = document.createElement('div');
+    fg.className = 'form-group';
+    fg.innerHTML = '<label class="form-label">Email (optionnel)</label>' +
+      '<input class="form-input" type="email" id="f-email" placeholder="client@exemple.fr" />';
+    if(telField.parentNode && telField.parentNode.parentNode){
+      telField.parentNode.parentNode.insertBefore(fg, telField.parentNode.nextSibling);
+    }
+  }
+  setTimeout(injectEmailField, 1200);
+
+  // Patch addClient pour persister email
+  var _origAddClient18 = window.addClient;
+  if(_origAddClient18){
+    window.addClient = function(){
+      var r = _origAddClient18.apply(this, arguments);
+      var email = (document.getElementById('f-email') || {}).value;
+      if(email){
+        var db = dbLoad();
+        if(currentClientId && db.clients[currentClientId]){
+          db.clients[currentClientId].email = email;
+          safeSave(db);
+        }
+      }
+      return r;
+    };
+  }
+
+  console.log('[AJ PRO] Phase 18 chargée (partage / email).');
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 19 : CARTE DES CHANTIERS (Leaflet + OpenStreetMap)
+   • Vue carte avec markers de tous les chantiers
+   • Click marker → fiche client
+   • Géocodage automatique des adresses (Nominatim, gratuit)
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P19_LOADED) return;
+  window.__AJ_P19_LOADED = true;
+
+  /* ─── 1) CHARGEMENT DE LEAFLET ─── */
+  var leafletLoaded = false;
+  function loadLeaflet(cb){
+    if(leafletLoaded && window.L) return cb();
+    // CSS
+    if(!document.getElementById('aj-leaflet-css')){
+      var css = document.createElement('link');
+      css.id = 'aj-leaflet-css';
+      css.rel = 'stylesheet';
+      css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+      document.head.appendChild(css);
+    }
+    // JS
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    s.onload = function(){ leafletLoaded = true; cb(); };
+    s.onerror = function(){ showToast('⚠ Échec chargement carte (vérifiez Internet)'); };
+    document.body.appendChild(s);
+  }
+
+  /* ─── 2) GÉOCODAGE NOMINATIM (cache) ─── */
+  var GEO_CACHE_KEY = 'aj-geocache-v1';
+  function loadGeoCache(){
+    try { return JSON.parse(localStorage.getItem(GEO_CACHE_KEY) || '{}') || {}; }
+    catch(e){ return {}; }
+  }
+  function saveGeoCache(cache){
+    try { localStorage.setItem(GEO_CACHE_KEY, JSON.stringify(cache)); } catch(e){}
+  }
+  function geocode(address, cb){
+    if(!address || !address.trim()) return cb(null);
+    var cache = loadGeoCache();
+    if(cache[address]){
+      return cb(cache[address]);
+    }
+    var url = 'https://nominatim.openstreetmap.org/search?format=json&q=' + encodeURIComponent(address) + '&countrycodes=fr&limit=1';
+    fetch(url, { headers: { 'User-Agent': 'AJ-PRO-Renovation/1.0' } })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if(data && data.length){
+          var coords = { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
+          cache[address] = coords;
+          saveGeoCache(cache);
+          cb(coords);
+        } else {
+          cb(null);
+        }
+      })
+      .catch(function(){ cb(null); });
+  }
+
+  /* ─── 3) ÉCRAN CARTE ─── */
+  function ensureMapScreen(){
+    if(document.getElementById('screen-map')) return;
+    var mc = document.querySelector('.main-content');
+    if(!mc) return;
+    var s = document.createElement('div');
+    s.className = 'screen';
+    s.id = 'screen-map';
+    s.innerHTML =
+      '<div style="padding:0 0 80px;">' +
+        '<div style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">' +
+          '<div>' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:#0f2030;">Carte des chantiers</div>' +
+            '<div id="aj-map-sub" style="font-size:13px;color:#3a4a5c;margin-top:4px;">Localisation de tous tes clients</div>' +
+          '</div>' +
+          '<button onclick="ajRefreshMap()" style="padding:10px 16px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-family:Inter,sans-serif;">↻ Actualiser</button>' +
+        '</div>' +
+        '<div id="aj-map-container" style="height:600px;border:1px solid var(--c-border,#e3dccc);border-radius:14px;overflow:hidden;background:#f4efe7;"></div>' +
+      '</div>';
+    mc.appendChild(s);
+  }
+
+  var ajMap = null;
+  var ajMarkers = [];
+
+  window.ajRefreshMap = function(){
+    ensureMapScreen();
+    var container = document.getElementById('aj-map-container');
+    var sub = document.getElementById('aj-map-sub');
+    if(!container) return;
+    loadLeaflet(function(){
+      if(!ajMap){
+        ajMap = L.map(container).setView([46.5, 2.3], 6); // France centre
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap',
+          maxZoom: 19
+        }).addTo(ajMap);
+      } else {
+        // Clear existing markers
+        ajMarkers.forEach(function(m){ ajMap.removeLayer(m); });
+        ajMarkers = [];
+        setTimeout(function(){ ajMap.invalidateSize(); }, 100);
+      }
+
+      var db = dbLoad();
+      var clients = Object.values(db.clients || {}).filter(function(c){ return c.adresse && c.adresse.trim(); });
+      if(sub) sub.textContent = clients.length + ' client(s) avec adresse — géocodage en cours...';
+
+      var bounds = [];
+      var done = 0, geocoded = 0, failed = 0;
+      if(!clients.length){
+        if(sub) sub.textContent = 'Aucun client avec adresse';
+        return;
+      }
+      clients.forEach(function(c, idx){
+        // Stagger requests to be polite to Nominatim (1 req/sec recommandé)
+        setTimeout(function(){
+          geocode(c.adresse, function(coords){
+            done++;
+            if(coords){
+              geocoded++;
+              var marker = L.marker([coords.lat, coords.lon]).addTo(ajMap);
+              var popup = '<div style="font-family:Inter,sans-serif;min-width:180px;">' +
+                '<div style="font-weight:700;font-size:14px;color:#0f2030;">' + (c.prenom||'') + ' ' + (c.nom||'') + '</div>' +
+                '<div style="font-size:11px;color:#7a8896;margin:4px 0;">' + (c.adresse || '') + '</div>' +
+                (c.tel ? '<div style="font-size:12px;"><a href="tel:' + c.tel + '">📞 ' + c.tel + '</a></div>' : '') +
+                '<button onclick="window.currentClientId=\'' + c.id + '\';showScreen(\'screen-client\');" style="margin-top:8px;width:100%;padding:6px 10px;background:#c9a96e;color:#0f2030;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:11px;">Ouvrir le chantier →</button>' +
+              '</div>';
+              marker.bindPopup(popup);
+              ajMarkers.push(marker);
+              bounds.push([coords.lat, coords.lon]);
+            } else {
+              failed++;
+            }
+            if(done === clients.length){
+              if(sub) sub.textContent = geocoded + ' chantier(s) localisé(s) · ' + failed + ' adresse(s) introuvable(s)';
+              if(bounds.length){
+                ajMap.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 });
+              }
+            }
+          });
+        }, idx * 1100); // 1.1s entre chaque pour respecter Nominatim
+      });
+    });
+  };
+
+  /* ─── 4) NAV-ITEM ─── */
+  function injectMapNav(){
+    var nav = document.querySelector('.sidebar-nav');
+    if(!nav || document.getElementById('aj-nav-map')) return;
+    var item = document.createElement('div');
+    item.className = 'nav-item';
+    item.id = 'aj-nav-map';
+    item.innerHTML =
+      '<span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span>' +
+      '<span>Carte</span>';
+    item.onclick = function(){
+      if(typeof closeSidebar === 'function' && window.innerWidth <= 980) closeSidebar();
+      screenHistory = [];
+      ensureMapScreen();
+      showScreen('screen-map');
+      setTimeout(ajRefreshMap, 200);
+    };
+    nav.appendChild(item);
+  }
+  setTimeout(injectMapNav, 1000);
+
+  var _origUpdateNav19 = window.updateNav;
+  window.updateNav = function(){
+    var r = _origUpdateNav19.apply(this, arguments);
+    var item = document.getElementById('aj-nav-map');
+    if(item){ item.classList.toggle('active', currentScreen === 'screen-map'); }
+    return r;
+  };
+
+  console.log('[AJ PRO] Phase 19 chargée (carte des chantiers).');
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 20 : OCR NOTES MANUSCRITES (Tesseract.js)
+   • Convertit une note manuscrite en texte modifiable
+   • Tesseract.js chargé à la demande (lourd, ~5 Mo)
+   • Bouton "Convertir en texte" sur chaque note
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P20_LOADED) return;
+  window.__AJ_P20_LOADED = true;
+
+  var tessLoaded = false;
+  function loadTesseract(cb){
+    if(tessLoaded && window.Tesseract) return cb();
+    var s = document.createElement('script');
+    s.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+    s.onload = function(){ tessLoaded = true; cb(); };
+    s.onerror = function(){ showToast('⚠ Échec chargement OCR'); };
+    document.body.appendChild(s);
+  }
+
+  window.ajOCRNote = function(noteId){
+    if(!currentPieceId){ showToast('Ouvrez une pièce'); return; }
+    var db = dbLoad();
+    var p = db.pieces[currentPieceId]; if(!p) return;
+    var note = (p.msNotes || []).find(function(n){ return n.id === noteId; });
+    if(!note || !note.data){ showToast('Note introuvable'); return; }
+    showToast('OCR en cours (peut prendre 10-30 sec)...');
+    loadTesseract(function(){
+      Tesseract.recognize(note.data, 'fra', {
+        logger: function(m){
+          if(m.status === 'recognizing text'){
+            // Could update progress
+          }
+        }
+      }).then(function(result){
+        var text = (result && result.data && result.data.text) || '';
+        text = text.trim();
+        if(!text){
+          showToast('OCR : aucun texte détecté');
+          return;
+        }
+        showOCRResult(noteId, note.title, text);
+      }).catch(function(e){
+        showToast('⚠ OCR échoué : ' + (e.message || e));
+      });
+    });
+  };
+
+  function showOCRResult(noteId, title, text){
+    if(!document.getElementById('aj-ocr-modal')){
+      var m = document.createElement('div');
+      m.id = 'aj-ocr-modal';
+      m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.7);z-index:300;backdrop-filter:blur(4px);padding:20px;overflow-y:auto;';
+      m.innerHTML =
+        '<div style="max-width:560px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;font-family:Inter,sans-serif;">' +
+          '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;padding:18px 20px;">' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:20px;font-weight:600;color:#c9a96e;">Texte reconnu (OCR)</div>' +
+            '<div id="aj-ocr-title" style="font-size:12px;color:rgba(255,255,255,0.85);margin-top:2px;"></div>' +
+          '</div>' +
+          '<div style="padding:18px 20px;">' +
+            '<div style="font-size:11px;color:#7a8896;margin-bottom:6px;">Tu peux éditer ce texte avant de l\'enregistrer en complément de la note manuscrite.</div>' +
+            '<textarea id="aj-ocr-text" style="width:100%;min-height:200px;padding:12px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-family:monospace;font-size:13px;resize:vertical;"></textarea>' +
+            '<div style="display:flex;gap:8px;margin-top:14px;">' +
+              '<button onclick="document.getElementById(\'aj-ocr-modal\').style.display=\'none\'" style="flex:1;padding:11px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;color:#7a8896;font-weight:500;">Fermer</button>' +
+              '<button onclick="ajCopyOCRText()" style="flex:1;padding:11px;background:#fff;color:#0f2030;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;font-weight:600;">📋 Copier</button>' +
+              '<button onclick="ajSaveOCRText()" style="flex:1;padding:11px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;cursor:pointer;font-weight:700;">💾 Enregistrer</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(m);
+    }
+    document.getElementById('aj-ocr-title').textContent = title || '';
+    document.getElementById('aj-ocr-text').value = text;
+    window._ajOCRNoteId = noteId;
+    document.getElementById('aj-ocr-modal').style.display = 'block';
+  }
+
+  window.ajCopyOCRText = function(){
+    var txt = (document.getElementById('aj-ocr-text') || {}).value || '';
+    try { navigator.clipboard.writeText(txt); showToast('Copié ✓'); } catch(e){}
+  };
+
+  window.ajSaveOCRText = function(){
+    var txt = (document.getElementById('aj-ocr-text') || {}).value || '';
+    if(!window._ajOCRNoteId || !currentPieceId) return;
+    var db = dbLoad();
+    var p = db.pieces[currentPieceId]; if(!p) return;
+    var note = (p.msNotes || []).find(function(n){ return n.id === window._ajOCRNoteId; });
+    if(note){
+      note.ocrText = txt;
+      safeSave(db);
+      showToast('Texte OCR enregistré ✓');
+    }
+    document.getElementById('aj-ocr-modal').style.display = 'none';
+  };
+
+  /* ─── INJECTION DU BOUTON OCR SUR LES NOTES ─── */
+  // On observe le DOM pour injecter le bouton OCR sur chaque note manuscrite affichée
+  function injectOCRButtons(){
+    var notesItems = document.querySelectorAll('.travaux-note-item, [data-ms-inline] img, .ms-note-thumb');
+    notesItems.forEach(function(item){
+      if(item._ajOCRWired) return;
+      var img = item.querySelector ? item.querySelector('img') : null;
+      if(!img && item.tagName === 'IMG') img = item;
+      if(!img || !img.src || img.src.indexOf('data:image') !== 0) return;
+      // Trouve l'id de la note dans le DOM environnant (heuristique)
+      // Les notes inline ont en général un onclick avec l'id
+      // Plutôt que deviner, on ajoute un bouton flottant qui demande quelle note convertir
+      item._ajOCRWired = true;
+    });
+  }
+  setTimeout(injectOCRButtons, 1500);
+
+  /* Bouton OCR global dans la sidebar (bas) — alternative simple */
+  function injectOCRMenuButton(){
+    if(document.getElementById('aj-ocr-fab')) return;
+    var fab = document.getElementById('aj-fab');
+    if(!fab) return;
+    // Ajoute un bouton OCR à la barre flottante existante
+    if(fab.querySelector('[data-aj-ocr]')) return;
+    var btn = document.createElement('button');
+    btn.setAttribute('data-aj-ocr','1');
+    btn.title = 'OCR : convertir notes manuscrites en texte';
+    btn.style.cssText = 'width:46px;height:46px;border:none;border-radius:10px;background:#fbf8f2;color:#0f2030;font-size:14px;cursor:pointer;font-weight:600;';
+    btn.textContent = '🔍';
+    btn.onclick = function(){
+      if(!currentPieceId){ showToast('Ouvrez une pièce'); return; }
+      var db = dbLoad();
+      var p = db.pieces[currentPieceId];
+      if(!p || !p.msNotes || !p.msNotes.length){
+        showToast('Aucune note manuscrite à convertir');
+        return;
+      }
+      var opts = p.msNotes.map(function(n){ return { label: '🔍 ' + (n.title || 'Note'), value: n.id }; });
+      customPrompt('Quelle note convertir en texte ?', opts, function(noteId){
+        if(noteId) ajOCRNote(noteId);
+      });
+    };
+    fab.appendChild(btn);
+  }
+  setTimeout(injectOCRMenuButton, 1300);
+
+  console.log('[AJ PRO] Phase 20 chargée (OCR notes manuscrites).');
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 21 : MODE PRÉSENTATION CLIENT
+   • Affichage plein écran de la synthèse pour la montrer au client
+   • Cache la sidebar et la topbar, agrandit les textes
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P21_LOADED) return;
+  window.__AJ_P21_LOADED = true;
+
+  window.ajPresentationMode = function(){
+    if(currentScreen !== 'screen-synthese'){
+      showToast('Va sur Synthèse devis d\'abord');
+      return;
+    }
+    if(!document.getElementById('aj-presentation-style')){
+      var s = document.createElement('style');
+      s.id = 'aj-presentation-style';
+      s.textContent = [
+        '.aj-presenting .sidebar { display:none !important; }',
+        '.aj-presenting .topbar { display:none !important; }',
+        '.aj-presenting .main-area { padding:20px 40px !important; }',
+        '.aj-presenting .main-content { font-size:16px !important; }',
+        '.aj-presenting #aj-fab { display:none !important; }',
+        '.aj-presenting #aj-checklist-bar { display:none !important; }',
+        '#aj-exit-presentation { position:fixed; top:14px; right:14px; z-index:500; padding:10px 16px; background:#c62828; color:#fff; border:none; border-radius:8px; cursor:pointer; font-family:Inter,sans-serif; font-weight:600; box-shadow:0 4px 12px rgba(0,0,0,0.3); }',
+        '#aj-exit-presentation:hover { background:#a01e1e; }'
+      ].join('\n');
+      document.head.appendChild(s);
+    }
+    document.body.classList.add('aj-presenting');
+    if(!document.getElementById('aj-exit-presentation')){
+      var btn = document.createElement('button');
+      btn.id = 'aj-exit-presentation';
+      btn.textContent = '✕ Quitter la présentation';
+      btn.onclick = function(){ ajExitPresentation(); };
+      document.body.appendChild(btn);
+    }
+    // Try fullscreen
+    if(document.documentElement.requestFullscreen){
+      document.documentElement.requestFullscreen().catch(function(){});
+    }
+    showToast('Mode présentation actif — montre la synthèse au client');
+  };
+
+  window.ajExitPresentation = function(){
+    document.body.classList.remove('aj-presenting');
+    var btn = document.getElementById('aj-exit-presentation');
+    if(btn) btn.remove();
+    if(document.exitFullscreen && document.fullscreenElement){
+      document.exitFullscreen().catch(function(){});
+    }
+  };
+
+  document.addEventListener('keydown', function(e){
+    if(e.key === 'Escape' && document.body.classList.contains('aj-presenting')){
+      ajExitPresentation();
+    }
+  });
+
+  /* Bouton "Présenter" sur synthèse */
+  function injectPresentBtn(){
+    var screen = document.getElementById('screen-synthese');
+    if(!screen) return;
+    var actionRow = screen.querySelector('div[style*="gap:8px"]');
+    if(!actionRow || actionRow.querySelector('[data-aj-present]')) return;
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-secondary';
+    btn.setAttribute('data-aj-present','1');
+    btn.textContent = '🎬 Présenter';
+    btn.title = 'Mode plein écran pour montrer au client';
+    btn.onclick = function(){ ajPresentationMode(); };
+    actionRow.insertBefore(btn, actionRow.firstChild);
+  }
+  var _origShowScreen21 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen21.apply(this, arguments);
+    if(id === 'screen-synthese') setTimeout(injectPresentBtn, 250);
+    return r;
+  };
+  setTimeout(injectPresentBtn, 1200);
+
+  console.log('[AJ PRO] Phase 21 chargée (mode présentation client).');
+})();
 </script>
 </body>
 </html>
