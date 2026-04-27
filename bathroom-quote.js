@@ -765,6 +765,969 @@
     renderScreen: renderBathroomScreen
   };
 
+  /* ═══════════════════════════════════════════════════════════════════
+     ════════════════════ COMMIT B — WIZARD 12 ÉTAPES ══════════════════
+     ═══════════════════════════════════════════════════════════════════ */
+
+  /* ─── HELPERS DE CALCUL ─── */
+  function pf(v){ if(v == null) return 0; var n = parseFloat(String(v).replace(',','.')); return isNaN(n) ? 0 : n; }
+  function fmtEur(v){ if(v == null || isNaN(v)) return '— €'; return v.toLocaleString('fr-FR', {maximumFractionDigits:2, minimumFractionDigits: v % 1 === 0 ? 0 : 2}) + ' €'; }
+  function r2(v){ return Math.round(v * 100) / 100; }
+
+  function computeMeasurements(fd){
+    var L = pf(fd['mesures.longueur']);
+    var l = pf(fd['mesures.largeur']);
+    var H = pf(fd['mesures.hsp']);
+    var nbPortes = parseInt(fd['mesures.nbPortes'], 10); if(isNaN(nbPortes)) nbPortes = 1;
+    var nbFenetres = parseInt(fd['mesures.nbFenetres'], 10); if(isNaN(nbFenetres)) nbFenetres = 0;
+    var hauteurCarrelage = pf(fd['carrelage.hauteurMurale']) || H;
+    var chutesPct = pf(fd['carrelage.chutesPct']) || 10;
+    var ba13Surface = pf(fd['demolition.ba13SurfaceM2']) || 0;
+
+    var surfaceSol = L * l;
+    var surfacePlafond = L * l;
+    var perimetre = 2 * (L + l);
+    var surfaceMursBrute = perimetre * H;
+    var deductPortes = nbPortes * 1.62;
+    var deductFenetres = nbFenetres * 1.44;
+    var surfaceMursNette = Math.max(0, surfaceMursBrute - deductPortes - deductFenetres);
+    var surfaceMurale = Math.max(0, perimetre * hauteurCarrelage - deductPortes - deductFenetres);
+    var plinthesML = Math.max(0, perimetre - (nbPortes * 0.83));
+
+    return {
+      L:L, l:l, H:H,
+      surfaceSol: r2(surfaceSol),
+      surfacePlafond: r2(surfacePlafond),
+      perimetre: r2(perimetre),
+      surfaceMursBrute: r2(surfaceMursBrute),
+      surfaceMursNette: r2(surfaceMursNette),
+      surfaceMurale: r2(surfaceMurale),
+      plinthesML: r2(plinthesML),
+      surfaceSolAvecChutes: r2(surfaceSol * (1 + chutesPct/100)),
+      plinthesMLAvecChutes: r2(plinthesML * (1 + chutesPct/100)),
+      surfaceMuraleAvecChutes: r2(surfaceMurale * (1 + chutesPct/100)),
+      ba13Surface: r2(ba13Surface)
+    };
+  }
+
+  function evaluateTrigger(triggerPath, formData){
+    if(!triggerPath) return false;
+    var v = formData[triggerPath];
+    if(v === true) return true;
+    if(typeof v === 'string'){
+      if(!v) return false;
+      if(v === 'aucun' || v === 'non' || v === '0' || v === 'false') return false;
+      return true;
+    }
+    if(typeof v === 'number') return v > 0;
+    return false;
+  }
+
+  function generateLines(template, formData){
+    var measures = computeMeasurements(formData);
+    var sections = [];
+
+    template.sections.forEach(function(sec){
+      var sectionLines = [];
+
+      var processItem = function(it){
+        var qty = it.defaultQty != null ? it.defaultQty : 0;
+        var price = it.defaultPrice != null ? it.defaultPrice : 0;
+        var include = false;
+        var displayLabel = it.label;
+
+        /* Logique d'inclusion */
+        if(it.isMandatory){
+          include = true;
+        } else if(it.displayOnly){
+          /* Lignes informatives (commentaires, mise en sécurité) toujours affichées */
+          include = true;
+        } else if(it.trigger){
+          if(evaluateTrigger(it.trigger, formData)){
+            include = true;
+          } else if(it.showWhenZero){
+            /* Affichée à 0 € pour montrer ce qui a été discuté */
+            include = true; price = 0;
+          }
+        }
+
+        if(!include) return;
+
+        /* Quantité auto via formule */
+        if(it.qtyFormula && measures[it.qtyFormula] != null){
+          qty = measures[it.qtyFormula];
+        }
+
+        /* "Fourni par client" → prix à 0 + suffixe */
+        var fourniClientPath = it.trigger ? it.trigger + '.fourniClient' : null;
+        if(fourniClientPath && formData[fourniClientPath] === true){
+          price = 0;
+          displayLabel = it.label + ' (fourni par le client)';
+        }
+
+        /* Override utilisateur depuis le récap */
+        var ovQty = formData['override.' + it.key + '.qty'];
+        var ovPrice = formData['override.' + it.key + '.price'];
+        var ovLabel = formData['override.' + it.key + '.label'];
+        if(ovQty != null && ovQty !== '') qty = pf(ovQty);
+        if(ovPrice != null && ovPrice !== '') price = pf(ovPrice);
+        if(ovLabel) displayLabel = ovLabel;
+
+        /* Cas négatif (annulation, ex: 8.5) */
+        var total = qty * price;
+        if(it.isNegative) total = -Math.abs(total);
+
+        sectionLines.push({
+          key: it.key,
+          label: displayLabel,
+          description: it.description || '',
+          unit: it.unit,
+          qty: r2(qty),
+          price: r2(price),
+          total: r2(total),
+          isFourniture: it.isFourniture || sec.isFourniture || false,
+          showWhenZero: !!it.showWhenZero,
+          displayOnly: !!it.displayOnly
+        });
+      };
+
+      (sec.items || []).forEach(processItem);
+      (sec.subSections || []).forEach(function(sub){
+        sub.items.forEach(processItem);
+      });
+
+      if(sectionLines.length){
+        var sousTotal = sectionLines.reduce(function(s, l){ return s + l.total; }, 0);
+        sections.push({
+          sectionId: sec.id,
+          sectionNum: sec.num,
+          sectionTitle: sec.title,
+          isOption: !!sec.isOption,
+          isFourniture: !!sec.isFourniture,
+          items: sectionLines,
+          sousTotal: r2(sousTotal)
+        });
+      }
+    });
+
+    return sections;
+  }
+
+  function computeTotals(lineSections, settings){
+    var s = Object.assign({ vatRate: 10, depositPct: 30 }, settings || {});
+    var totalHT = 0, totalOptionsHT = 0;
+    lineSections.forEach(function(sec){
+      if(sec.isOption) totalOptionsHT += sec.sousTotal;
+      else totalHT += sec.sousTotal;
+    });
+    var tva = totalHT * s.vatRate / 100;
+    var totalTTC = totalHT + tva;
+    var acompte = totalTTC * s.depositPct / 100;
+    return {
+      totalHT: r2(totalHT),
+      totalOptionsHT: r2(totalOptionsHT),
+      tva: r2(tva),
+      totalTTC: r2(totalTTC),
+      acompte: r2(acompte),
+      solde: r2(totalTTC - acompte),
+      vatRate: s.vatRate,
+      depositPct: s.depositPct
+    };
+  }
+
+  /* ─── HELPERS DE BIND DOM (data-aj-bind) ─── */
+  var BindCtx = (function(){
+    function valOf(path){
+      if(!_currentDraft) return '';
+      var v = _currentDraft.formData[path];
+      return v == null ? '' : v;
+    }
+    function checked(path){ return _currentDraft && _currentDraft.formData[path] === true; }
+    function escAttr(s){ return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
+    var iCount = 0;
+    function uniqId(p){ return 'b_' + (++iCount); }
+
+    function input(path, label, type, opts){
+      type = type || 'text';
+      opts = opts || {};
+      var v = valOf(path);
+      var attrs = '';
+      if(opts.placeholder) attrs += ' placeholder="' + escAttr(opts.placeholder) + '"';
+      if(opts.step) attrs += ' step="' + opts.step + '"';
+      if(opts.min != null) attrs += ' min="' + opts.min + '"';
+      if(opts.max != null) attrs += ' max="' + opts.max + '"';
+      if(type === 'number') attrs += ' inputmode="decimal" pattern="[0-9]*[.,]?[0-9]*"';
+      var suffix = opts.suffix ? '<span style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:#7a8896;font-size:13px;pointer-events:none;font-family:Inter,sans-serif;">' + escAttr(opts.suffix) + '</span>' : '';
+      return '<div class="aj-fg" style="display:flex;flex-direction:column;gap:6px;">' +
+        (label ? '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">' + safeEsc(label) + '</label>' : '') +
+        '<div style="position:relative;">' +
+          '<input type="' + type + '" data-aj-bind="' + escAttr(path) + '" value="' + escAttr(v) + '"' + attrs + ' style="width:100%;padding:11px 14px' + (opts.suffix ? ' 11px 14px;padding-right:50px' : '') + ';border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-size:14px;font-family:Inter,sans-serif;background:#fff;color:#0f2030;outline:none;" />' +
+          suffix +
+        '</div>' +
+      '</div>';
+    }
+
+    function textarea(path, label, opts){
+      opts = opts || {};
+      var v = valOf(path);
+      return '<div class="aj-fg" style="display:flex;flex-direction:column;gap:6px;grid-column:1/-1;">' +
+        (label ? '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">' + safeEsc(label) + '</label>' : '') +
+        '<textarea data-aj-bind="' + escAttr(path) + '"' + (opts.placeholder ? ' placeholder="' + escAttr(opts.placeholder) + '"' : '') + ' rows="' + (opts.rows || 3) + '" style="width:100%;padding:11px 14px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-size:14px;font-family:Inter,sans-serif;background:#fff;color:#0f2030;outline:none;resize:vertical;">' + safeEsc(v) + '</textarea>' +
+      '</div>';
+    }
+
+    function check(path, label, sub){
+      var c = checked(path);
+      return '<label class="aj-check" data-aj-check-wrap="' + escAttr(path) + '" style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;background:' + (c ? 'rgba(201,169,110,0.12)' : '#fff') + ';border:1.5px solid ' + (c ? '#c9a96e' : 'var(--c-border,#e3dccc)') + ';border-radius:10px;cursor:pointer;font-family:Inter,sans-serif;transition:all 0.15s;">' +
+        '<input type="checkbox" data-aj-bind="' + escAttr(path) + '"' + (c ? ' checked' : '') + ' style="width:20px;height:20px;margin:0;flex-shrink:0;accent-color:#c9a96e;cursor:pointer;" />' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;font-size:13px;color:#0f2030;">' + safeEsc(label) + '</div>' +
+          (sub ? '<div style="font-size:11px;color:#7a8896;margin-top:2px;">' + safeEsc(sub) + '</div>' : '') +
+        '</div>' +
+      '</label>';
+    }
+
+    function toggle(path, label, options){
+      var v = valOf(path);
+      var html = (label ? '<div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px;">' + safeEsc(label) + '</div>' : '') +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;" data-aj-toggle-group="' + escAttr(path) + '">' +
+        options.map(function(opt){
+          var optVal = typeof opt === 'string' ? opt : opt.value;
+          var optLabel = typeof opt === 'string' ? opt : opt.label;
+          var sel = String(v) === String(optVal);
+          return '<button type="button" data-aj-toggle-bind="' + escAttr(path) + '" data-aj-toggle-val="' + escAttr(optVal) + '" style="flex:1;min-width:90px;padding:10px 14px;border:1.5px solid ' + (sel ? '#c9a96e' : 'var(--c-border,#e3dccc)') + ';background:' + (sel ? 'rgba(201,169,110,0.18)' : '#fff') + ';color:#0f2030;border-radius:8px;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;font-weight:' + (sel ? '700' : '500') + ';transition:all 0.15s;">' + safeEsc(optLabel) + '</button>';
+        }).join('') +
+        '</div>';
+      return '<div class="aj-fg">' + html + '</div>';
+    }
+
+    function select(path, label, options, opts){
+      opts = opts || {};
+      var v = valOf(path);
+      return '<div class="aj-fg" style="display:flex;flex-direction:column;gap:6px;">' +
+        (label ? '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;">' + safeEsc(label) + '</label>' : '') +
+        '<select data-aj-bind="' + escAttr(path) + '" style="width:100%;padding:11px 14px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-size:14px;font-family:Inter,sans-serif;background:#fff;color:#0f2030;outline:none;">' +
+        (opts.placeholder ? '<option value="">' + safeEsc(opts.placeholder) + '</option>' : '') +
+        options.map(function(o){
+          var ov = typeof o === 'string' ? o : o.value;
+          var ol = typeof o === 'string' ? o : o.label;
+          return '<option value="' + escAttr(ov) + '"' + (String(v) === String(ov) ? ' selected' : '') + '>' + safeEsc(ol) + '</option>';
+        }).join('') +
+        '</select>' +
+      '</div>';
+    }
+
+    function helpBox(text, color){
+      var c = color || '#c9a96e';
+      return '<div style="background:rgba(201,169,110,0.08);border-left:3px solid ' + c + ';padding:10px 14px;border-radius:6px;font-family:Inter,sans-serif;font-size:12px;color:#3a4a5c;line-height:1.5;">' + text + '</div>';
+    }
+
+    return { input:input, textarea:textarea, check:check, toggle:toggle, select:select, helpBox:helpBox, valOf:valOf, checked:checked };
+  })();
+
+  /* ─── DÉFINITION DES 12 ÉTAPES ─── */
+  var STEPS = [
+    {
+      id: 'step-1-client', num: 1, title: 'Client & chantier', icon: '👤',
+      render: function(draft){
+        var b = BindCtx;
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;">' +
+            b.input('client.prenom', 'Prénom') +
+            b.input('client.nom', 'Nom') +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;">' +
+            b.input('client.tel', 'Téléphone', 'tel') +
+            b.input('client.email', 'Email', 'email') +
+          '</div>' +
+          b.input('client.adresseChantier', 'Adresse du chantier', 'text', { placeholder: 'N°, rue, code postal, ville' }) +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;">' +
+            b.input('client.etage', 'Étage') +
+            b.toggle('client.ascenseur', 'Ascenseur', ['Oui','Non']) +
+            b.input('client.codeAcces', 'Code d\'accès') +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;">' +
+            b.toggle('client.typeLogement', 'Type', ['Appartement','Maison','Copropriété']) +
+            b.toggle('client.occupe', 'Logement occupé', ['Oui','Non']) +
+          '</div>' +
+          b.textarea('client.observations', 'Observations générales', { placeholder: 'Particularités d\'accès, contraintes copro, dispo client...', rows: 3 });
+      }
+    },
+
+    {
+      id: 'step-2-mesures', num: 2, title: 'Mesures pièce', icon: '📐',
+      render: function(draft){
+        var b = BindCtx;
+        var measures = computeMeasurements(draft.formData);
+        var hasMeasures = measures.L > 0 && measures.l > 0;
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.toggle('mesures.typeProjet', 'Type de projet', [
+            { value:'complete', label:'Rénovation complète' },
+            { value:'partielle', label:'Rénovation partielle' }
+          ]) +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;">' +
+            b.input('mesures.longueur', 'Longueur', 'number', { suffix:'m', step:'0.05' }) +
+            b.input('mesures.largeur', 'Largeur', 'number', { suffix:'m', step:'0.05' }) +
+            b.input('mesures.hsp', 'Hauteur sous plafond', 'number', { suffix:'m', step:'0.05' }) +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;">' +
+            b.input('mesures.nbPortes', 'Nombre de portes', 'number', { step:'1', min:'0', max:'5' }) +
+            b.input('mesures.nbFenetres', 'Nombre de fenêtres', 'number', { step:'1', min:'0', max:'5' }) +
+          '</div>' +
+          (hasMeasures ?
+            '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:14px;font-family:Inter,sans-serif;">' +
+              '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.6px;font-weight:600;margin-bottom:10px;">Calculs automatiques</div>' +
+              '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;font-size:13px;">' +
+                '<div><div style="color:#7a8896;font-size:11px;">Surface sol</div><div style="font-weight:600;color:#0f2030;">' + measures.surfaceSol + ' m²</div></div>' +
+                '<div><div style="color:#7a8896;font-size:11px;">Périmètre</div><div style="font-weight:600;color:#0f2030;">' + measures.perimetre + ' ml</div></div>' +
+                '<div><div style="color:#7a8896;font-size:11px;">Surface murs (brute)</div><div style="font-weight:600;color:#0f2030;">' + measures.surfaceMursBrute + ' m²</div></div>' +
+                '<div><div style="color:#7a8896;font-size:11px;">Surface murs (nette)</div><div style="font-weight:600;color:#c9a96e;">' + measures.surfaceMursNette + ' m²</div></div>' +
+              '</div>' +
+            '</div>'
+            : b.helpBox('Saisis longueur, largeur et HSP : les surfaces et le périmètre se calculent automatiquement.')
+          ) +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px;">' +
+            b.toggle('mesures.carrelageMuralExistant', 'Carrelage mural existant ?', ['Oui','Non']) +
+            b.toggle('mesures.carrelageSolExistant', 'Carrelage sol existant ?', ['Oui','Non']) +
+          '</div>';
+      }
+    },
+
+    {
+      id: 'step-3-demolition', num: 3, title: 'Démolition / préparation', icon: '🔨',
+      render: function(draft){
+        var b = BindCtx;
+        return '<div style="display:flex;flex-direction:column;gap:10px;">' +
+          b.helpBox('Coche tout ce qui est nécessaire avant les travaux. Protection sols et évacuation gravats sont déjà obligatoires.') +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('demolition.deposeSanitaires', 'Dépose appareils sanitaires + mobilier', '300 €') +
+            b.check('demolition.deposeWcSuspendu', 'Dépose toilettes suspendues', 'inclus') +
+            b.check('demolition.deposeCarrelageMural', 'Dépose carrelage mural + plinthes', 'inclus') +
+            b.check('demolition.deposeCoffrages', 'Dépose des coffrages tuyaux', '80 €') +
+            b.check('demolition.repriseAlignements', 'Reprise alignements murs', '220 €') +
+            b.check('demolition.ba13Hydro', 'Reprise murs avec BA13 hydro', '90 €/m²') +
+          '</div>' +
+          (b.checked('demolition.ba13Hydro') ? b.input('demolition.ba13SurfaceM2', 'Surface BA13 à reprendre', 'number', { suffix:'m²', step:'0.5' }) : '');
+      }
+    },
+
+    {
+      id: 'step-4-douche-baignoire', num: 4, title: 'Douche / baignoire', icon: '🚿',
+      render: function(draft){
+        var b = BindCtx;
+        var choix = draft.formData['equipement.choix'] || '';
+        var html = '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.toggle('equipement.choix', 'Choix de l\'équipement', [
+            { value:'douche', label:'Douche' },
+            { value:'baignoire', label:'Baignoire' },
+            { value:'douche-baignoire', label:'Douche + Baignoire' },
+            { value:'aucun', label:'Aucun' }
+          ]);
+
+        if(choix === 'douche' || choix === 'douche-baignoire'){
+          /* Active automatiquement les triggers douche */
+          html += '<div style="background:rgba(13,70,144,0.04);border:1px solid rgba(13,70,144,0.20);border-radius:10px;padding:14px;">' +
+            '<div style="font-weight:700;color:#0d4690;margin-bottom:10px;font-family:Inter,sans-serif;">🚿 Douche</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+              b.check('douche.plomberie', 'Pose receveur + raccordement (1200 €)') +
+              b.check('douche.paroi', 'Paroi / porte de douche (280 €)') +
+              b.check('douche.tablier', 'Création tablier receveur (120 €)') +
+              b.check('douche.margelle', 'Création margelle (100 €)') +
+              b.check('fournitures.receveurDouche', 'Receveur extraplat 80x120 (240 €)') +
+              b.check('fournitures.mitigeurDouche', 'Mitigeur Hansgrohe (149 €)') +
+              b.check('fournitures.kitBarreDouche', 'Kit barre + pommeau (69 €)') +
+              b.check('fournitures.paroiFixe', 'Paroi fixe verre L80 (190 €)') +
+              b.check('fournitures.paroiPivotante', 'Paroi pivotante (130 €)') +
+              b.check('fournitures.grilleControle', 'Grille de contrôle (17 €)') +
+            '</div>' +
+          '</div>';
+        }
+        if(choix === 'baignoire' || choix === 'douche-baignoire'){
+          html += '<div style="background:rgba(45,106,79,0.04);border:1px solid rgba(45,106,79,0.20);border-radius:10px;padding:14px;">' +
+            '<div style="font-weight:700;color:#1d4d33;margin-bottom:10px;font-family:Inter,sans-serif;">🛁 Baignoire</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+              b.check('baignoire.plomberie', 'Pose baignoire + raccordement (1200 €)') +
+              b.check('baignoire.ecran', 'Écran de baignoire (95 €)') +
+              b.check('baignoire.tablier', 'Création tablier baignoire (250 €)') +
+              b.check('baignoire.margelle', 'Création margelle (100 €)') +
+              b.check('fournitures.baignoire', 'Baignoire 170x70 (190 €)') +
+              b.check('fournitures.mitigeurBain', 'Mitigeur Hansgrohe (179 €)') +
+              b.check('fournitures.vidageBaignoire', 'Vidage automatique (75,30 €)') +
+              b.check('fournitures.trappeAcces', 'Trappe d\'accès (67 €)') +
+              b.check('fournitures.ecranBaignoire', 'Écran baignoire 70x140 (99 €)') +
+            '</div>' +
+          '</div>';
+        }
+        if(!choix || choix === 'aucun'){
+          html += b.helpBox('Sélectionne le type d\'équipement bain pour faire apparaître les options.');
+        }
+        return html + '</div>';
+      }
+    },
+
+    {
+      id: 'step-5-toilettes', num: 5, title: 'Toilettes', icon: '🚽',
+      render: function(draft){
+        var b = BindCtx;
+        var type = draft.formData['wc.type'] || '';
+        var html = '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.toggle('wc.type', 'Type de WC', [
+            { value:'aucun', label:'Aucun' },
+            { value:'suspendu', label:'WC suspendu' },
+            { value:'a-poser', label:'WC à poser' }
+          ]);
+
+        if(type === 'suspendu'){
+          /* triggers : wc.suspendu.* */
+          html += '<div style="background:rgba(74,53,101,0.04);border:1px solid rgba(74,53,101,0.20);border-radius:10px;padding:14px;">' +
+            '<div style="font-weight:700;color:#4a3565;margin-bottom:10px;font-family:Inter,sans-serif;">🚽 WC suspendu</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+              b.check('wc.suspendu.plomberie', 'Pose châssis + cuvette + plaque (630 €)') +
+              b.check('wc.suspendu.habillage', 'Habillage du châssis (270 €)') +
+              b.check('fournitures.chassisGeberit', 'Châssis Geberit UP320 (290 €)') +
+              b.check('fournitures.plaqueSigma20', 'Plaque Sigma 20 chromé (115 €)') +
+              b.check('fournitures.cuvetteSuspendue', 'Cuvette carénée + abattant (180 €)') +
+            '</div>' +
+          '</div>';
+        } else if(type === 'a-poser'){
+          html += '<div style="background:rgba(13,70,144,0.04);border:1px solid rgba(13,70,144,0.20);border-radius:10px;padding:14px;">' +
+            '<div style="font-weight:700;color:#0d4690;margin-bottom:10px;font-family:Inter,sans-serif;">🚽 WC à poser</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+              b.check('wc.aPoser.plomberie', 'Pose + raccordement + abattant (280 €)') +
+              b.check('fournitures.packWcAPoser', 'Pack WC + abattant frein (180 €)') +
+            '</div>' +
+          '</div>';
+        }
+        return html + '</div>';
+      }
+    },
+
+    {
+      id: 'step-6-vasque', num: 6, title: 'Vasque & mobilier', icon: '🪞',
+      render: function(draft){
+        var b = BindCtx;
+        var nbVasques = draft.formData['vasque.nombre'] || '';
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.toggle('vasque.nombre', 'Nombre de vasques', [
+            { value:'aucune', label:'Aucune' },
+            { value:'simple', label:'Simple' },
+            { value:'double', label:'Double' }
+          ]) +
+          (nbVasques === 'simple' ? '<div data-aj-trigger-set="vasque.plomberie.simple:true"></div>' : '') +
+          (nbVasques === 'double' ? '<div data-aj-trigger-set="vasque.plomberie.double:true"></div>' : '') +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('vasque.plomberie.simple', 'Plomberie vasque simple (350 €)') +
+            b.check('vasque.plomberie.double', 'Plomberie vasque double (450 €)') +
+            b.check('vasque.meuble', 'Pose meuble sous-vasque (250 €)') +
+            b.check('vasque.miroir', 'Pose miroir / armoire (80 €)') +
+            b.check('vasque.colonneRangement', 'Pose colonne rangement (90 €)') +
+            b.check('vasque.accessoires', 'Pose accessoires (80 €)') +
+          '</div>' +
+          '<div style="font-size:12px;color:#3a4a5c;font-weight:600;margin-top:6px;">Fournitures mobilier</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('fournitures.meubleSousVasque', 'Meuble sous-vasque L80 (350 €)') +
+            b.check('fournitures.vasque', 'Vasque (120 €)') +
+            b.check('fournitures.piedsMeuble', 'Lot 2 pieds meuble (29 €)') +
+            b.check('fournitures.colonne', 'Colonne L30 H180 (160 €)') +
+            b.check('fournitures.mitigeurLavabo', 'Mitigeur lavabo (89 €)') +
+            b.check('fournitures.miroirSansEclairage', 'Miroir sans éclairage (80 €)') +
+            b.check('fournitures.eclairageMiroir', 'Éclairage miroir LED (55 €)') +
+            b.check('fournitures.bondeAuto', 'Bonde automatique (25 €)') +
+            b.check('fournitures.deportSiphon', 'Déport siphon (19 €)') +
+          '</div>';
+      }
+    },
+
+    {
+      id: 'step-7-carrelage', num: 7, title: 'Carrelage', icon: '🟫',
+      render: function(draft){
+        var b = BindCtx;
+        var measures = computeMeasurements(draft.formData);
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.helpBox('Surface sol et murale calculées depuis les mesures (étape 2). Modifie la hauteur de carrelage si besoin (défaut = HSP).') +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;">' +
+            b.input('carrelage.hauteurMurale', 'Hauteur carrelage mural', 'number', { suffix:'m', step:'0.05', placeholder: String(measures.H) }) +
+            b.input('carrelage.chutesPct', 'Chutes (% à ajouter)', 'number', { suffix:'%', step:'1', min:'0', max:'30' }) +
+            b.input('carrelage.formatMural', 'Format mural', 'text', { placeholder:'30x60cm' }) +
+            b.input('carrelage.formatSol', 'Format sol', 'text', { placeholder:'60x60cm' }) +
+          '</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('carrelage.sol', 'Pose carrelage sol (' + measures.surfaceSol + ' m² × 140 €)') +
+            b.check('carrelage.mural', 'Pose carrelage mural (' + measures.surfaceMurale + ' m² × 140 €)') +
+            b.check('carrelage.plinthes', 'Plinthes carrelage (' + measures.plinthesML + ' ml × 28 €)') +
+            b.check('carrelage.barreSeuil', 'Barre de seuil (25 €)') +
+            b.check('carrelage.baguetteFinition', 'Baguette finition d\'angle (30 €)') +
+            b.check('carrelage.poseTablier', 'Carrelage tablier (90 €)') +
+            b.check('carrelage.poseMargelle', 'Carrelage margelle (90 €)') +
+          '</div>' +
+          '<div style="font-size:12px;color:#3a4a5c;font-weight:600;margin-top:6px;">Fournitures carrelage</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('fournitures.carrelageSol', 'Carrelage sol (' + measures.surfaceSolAvecChutes + ' m² × 30 €)') +
+            b.check('fournitures.carrelageMural', 'Carrelage mural (' + measures.surfaceMuraleAvecChutes + ' m² × 35 €)') +
+            b.check('fournitures.plinthesCarrelage', 'Plinthes carrelage (12 €/ml)') +
+            b.check('fournitures.barreSeuil', 'Barre de seuil (20 €)') +
+            b.check('fournitures.baguetteFinition', 'Baguette finition Alu mat (26 €)') +
+          '</div>' +
+          b.toggle('carrelage.fourniClient', 'Carrelage fourni par le client ?', ['Oui','Non']) +
+          (BindCtx.valOf('carrelage.fourniClient') === 'Oui' ? b.helpBox('💡 Coché : les lignes de fourniture carrelage seront mises à 0 € avec mention "(fourni par le client)" dans le devis.', '#0d4690') : '');
+      }
+    },
+
+    {
+      id: 'step-8-plomberie', num: 8, title: 'Plomberie supplémentaire', icon: '🔧',
+      render: function(draft){
+        var b = BindCtx;
+        var typeChaudiere = draft.formData['plomberie.chaudiere'] || '';
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('plomberie.laveLinge', 'Arrivée + évac lave-linge (180 €)') +
+            b.check('plomberie.secheLinge', 'Évac sèche-linge (80 €)') +
+            b.check('plomberie.ballonElectrique', 'Remplacement ballon électrique (450 €)') +
+            b.check('options.remplacementVanne', 'Remplacement vanne d\'isolement (240 €)') +
+          '</div>' +
+          b.toggle('plomberie.chaudiere', 'Sèche-serviettes : type de chaudière', [
+            { value:'aucun', label:'Aucun sèche-serv.' },
+            { value:'individuelle', label:'Chaudière individuelle' },
+            { value:'collective', label:'Chaudière collective' },
+            { value:'electrique', label:'Sèche-serv. électrique' }
+          ]) +
+          (typeChaudiere === 'individuelle' ? '<div data-aj-trigger-set="plomberie.secheServiettesIndiv:true,fournitures.secheServiettesEauChaude:true,fournitures.tesRaccordement:true"></div>' : '') +
+          (typeChaudiere === 'collective' ? '<div data-aj-trigger-set="plomberie.secheServiettesColl:true,fournitures.secheServiettesEauChaude:true,fournitures.tesRaccordement:true"></div><div style="background:rgba(232,98,26,0.08);border-left:3px solid #e8621a;padding:10px 14px;border-radius:6px;font-family:Inter,sans-serif;font-size:12px;color:#9a4514;">⚠ Intervention chauffagiste de l\'immeuble nécessaire avant et après notre intervention.</div>' : '') +
+          (typeChaudiere === 'electrique' ? '<div data-aj-trigger-set="electricite.poseSecheServiettesElec:true,fournitures.secheServiettesElec:true"></div>' : '');
+      }
+    },
+
+    {
+      id: 'step-9-electricite', num: 9, title: 'Électricité', icon: '⚡',
+      render: function(draft){
+        var b = BindCtx;
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.helpBox('Mise en sécurité électrique de la pièce toujours incluse (0 €).') +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('electricite.priseCredence', 'Reprise prise crédence (90 €)') +
+            b.check('electricite.eclairagePlafond', 'Reprise éclairage plafond (135 €)') +
+            b.check('electricite.eclairageMiroir', 'Reprise éclairage miroir (90 €)') +
+            b.check('electricite.radiateur', 'Reprise radiateur (135 €)') +
+            b.check('electricite.extracteur', 'Reprise extracteur d\'air (135 €)') +
+            b.check('electricite.electromenager', 'Reprise alim. électroménager (135 €)') +
+            b.check('electricite.poseEclairageMiroir', 'Pose éclairage miroir (60 €)') +
+            b.check('electricite.posePlafonnier', 'Pose plafonnier (70 €)') +
+            b.check('electricite.poseExtracteur', 'Pose extracteur (60 €)') +
+          '</div>' +
+          '<div style="font-size:12px;color:#3a4a5c;font-weight:600;margin-top:6px;">Fournitures électricité</div>' +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">' +
+            b.check('fournitures.priseSimple', 'Prise simple LEGRAND (14,63 €)') +
+            b.check('fournitures.priseDouble', 'Prise double LEGRAND (34,20 €)') +
+            b.check('fournitures.interSimple', 'Inter simple LEGRAND (17,44 €)') +
+            b.check('fournitures.interDouble', 'Inter double LEGRAND (32,51 €)') +
+            b.check('fournitures.extracteurHygro', 'Extracteur hygrométrique (159 €)') +
+            b.check('fournitures.boucheVMC', 'Bouche aération VMC (29 €)') +
+          '</div>';
+      }
+    },
+
+    {
+      id: 'step-10-options', num: 10, title: 'Options (devis)', icon: '✨',
+      render: function(draft){
+        var b = BindCtx;
+        return '<div style="display:flex;flex-direction:column;gap:10px;">' +
+          b.helpBox('Les options apparaîtront dans le devis comme "lots optionnels" et n\'entreront pas dans le total HT principal. Le client peut les valider à la signature.', '#0d4690') +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:8px;">' +
+            b.check('options.deposeCarrelageSol', '🔨 Dépose carrelage sol (450 €)', 'Si sol existant à enlever') +
+            b.check('options.plafondSuspendu', '☁ Plafond suspendu (~905 €)', '210 €/m² + spots') +
+            b.check('options.meubleSupplementaire', '📦 Meuble supplémentaire (90 €)', 'Pose colonne en plus') +
+            b.check('options.nicheCarrelee', '⏹ Doublage + niche carrelée (916 €)', 'Coffrage BA13 + niche') +
+            b.check('options.masquageTuyaux', '🔧 Masquage tuyaux apparents (460 €)', 'Coffrage + carrelage') +
+            b.check('options.disjoncteurDifferentiel', '⚡ Disjoncteur diff. 30mA 63A (225 €)', 'Si non compris au tableau') +
+            b.check('options.miseEnTeinte', '🎨 Mise en teinte peintures (180 €)', 'Au lieu de Blanc satiné') +
+            b.check('options.placardSurMesure', '🚪 Placard sur mesure WC (520 €)', '2 portes MDF + étagères') +
+            b.check('options.poigneePMR', '♿ Accessoires PMR (~200 €)', 'Poignée + siège PMR') +
+            b.check('options.galandageAvecCadre', '➡ Porte galandage AVEC cadre (950 €)') +
+            b.check('options.galandageSansCadre', '➡ Porte galandage SANS cadre (1380 €)') +
+            b.check('options.porteApplique', '➡ Porte coulissante en applique (à chiffrer)') +
+          '</div>';
+      }
+    },
+
+    {
+      id: 'step-11-fournitures', num: 11, title: 'Fournitures (mode)', icon: '📦',
+      render: function(draft){
+        var b = BindCtx;
+        return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+          b.helpBox('Pour chaque catégorie de fournitures, choisis le mode : tu inclus dans le devis, le client fournit lui-même, ou à préciser plus tard.') +
+          ['Carrelage','Douche','Baignoire','Mobilier','Radiateur','Toilettes','Ballon','Accessoires divers'].map(function(cat){
+            var key = 'fourniture.mode.' + cat.toLowerCase().replace(/\s+/g,'-');
+            return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:12px 14px;">' +
+              '<div style="font-weight:700;color:#0f2030;font-family:Inter,sans-serif;font-size:13px;margin-bottom:8px;">' + safeEsc(cat) + '</div>' +
+              b.toggle(key, '', [
+                { value:'inclus', label:'Inclus dans le devis' },
+                { value:'client', label:'Fourni par le client' },
+                { value:'a-preciser', label:'À préciser plus tard' }
+              ]) +
+            '</div>';
+          }).join('');
+      }
+    },
+
+    {
+      id: 'step-12-recap', num: 12, title: 'Récapitulatif & génération', icon: '✅',
+      render: function(draft){
+        return renderRecap(draft);
+      }
+    }
+  ];
+
+  /* ─── ÉTAPE 12 : RÉCAPITULATIF ÉDITABLE ─── */
+  function renderRecap(draft){
+    var template = getBathroomTemplate();
+    var lines = generateLines(template, draft.formData);
+    var settings = { vatRate: template.vatRate, depositPct: template.depositPct };
+    var totals = computeTotals(lines, settings);
+
+    /* Stocke résultat sur le draft pour le commit C */
+    draft.lines = lines;
+    draft.totals = totals;
+
+    var hasOptions = lines.some(function(s){ return s.isOption; });
+
+    return '<div style="display:flex;flex-direction:column;gap:14px;">' +
+      /* Bandeau client */
+      '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:14px 16px;font-family:Inter,sans-serif;">' +
+        '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">Client</div>' +
+        '<div style="font-weight:700;color:#0f2030;font-size:15px;">' + safeEsc((draft.formData['client.prenom']||'') + ' ' + (draft.formData['client.nom']||'') || '— à compléter étape 1') + '</div>' +
+        '<div style="font-size:12px;color:#3a4a5c;">' + safeEsc(draft.formData['client.adresseChantier']||'') + '</div>' +
+      '</div>' +
+
+      /* Tableau des lignes */
+      lines.map(function(sec){
+        var optBadge = sec.isOption ? '<span style="background:rgba(232,98,26,0.15);color:#9a4514;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;margin-left:8px;">OPTION</span>' : '';
+        return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;overflow:hidden;font-family:Inter,sans-serif;">' +
+          '<div style="background:#fbf8f2;padding:10px 14px;border-bottom:1px solid var(--c-border,#e3dccc);display:flex;justify-content:space-between;align-items:center;">' +
+            '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + sec.sectionNum + '. ' + safeEsc(sec.sectionTitle) + optBadge + '</div>' +
+            '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + fmtEur(sec.sousTotal) + '</div>' +
+          '</div>' +
+          '<div>' +
+          sec.items.map(function(it){
+            return '<div style="display:grid;grid-template-columns:80px 1fr 70px 90px 100px;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid rgba(15,32,48,0.05);font-size:12px;">' +
+              '<div style="color:#7a8896;font-family:monospace;">' + safeEsc(it.key) + '</div>' +
+              '<div style="color:#0f2030;line-height:1.4;"><input type="text" data-aj-bind="override.' + it.key + '.label" value="' + (it.label || '').replace(/"/g,'&quot;') + '" style="width:100%;background:transparent;border:none;font-family:Inter,sans-serif;font-size:12px;color:#0f2030;padding:2px 4px;border-radius:4px;" /></div>' +
+              '<div><input type="number" data-aj-bind="override.' + it.key + '.qty" value="' + it.qty + '" step="0.01" style="width:100%;text-align:right;padding:4px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;background:#fff;" /></div>' +
+              '<div><input type="number" data-aj-bind="override.' + it.key + '.price" value="' + it.price + '" step="0.01" style="width:100%;text-align:right;padding:4px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;background:#fff;" /> <span style="color:#7a8896;font-size:10px;">' + safeEsc(it.unit) + '</span></div>' +
+              '<div style="text-align:right;font-weight:600;color:' + (it.total < 0 ? '#c62828' : '#0f2030') + ';">' + fmtEur(it.total) + '</div>' +
+            '</div>';
+          }).join('') +
+          '</div>' +
+        '</div>';
+      }).join('') +
+
+      /* Bandeau totaux */
+      '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;border-radius:14px;padding:20px 24px;font-family:Inter,sans-serif;">' +
+        '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#c9a96e;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:14px;">Totaux</div>' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">' +
+          '<div><div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">Total HT</div><div style="font-size:22px;font-weight:600;margin-top:2px;">' + fmtEur(totals.totalHT) + '</div></div>' +
+          '<div><div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">TVA ' + totals.vatRate + '%</div><div style="font-size:22px;font-weight:600;margin-top:2px;">' + fmtEur(totals.tva) + '</div></div>' +
+          '<div><div style="font-size:11px;color:#c9a96e;text-transform:uppercase;font-weight:600;">Total TTC</div><div style="font-size:26px;font-weight:700;margin-top:2px;color:#c9a96e;">' + fmtEur(totals.totalTTC) + '</div></div>' +
+          '<div><div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">Acompte ' + totals.depositPct + '%</div><div style="font-size:18px;font-weight:600;margin-top:2px;">' + fmtEur(totals.acompte) + '</div></div>' +
+        '</div>' +
+        (hasOptions ? '<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.15);font-size:12px;color:rgba(255,255,255,0.75);">+ <b style="color:#c9a96e;">' + fmtEur(totals.totalOptionsHT) + '</b> en options HT (à valider par le client à la signature)</div>' : '') +
+      '</div>' +
+
+      /* Boutons d'action */
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">' +
+        '<button onclick="AJBath.wizardSaveDraft()" style="flex:1;min-width:160px;padding:14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;cursor:pointer;font-weight:600;color:#0f2030;font-family:Inter,sans-serif;font-size:14px;">💾 Enregistrer brouillon</button>' +
+        '<button onclick="AJBath.wizardEmit()" style="flex:2;min-width:200px;padding:14px;background:#1d4d33;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-family:Inter,sans-serif;font-size:14px;">📋 Émettre devis officiel (commit C)</button>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#7a8896;text-align:center;font-family:Inter,sans-serif;font-style:italic;">L\'émission verrouillée + génération PDF arrivent au commit C. Pour l\'instant tu peux saisir et enregistrer un brouillon.</div>';
+  }
+
+  /* ─── MACHINE D'ÉTAT WIZARD ─── */
+  var _currentDraft = null;
+  var _currentStepIdx = 0;
+
+  function wizardStartNew(){
+    _currentDraft = newDraft();
+    _currentStepIdx = 0;
+    saveDraft(_currentDraft);
+    if(typeof showScreen === 'function') showScreen('screen-bathroom-wizard');
+    ensureWizardScreen();
+    setTimeout(wizardRender, 30);
+  }
+
+  function wizardOpen(draftId){
+    var drafts = getDrafts();
+    var d = drafts.find(function(q){ return q.id === draftId; });
+    if(!d){ showToast('Brouillon introuvable'); return; }
+    _currentDraft = d;
+    _currentStepIdx = (d.currentStep || 1) - 1;
+    if(typeof showScreen === 'function') showScreen('screen-bathroom-wizard');
+    ensureWizardScreen();
+    setTimeout(wizardRender, 30);
+  }
+
+  function wizardClose(){
+    if(_currentDraft) saveDraft(_currentDraft);
+    _currentDraft = null;
+    if(typeof showScreen === 'function') showScreen('screen-bathroom-quote');
+  }
+
+  function wizardSetField(path, value){
+    if(!_currentDraft) return;
+    if(value === '' || value == null){
+      delete _currentDraft.formData[path];
+    } else {
+      _currentDraft.formData[path] = value;
+    }
+    /* Auto-save debounced */
+    clearTimeout(wizardSetField._t);
+    wizardSetField._t = setTimeout(function(){
+      saveDraft(_currentDraft);
+      /* Refresh récap si on est dessus */
+      if(_currentStepIdx === STEPS.length - 1) wizardRender();
+    }, 350);
+  }
+
+  function wizardNext(){
+    if(_currentStepIdx < STEPS.length - 1){
+      _currentStepIdx++;
+      _currentDraft.currentStep = _currentStepIdx + 1;
+      saveDraft(_currentDraft);
+      wizardRender();
+      window.scrollTo(0, 0);
+    }
+  }
+
+  function wizardPrev(){
+    if(_currentStepIdx > 0){
+      _currentStepIdx--;
+      _currentDraft.currentStep = _currentStepIdx + 1;
+      saveDraft(_currentDraft);
+      wizardRender();
+      window.scrollTo(0, 0);
+    }
+  }
+
+  function wizardGoTo(idx){
+    if(idx < 0 || idx >= STEPS.length) return;
+    _currentStepIdx = idx;
+    _currentDraft.currentStep = idx + 1;
+    saveDraft(_currentDraft);
+    wizardRender();
+    window.scrollTo(0, 0);
+  }
+
+  function wizardSaveDraft(){
+    if(!_currentDraft) return;
+    saveDraft(_currentDraft);
+    showToast('Brouillon enregistré ✓');
+  }
+
+  function wizardEmit(){
+    if(typeof showToast === 'function') showToast('⚙ Émission verrouillée + PDF arrivent au commit C');
+  }
+
+  function wizardDelete(draftId){
+    customConfirm('Ce brouillon sera définitivement supprimé.',
+      function(){
+        deleteDraft(draftId);
+        if(_currentDraft && _currentDraft.id === draftId){
+          _currentDraft = null;
+        }
+        showToast('Brouillon supprimé');
+        if(typeof showScreen === 'function') showScreen('screen-bathroom-quote');
+        renderBathroomScreen();
+      },
+      { title:'Supprimer ce brouillon ?', danger:true, okLabel:'Supprimer' });
+  }
+
+  /* ─── ÉCRAN WIZARD ─── */
+  function ensureWizardScreen(){
+    if(document.getElementById('screen-bathroom-wizard')) return;
+    var mc = document.querySelector('.main-content');
+    if(!mc) return;
+    var s = document.createElement('div');
+    s.className = 'screen';
+    s.id = 'screen-bathroom-wizard';
+    s.innerHTML = '<div id="aj-wizard-body" style="padding:0 0 100px;"></div>';
+    mc.appendChild(s);
+  }
+
+  function wizardRender(){
+    ensureWizardScreen();
+    var body = document.getElementById('aj-wizard-body');
+    if(!body || !_currentDraft) return;
+    var step = STEPS[_currentStepIdx];
+    var pct = ((_currentStepIdx + 1) / STEPS.length) * 100;
+
+    var draftMeta = _currentDraft.formData['client.nom'] || 'Nouveau devis';
+    if(_currentDraft.formData['client.prenom']) draftMeta = (_currentDraft.formData['client.prenom'] + ' ' + (_currentDraft.formData['client.nom'] || '')).trim();
+
+    body.innerHTML =
+      /* En-tête : titre + bouton fermer + barre progression */
+      '<div style="position:sticky;top:72px;background:#f4efe7;z-index:30;padding:14px 0 10px;margin:-12px -12px 14px;padding-left:12px;padding-right:12px;border-bottom:1px solid var(--c-border,#e3dccc);">' +
+        '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap;">' +
+          '<button onclick="AJBath.wizardClose()" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;padding:6px 8px;">← Quitter</button>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:20px;font-weight:600;color:#0f2030;line-height:1;">' + step.icon + ' ' + safeEsc(step.title) + '</div>' +
+            '<div style="font-size:11px;color:#7a8896;margin-top:2px;font-family:Inter,sans-serif;">Étape ' + (_currentStepIdx + 1) + ' / ' + STEPS.length + ' · ' + safeEsc(draftMeta) + '</div>' +
+          '</div>' +
+          '<button onclick="AJBath.wizardSaveDraft()" style="background:#fff;border:1px solid var(--c-border,#e3dccc);color:#0f2030;cursor:pointer;font-family:Inter,sans-serif;font-size:12px;padding:7px 12px;border-radius:7px;font-weight:600;">💾 Sauver</button>' +
+        '</div>' +
+        /* Barre progression cliquable */
+        '<div style="display:flex;gap:3px;height:6px;">' +
+        STEPS.map(function(s, i){
+          var bg = i < _currentStepIdx ? '#1d4d33' : (i === _currentStepIdx ? '#c9a96e' : 'rgba(15,32,48,0.10)');
+          return '<div onclick="AJBath.wizardGoTo(' + i + ')" title="' + safeEsc(s.title) + '" style="flex:1;background:' + bg + ';border-radius:3px;cursor:pointer;transition:background 0.2s;"></div>';
+        }).join('') +
+        '</div>' +
+      '</div>' +
+
+      /* Contenu de l'étape */
+      '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:20px;margin-bottom:14px;">' +
+        step.render(_currentDraft) +
+      '</div>' +
+
+      /* Boutons navigation */
+      '<div style="position:sticky;bottom:14px;display:flex;gap:10px;background:rgba(244,239,231,0.97);backdrop-filter:blur(8px);padding:14px;border-radius:12px;border:1px solid var(--c-border,#e3dccc);box-shadow:0 4px 16px rgba(0,0,0,0.08);">' +
+        (_currentStepIdx > 0 ? '<button onclick="AJBath.wizardPrev()" style="flex:1;padding:14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;cursor:pointer;font-weight:600;color:#3a4a5c;font-family:Inter,sans-serif;font-size:14px;">‹ Précédent</button>' : '') +
+        (_currentStepIdx < STEPS.length - 1 ? '<button onclick="AJBath.wizardNext()" style="flex:2;padding:14px;background:#c9a96e;color:#0f2030;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-family:Inter,sans-serif;font-size:14px;">Suivant ›</button>' : '') +
+      '</div>';
+  }
+
+  /* ─── EVENT DELEGATION POUR DATA-AJ-BIND ─── */
+  document.addEventListener('input', function(e){
+    var t = e.target;
+    var path = t.getAttribute && t.getAttribute('data-aj-bind');
+    if(!path || !_currentDraft) return;
+    var v;
+    if(t.type === 'checkbox'){ v = t.checked; }
+    else if(t.type === 'number'){ v = t.value; /* gardé en string pour préserver l'édition partielle */ }
+    else { v = t.value; }
+    wizardSetField(path, v);
+  });
+
+  document.addEventListener('change', function(e){
+    var t = e.target;
+    var path = t.getAttribute && t.getAttribute('data-aj-bind');
+    if(!path || !_currentDraft) return;
+    if(t.tagName === 'SELECT' || t.type === 'checkbox'){
+      var v = t.type === 'checkbox' ? t.checked : t.value;
+      wizardSetField(path, v);
+      /* Re-render pour les UI conditionnelles (ex: étape 4 douche/baignoire) */
+      var step = STEPS[_currentStepIdx];
+      if(step && (step.id === 'step-4-douche-baignoire' || step.id === 'step-5-toilettes' || step.id === 'step-6-vasque' || step.id === 'step-8-plomberie')){
+        setTimeout(wizardRender, 100);
+      }
+    }
+  });
+
+  /* Toggle buttons (data-aj-toggle-bind) */
+  document.addEventListener('click', function(e){
+    var t = e.target.closest('[data-aj-toggle-bind]');
+    if(!t || !_currentDraft) return;
+    e.preventDefault();
+    var path = t.getAttribute('data-aj-toggle-bind');
+    var val = t.getAttribute('data-aj-toggle-val');
+    wizardSetField(path, val);
+    /* Re-render immédiat pour les toggles (UI conditionnelle) */
+    setTimeout(wizardRender, 50);
+  });
+
+  /* Trigger sets auto (data-aj-trigger-set) — applique au render */
+  function applyAutoTriggers(){
+    if(!_currentDraft) return;
+    var triggers = document.querySelectorAll('[data-aj-trigger-set]');
+    triggers.forEach(function(el){
+      var spec = el.getAttribute('data-aj-trigger-set');
+      spec.split(',').forEach(function(pair){
+        var parts = pair.split(':');
+        if(parts.length !== 2) return;
+        var path = parts[0].trim();
+        var val = parts[1].trim();
+        if(val === 'true') val = true;
+        else if(val === 'false') val = false;
+        if(_currentDraft.formData[path] !== val){
+          _currentDraft.formData[path] = val;
+        }
+      });
+    });
+  }
+  /* Hook après chaque render */
+  var _origRender = wizardRender;
+  wizardRender = function(){
+    _origRender.apply(this, arguments);
+    setTimeout(applyAutoTriggers, 30);
+  };
+
+  /* ─── ACTIVATION DU CTA + LISTE DES BROUILLONS SUR ÉCRAN D'ACCUEIL ─── */
+  var _origRenderBath = renderBathroomScreen;
+  renderBathroomScreen = function(){
+    _origRenderBath.apply(this, arguments);
+    /* Active le bouton CTA */
+    setTimeout(function(){
+      var disabledBtn = document.querySelector('#aj-bath-body button[disabled]');
+      if(disabledBtn){
+        disabledBtn.disabled = false;
+        disabledBtn.style.cursor = 'pointer';
+        disabledBtn.style.opacity = '1';
+        disabledBtn.textContent = '+ Démarrer un nouveau devis';
+        disabledBtn.onclick = function(){ wizardStartNew(); };
+      }
+      /* Ajoute la liste des brouillons */
+      var drafts = getDrafts();
+      if(!drafts.length) return;
+      var body = document.getElementById('aj-bath-body');
+      if(!body) return;
+      if(body.querySelector('[data-aj-drafts]')) return;
+      var draftsHtml = '<div data-aj-drafts style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:18px 20px;margin-top:14px;font-family:Inter,sans-serif;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">' +
+          '<div style="font-weight:700;color:#0f2030;font-size:15px;">📂 Brouillons en cours</div>' +
+          '<div style="font-size:11px;color:#7a8896;">' + drafts.length + '</div>' +
+        '</div>' +
+        drafts.sort(function(a,b){ return (b.updatedAt||0) - (a.updatedAt||0); }).map(function(d){
+          var name = (d.formData['client.prenom']||'') + ' ' + (d.formData['client.nom']||'');
+          name = name.trim() || 'Sans nom';
+          var step = d.currentStep || 1;
+          return '<div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid rgba(15,32,48,0.06);font-family:Inter,sans-serif;">' +
+            '<div style="flex:1;min-width:0;cursor:pointer;" onclick="AJBath.wizardOpen(\'' + d.id + '\')">' +
+              '<div style="font-weight:600;color:#0f2030;font-size:13px;">' + safeEsc(name) + '</div>' +
+              '<div style="font-size:11px;color:#7a8896;">Étape ' + step + '/' + STEPS.length + ' · maj ' + new Date(d.updatedAt || d.createdAt || Date.now()).toLocaleDateString('fr-FR') + '</div>' +
+            '</div>' +
+            '<button onclick="AJBath.wizardOpen(\'' + d.id + '\')" style="padding:7px 12px;background:#c9a96e;color:#0f2030;border:none;border-radius:7px;cursor:pointer;font-weight:600;font-size:12px;">Reprendre</button>' +
+            '<button onclick="AJBath.wizardDelete(\'' + d.id + '\')" title="Supprimer" style="padding:7px 10px;background:transparent;border:1px solid rgba(198,40,40,0.3);color:#c62828;border-radius:7px;cursor:pointer;font-size:12px;">×</button>' +
+          '</div>';
+        }).join('') +
+      '</div>';
+      body.insertAdjacentHTML('beforeend', draftsHtml);
+    }, 100);
+  };
+
+  /* Patch showScreen pour gérer screen-bathroom-wizard */
+  var _origShowScreen2 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen2.apply(this, arguments);
+    if(id === 'screen-bathroom-wizard') setTimeout(wizardRender, 50);
+    return r;
+  };
+
+  /* Expose wizard API */
+  window.AJBath = Object.assign(window.AJBath || {}, {
+    /* Wizard */
+    wizardStartNew: wizardStartNew,
+    wizardOpen: wizardOpen,
+    wizardClose: wizardClose,
+    wizardNext: wizardNext,
+    wizardPrev: wizardPrev,
+    wizardGoTo: wizardGoTo,
+    wizardSaveDraft: wizardSaveDraft,
+    wizardEmit: wizardEmit,
+    wizardDelete: wizardDelete,
+    /* Calculs (utilisables depuis console + commit C) */
+    computeMeasurements: computeMeasurements,
+    generateLines: generateLines,
+    computeTotals: computeTotals,
+    STEPS: STEPS
+  });
+
   console.log('[AJ PRO Bath] Module Devis Salle de Bain chargé · ' + BATHROOM_TEMPLATE.sections.length + ' sections · ' + (function(){
     var n = 0;
     BATHROOM_TEMPLATE.sections.forEach(function(s){
@@ -772,5 +1735,5 @@
       (s.subSections || []).forEach(function(sub){ n += sub.items.length; });
     });
     return n;
-  })() + ' lignes transcrites');
+  })() + ' lignes · wizard ' + STEPS.length + ' étapes');
 })();
