@@ -10267,6 +10267,248 @@ renderHome();
 
   console.log('[AJ PRO] Phase 15 chargée (matériaux par intervention + liste de courses).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 16 : COMPARATEUR DE CHANTIERS + PRIX MOYENS
+   • Écran "Comparer 2 chantiers" en split view
+   • Suggestion auto du prix moyen quand tu saisis un prix sur la synthèse
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P16_LOADED) return;
+  window.__AJ_P16_LOADED = true;
+
+  /* ─── 1) ÉCRAN COMPARATEUR ─── */
+  function ensureComparatorScreen(){
+    if(document.getElementById('screen-compare')) return;
+    var mc = document.querySelector('.main-content');
+    if(!mc) return;
+    var s = document.createElement('div');
+    s.className = 'screen';
+    s.id = 'screen-compare';
+    s.innerHTML =
+      '<div style="padding:0 0 80px;">' +
+        '<div style="margin-bottom:18px;">' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:#0f2030;">Comparer 2 chantiers</div>' +
+          '<div style="font-size:13px;color:#3a4a5c;margin-top:4px;">Compare devis, pièces, photos, statuts — utile pour pricing comparatif</div>' +
+        '</div>' +
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px;font-family:Inter,sans-serif;">' +
+          '<select id="aj-cmp-a" onchange="renderComparison()" style="padding:11px 14px;border:1px solid var(--c-border,#e3dccc);border-radius:10px;background:#fff;font-size:13px;font-weight:500;"></select>' +
+          '<select id="aj-cmp-b" onchange="renderComparison()" style="padding:11px 14px;border:1px solid var(--c-border,#e3dccc);border-radius:10px;background:#fff;font-size:13px;font-weight:500;"></select>' +
+        '</div>' +
+        '<div id="aj-cmp-body"></div>' +
+      '</div>';
+    mc.appendChild(s);
+  }
+
+  function clientStats(clientId){
+    if(!clientId) return null;
+    var db = dbLoad();
+    var client = db.clients[clientId];
+    if(!client) return null;
+    var pieces = Object.values(db.pieces || {}).filter(function(p){ return p.clientId === clientId; });
+    var prices = db.interventionPrices || {};
+    var statuses = db.interventionStatus || {};
+    var matsAll = db.interventionMaterials || {};
+    var nbItems = 0, htBrut = 0, photos = 0, notes = 0, mats = 0, matsCost = 0;
+    var byCat = { mac:0, plomb:0, elec:0, peinture:0, sol:0, pf:0 };
+    var byStatus = {};
+    pieces.forEach(function(p){
+      photos += (p.photos || []).length;
+      notes += (p.msNotes || []).length;
+      var t = p.travaux || {};
+      Object.keys(t.cats || {}).forEach(function(k){
+        if(t.cats[k] !== true) return;
+        nbItems++;
+        var iid = p.id + '::' + k;
+        if(prices[iid]){
+          var qm = (k.match(/([0-9]+(?:[.,][0-9]+)?)/) || [])[1];
+          var qty = qm ? parseFloat(qm.replace(',','.')) : 1;
+          htBrut += prices[iid] * qty;
+        }
+        var st = statuses[iid] || 'planifie';
+        byStatus[st] = (byStatus[st] || 0) + 1;
+        var prefix = k.split('-')[0];
+        if(byCat[prefix] != null) byCat[prefix]++;
+        // Matériaux
+        (matsAll[iid] || []).forEach(function(m){
+          mats++;
+          matsCost += (m.qty || 0) * (m.cost || 0);
+        });
+      });
+      (t.paintElems || []).forEach(function(){ byCat.peinture++; nbItems++; });
+    });
+    var settings = (typeof ajGetPricing === 'function') ? ajGetPricing() : { tva:10, marge:20 };
+    var ttc = htBrut * (1 + settings.marge/100) * (1 + settings.tva/100);
+    return { client:client, pieces:pieces, nbItems:nbItems, htBrut:htBrut, ttc:ttc, photos:photos, notes:notes, mats:mats, matsCost:matsCost, byCat:byCat, byStatus:byStatus };
+  }
+
+  function statRow(label, valA, valB, fmt){
+    fmt = fmt || function(v){ return v; };
+    var a = fmt(valA), b = fmt(valB);
+    var diff = '';
+    if(typeof valA === 'number' && typeof valB === 'number' && valA && valB){
+      var pct = ((valB - valA) / valA) * 100;
+      var color = pct > 0 ? '#1d4d33' : '#8a1e1e';
+      diff = '<span style="color:'+color+';font-size:11px;">' + (pct > 0 ? '+' : '') + pct.toFixed(0) + '%</span>';
+    }
+    return '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;padding:10px 14px;border-bottom:1px solid rgba(15,32,48,0.06);font-family:Inter,sans-serif;font-size:13px;">' +
+      '<div style="color:#3a4a5c;font-weight:500;">' + esc(label) + '</div>' +
+      '<div style="text-align:right;font-weight:600;color:#0f2030;">' + a + '</div>' +
+      '<div style="text-align:right;font-weight:600;color:#0f2030;">' + b + ' ' + diff + '</div>' +
+    '</div>';
+  }
+
+  window.renderComparison = function(){
+    ensureComparatorScreen();
+    var db = dbLoad();
+    var clients = Object.values(db.clients || {});
+    var selA = document.getElementById('aj-cmp-a');
+    var selB = document.getElementById('aj-cmp-b');
+    var body = document.getElementById('aj-cmp-body');
+    if(!selA || !selB || !body) return;
+
+    // Populate selects (only if empty or stale)
+    if(selA.options.length !== clients.length + 1 || selB.options.length !== clients.length + 1){
+      var opts = '<option value="">— Choisir un chantier —</option>' +
+        clients.sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); }).map(function(c){
+          return '<option value="'+c.id+'">'+esc(c.prenom + ' ' + c.nom + (c.adresse ? ' · ' + c.adresse : ''))+'</option>';
+        }).join('');
+      selA.innerHTML = opts;
+      selB.innerHTML = opts;
+    }
+
+    var idA = selA.value, idB = selB.value;
+    if(!idA || !idB){
+      body.innerHTML = '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:30px;text-align:center;color:#7a8896;font-family:Inter,sans-serif;font-size:13px;">Sélectionne 2 chantiers pour les comparer</div>';
+      return;
+    }
+    if(idA === idB){
+      body.innerHTML = '<div style="background:#fff;border:1px solid #c9a96e;border-radius:14px;padding:20px;text-align:center;color:#9a4514;font-family:Inter,sans-serif;font-size:13px;">⚠ Sélectionne 2 chantiers <b>différents</b></div>';
+      return;
+    }
+
+    var sA = clientStats(idA);
+    var sB = clientStats(idB);
+    if(!sA || !sB){ body.innerHTML = '<div>Erreur</div>'; return; }
+
+    var fmtEur = function(v){ return v ? v.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' €' : '—'; };
+
+    var html = '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;overflow:hidden;font-family:Inter,sans-serif;">' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;padding:14px;background:#fbf8f2;border-bottom:1px solid var(--c-border,#e3dccc);">' +
+        '<div style="font-weight:700;color:#0f2030;">Indicateur</div>' +
+        '<div style="text-align:right;font-weight:700;color:#0f2030;">' + esc(sA.client.prenom + ' ' + sA.client.nom) + '</div>' +
+        '<div style="text-align:right;font-weight:700;color:#0f2030;">' + esc(sB.client.prenom + ' ' + sB.client.nom) + ' <span style="font-size:10px;color:#7a8896;">vs A</span></div>' +
+      '</div>' +
+      statRow('Pièces relevées', sA.pieces.length, sB.pieces.length) +
+      statRow('Interventions total', sA.nbItems, sB.nbItems) +
+      statRow('Total HT brut', sA.htBrut, sB.htBrut, fmtEur) +
+      statRow('Total TTC estimé', sA.ttc, sB.ttc, fmtEur) +
+      statRow('Photos', sA.photos, sB.photos) +
+      statRow('Notes manuscrites', sA.notes, sB.notes) +
+      statRow('Matériaux saisis', sA.mats, sB.mats) +
+      statRow('Coût matériaux', sA.matsCost, sB.matsCost, fmtEur) +
+      statRow('Travaux validés', sA.byStatus.fini || 0, sB.byStatus.fini || 0) +
+      statRow('À mesurer', sA.byStatus['a-mesurer'] || 0, sB.byStatus['a-mesurer'] || 0) +
+      statRow('Maçonnerie', sA.byCat.mac, sB.byCat.mac) +
+      statRow('Plomberie', sA.byCat.plomb, sB.byCat.plomb) +
+      statRow('Électricité', sA.byCat.elec, sB.byCat.elec) +
+      statRow('Peinture', sA.byCat.peinture, sB.byCat.peinture) +
+      statRow('Sol', sA.byCat.sol, sB.byCat.sol) +
+      statRow('Portes & Fenêtres', sA.byCat.pf, sB.byCat.pf) +
+    '</div>';
+
+    body.innerHTML = html;
+  };
+
+  /* ─── 2) NAV-ITEM ─── */
+  function injectComparatorNav(){
+    var nav = document.querySelector('.sidebar-nav');
+    if(!nav || document.getElementById('aj-nav-compare')) return;
+    var item = document.createElement('div');
+    item.className = 'nav-item';
+    item.id = 'aj-nav-compare';
+    item.innerHTML =
+      '<span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/></svg></span>' +
+      '<span>Comparateur</span>';
+    item.onclick = function(){
+      if(typeof closeSidebar === 'function' && window.innerWidth <= 980) closeSidebar();
+      screenHistory = [];
+      ensureComparatorScreen();
+      showScreen('screen-compare');
+      renderComparison();
+    };
+    nav.appendChild(item);
+  }
+  setTimeout(injectComparatorNav, 950);
+
+  var _origUpdateNav16 = window.updateNav;
+  window.updateNav = function(){
+    var r = _origUpdateNav16.apply(this, arguments);
+    var item = document.getElementById('aj-nav-compare');
+    if(item){ item.classList.toggle('active', currentScreen === 'screen-compare'); }
+    return r;
+  };
+  var _origShowScreen16 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen16.apply(this, arguments);
+    if(id === 'screen-compare') setTimeout(renderComparison, 50);
+    return r;
+  };
+
+  /* ─── 3) SUGGESTION DE PRIX MOYEN ─── */
+  // Quand un input de prix prend le focus, on cherche les prix passés pour le même type d'intervention
+  function getSimilarPrices(iid){
+    var db = dbLoad();
+    var prices = db.interventionPrices || {};
+    var pieces = db.pieces || {};
+    var keyMatch = iid.split('::')[1] || '';
+    var matches = [];
+    Object.keys(prices).forEach(function(otherIid){
+      if(otherIid === iid) return;
+      var parts = otherIid.split('::');
+      if(parts.length !== 2) return;
+      if(parts[1] === keyMatch){
+        matches.push(prices[otherIid]);
+      }
+    });
+    return matches;
+  }
+
+  // Hook sur tous les inputs prix (data-aj-iid)
+  document.addEventListener('focus', function(e){
+    var t = e.target;
+    if(!t || !t.getAttribute) return;
+    var iid = t.getAttribute('data-aj-iid');
+    if(!iid) return;
+    var similar = getSimilarPrices(iid);
+    if(!similar.length) return;
+    var avg = similar.reduce(function(a,b){ return a+b; }, 0) / similar.length;
+    var min = Math.min.apply(null, similar);
+    var max = Math.max.apply(null, similar);
+    // Affiche un petit tooltip flottant
+    var tooltip = document.getElementById('aj-price-hint');
+    if(!tooltip){
+      tooltip = document.createElement('div');
+      tooltip.id = 'aj-price-hint';
+      tooltip.style.cssText = 'position:absolute;background:#0f2030;color:#c9a96e;padding:6px 10px;border-radius:6px;font-size:11px;font-family:Inter,sans-serif;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,0.3);pointer-events:none;white-space:nowrap;font-weight:600;';
+      document.body.appendChild(tooltip);
+    }
+    var rect = t.getBoundingClientRect();
+    tooltip.textContent = 'Moyenne : ' + avg.toFixed(0) + ' € (' + similar.length + ' précédents, ' + min + ' à ' + max + ')';
+    tooltip.style.top = (rect.top + window.scrollY - 28) + 'px';
+    tooltip.style.left = rect.left + 'px';
+    tooltip.style.display = 'block';
+  }, true);
+  document.addEventListener('blur', function(e){
+    var t = e.target;
+    if(!t || !t.getAttribute) return;
+    if(!t.getAttribute('data-aj-iid')) return;
+    var tooltip = document.getElementById('aj-price-hint');
+    if(tooltip) tooltip.style.display = 'none';
+  }, true);
+
+  console.log('[AJ PRO] Phase 16 chargée (comparateur + suggestion prix moyens).');
+})();
 </script>
 </body>
 </html>
