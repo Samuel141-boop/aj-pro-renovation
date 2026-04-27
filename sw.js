@@ -2,7 +2,7 @@
    Stratégie : cache-first pour le shell, network-first avec fallback cache pour le reste.
    Permet à l'app de fonctionner hors-ligne (utile en chantier sans wifi). */
 
-const CACHE_VERSION = 'aj-pro-v5-2026-04-27-bathpdf';
+const CACHE_VERSION = 'aj-pro-v6-2026-04-27-bathfix';
 const SHELL_CACHE = 'aj-pro-shell-' + CACHE_VERSION;
 const RUNTIME_CACHE = 'aj-pro-runtime';
 

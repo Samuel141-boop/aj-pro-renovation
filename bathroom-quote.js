@@ -672,12 +672,12 @@
         '</div>' +
       '</div>' +
 
-      /* ── CTA principal (placeholder Commit B) ── */
+      /* ── CTA principal ── */
       '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:28px 24px;margin-bottom:18px;font-family:Inter,sans-serif;text-align:center;">' +
         '<div style="font-size:48px;margin-bottom:12px;">🚿</div>' +
         '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;margin-bottom:6px;">Nouveau devis salle de bain</div>' +
-        '<div style="font-size:13px;color:#3a4a5c;margin-bottom:20px;line-height:1.5;max-width:480px;margin-left:auto;margin-right:auto;">Wizard 12 étapes pour la prise d\'informations chez le client.<br><span style="color:#c9a96e;font-weight:600;">Disponible au commit B</span> — pour l\'instant le template est chargé et inspectable ci-dessous.</div>' +
-        '<button disabled style="padding:14px 28px;background:#c9a96e;color:#0f2030;border:none;border-radius:10px;font-weight:700;font-size:15px;cursor:not-allowed;opacity:0.5;font-family:Inter,sans-serif;">+ Démarrer un nouveau devis</button>' +
+        '<div style="font-size:13px;color:#3a4a5c;margin-bottom:20px;line-height:1.5;max-width:480px;margin-left:auto;margin-right:auto;">Wizard 12 étapes : prise d\'informations chez le client → récap éditable → PDF officiel verrouillé (DEV-2026-XXX).</div>' +
+        '<button onclick="if(window.AJBath)window.AJBath.wizardStartNew()" style="padding:14px 28px;background:#c9a96e;color:#0f2030;border:none;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer;font-family:Inter,sans-serif;box-shadow:0 4px 12px rgba(201,169,110,0.30);">+ Démarrer un nouveau devis</button>' +
       '</div>' +
 
       /* ── Inspecteur du template ── */
@@ -1445,22 +1445,24 @@
   var _currentStepIdx = 0;
 
   function wizardStartNew(){
+    /* IMPORTANT : créer l'écran AVANT showScreen (sinon crash dans le DOM) */
+    ensureWizardScreen();
     _currentDraft = newDraft();
     _currentStepIdx = 0;
     saveDraft(_currentDraft);
     if(typeof showScreen === 'function') showScreen('screen-bathroom-wizard');
-    ensureWizardScreen();
     setTimeout(wizardRender, 30);
   }
 
   function wizardOpen(draftId){
+    /* IMPORTANT : créer l'écran AVANT showScreen */
+    ensureWizardScreen();
     var drafts = getDrafts();
     var d = drafts.find(function(q){ return q.id === draftId; });
     if(!d){ showToast('Brouillon introuvable'); return; }
     _currentDraft = d;
     _currentStepIdx = (d.currentStep || 1) - 1;
     if(typeof showScreen === 'function') showScreen('screen-bathroom-wizard');
-    ensureWizardScreen();
     setTimeout(wizardRender, 30);
   }
 
@@ -2316,21 +2318,12 @@
     setTimeout(applyAutoTriggers, 30);
   };
 
-  /* ─── ACTIVATION DU CTA + LISTE DES BROUILLONS SUR ÉCRAN D'ACCUEIL ─── */
+  /* ─── LISTE DES BROUILLONS SUR ÉCRAN D'ACCUEIL ─── */
   var _origRenderBath = renderBathroomScreen;
   renderBathroomScreen = function(){
     _origRenderBath.apply(this, arguments);
-    /* Active le bouton CTA */
+    /* Ajoute la liste des brouillons en cours */
     setTimeout(function(){
-      var disabledBtn = document.querySelector('#aj-bath-body button[disabled]');
-      if(disabledBtn){
-        disabledBtn.disabled = false;
-        disabledBtn.style.cursor = 'pointer';
-        disabledBtn.style.opacity = '1';
-        disabledBtn.textContent = '+ Démarrer un nouveau devis';
-        disabledBtn.onclick = function(){ wizardStartNew(); };
-      }
-      /* Ajoute la liste des brouillons */
       var drafts = getDrafts();
       if(!drafts.length) return;
       var body = document.getElementById('aj-bath-body');
