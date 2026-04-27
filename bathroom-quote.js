@@ -1521,9 +1521,667 @@
     showToast('Brouillon enregistré ✓');
   }
 
-  function wizardEmit(){
-    if(typeof showToast === 'function') showToast('⚙ Émission verrouillée + PDF arrivent au commit C');
+  /* ─── ÉMISSION DU DEVIS OFFICIEL (Commit C) ─── */
+  function reserveDevisNumber(){
+    if(typeof dbLoad !== 'function' || typeof safeSave !== 'function') return null;
+    var db = dbLoad();
+    db.numbering = db.numbering || {};
+    var year = new Date().getFullYear();
+    var current = db.numbering.devis || { year: year, counter: 0 };
+    if(current.year !== year) current = { year: year, counter: 0 };
+    current.counter++;
+    db.numbering.devis = current;
+    safeSave(db);
+    return 'DEV-' + year + '-' + String(current.counter).padStart(3, '0');
   }
+
+  function wizardEmit(){
+    if(!_currentDraft){ showToast('Aucun brouillon en cours'); return; }
+    /* Validation minimale */
+    var fd = _currentDraft.formData;
+    if(!fd['client.nom'] && !fd['client.prenom']){
+      showToast('⚠ Saisis au moins un nom client (étape 1)');
+      _currentStepIdx = 0; wizardRender();
+      return;
+    }
+    var template = getBathroomTemplate();
+    var lines = generateLines(template, fd);
+    if(!lines.length){
+      showToast('⚠ Aucune prestation cochée — passe par les étapes pour activer des lignes');
+      return;
+    }
+    var totals = computeTotals(lines, { vatRate: template.vatRate, depositPct: template.depositPct });
+
+    var msg = 'Vous êtes sur le point d\'émettre un DEVIS OFFICIEL avec un numéro chronologique.\n\n' +
+              '⚠ Une fois émis :\n' +
+              '• Le numéro est réservé permanently\n' +
+              '• Le contenu est verrouillé (snapshot immutable)\n' +
+              '• Pour corriger, vous devrez créer un nouveau devis ou un avoir\n\n' +
+              'Total TTC : ' + fmtEur(totals.totalTTC) + '\n' +
+              'Acompte ' + totals.depositPct + '% : ' + fmtEur(totals.acompte);
+
+    customConfirm(msg,
+      function(){
+        var number = reserveDevisNumber();
+        if(!number){ showToast('⚠ Erreur réservation numéro'); return; }
+
+        /* Snapshot immutable */
+        var emetteur = getEmetteur();
+        var snapshot = {
+          formData: JSON.parse(JSON.stringify(fd)),
+          lines: JSON.parse(JSON.stringify(lines)),
+          totals: JSON.parse(JSON.stringify(totals)),
+          template: { templateId: template.templateId, version: template.version, vatRate: template.vatRate, depositPct: template.depositPct },
+          emetteur: emetteur,
+          legalMentions: template.legalMentions,
+          cgv: template.cgv,
+          timestamp: Date.now()
+        };
+
+        var doc = {
+          id: 'doc_bath_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+          type: 'devis',
+          subtype: 'bathroom',
+          number: number,
+          date: new Date().toISOString().slice(0, 10),
+          emittedAt: Date.now(),
+          clientId: null, /* devis SDB n'a pas de clientId (formData inline) */
+          snapshot: snapshot,
+          totals: { totalHT: totals.totalHT, htMarge: totals.totalHT, ttc: totals.totalTTC, tva: totals.tva, marge: 0 },
+          locked: true,
+          status: 'emis'
+        };
+
+        var db = dbLoad();
+        db.documents = db.documents || [];
+        db.documents.push(doc);
+
+        /* Marque le brouillon comme émis */
+        if(_currentDraft){
+          _currentDraft.status = 'emis';
+          _currentDraft.emittedDocId = doc.id;
+          _currentDraft.emittedNumber = number;
+          var idx = (db.quotes || []).findIndex(function(q){ return q.id === _currentDraft.id; });
+          if(idx >= 0) db.quotes[idx] = _currentDraft;
+        }
+        safeSave(db);
+
+        showToast('✓ Devis ' + number + ' émis et verrouillé');
+        setTimeout(function(){ ajBathGeneratePDF(doc.id); }, 300);
+        setTimeout(function(){
+          wizardClose();
+          renderBathroomScreen();
+        }, 600);
+      },
+      { title: 'Émettre devis officiel ?', okLabel: 'Émettre — verrouillage immédiat' });
+  }
+
+  /* ─── GÉNÉRATION PDF FIDÈLE AU MODÈLE $002612 ─── */
+  function loadJsPDF(cb){
+    if(window.jspdf && window.jspdf.jsPDF) return cb();
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.crossOrigin = 'anonymous';
+    s.onload = function(){ if(window.jspdf && window.jspdf.jsPDF) cb(); else showToast('⚠ Erreur jsPDF'); };
+    s.onerror = function(){ showToast('⚠ Échec chargement jsPDF (vérifiez Internet)'); };
+    document.body.appendChild(s);
+  }
+
+  /* Strip emojis + caractères non supportés par Helvetica */
+  function pdfClean(s){
+    if(s == null) return '';
+    return String(s)
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F0FF}]/gu, '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /* Couleurs AJ PRO (RGB) */
+  var PDF_COLORS = {
+    night:   [15, 32, 48],
+    primary: [26, 51, 73],
+    gold:    [201, 169, 110],
+    cream:   [251, 248, 242],
+    border:  [227, 220, 204],
+    text:    [15, 32, 48],
+    muted:   [122, 136, 150],
+    light:   [228, 228, 228],
+    danger:  [198, 40, 40],
+    headerBg:[44, 90, 160]
+  };
+
+  /* Charge le logo si /logo-ajpro.png existe (silencieux si absent) */
+  function loadLogo(cb){
+    var img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = function(){
+      try {
+        var canvas = document.createElement('canvas');
+        canvas.width = img.width; canvas.height = img.height;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        cb(canvas.toDataURL('image/png'));
+      } catch(e){ cb(null); }
+    };
+    img.onerror = function(){ cb(null); };
+    img.src = '/logo-ajpro.png';
+  }
+
+  window.ajBathGeneratePDF = function(docId){
+    var db = dbLoad();
+    var doc = (db.documents || []).find(function(d){ return d.id === docId; });
+    if(!doc){ showToast('Document introuvable'); return; }
+    if(!doc.snapshot){ showToast('⚠ Snapshot manquant'); return; }
+    showToast('Génération PDF...');
+    loadJsPDF(function(){
+      loadLogo(function(logoDataURL){
+        try { buildBathPDF(doc, logoDataURL); }
+        catch(e){
+          console.error(e);
+          showToast('⚠ Erreur PDF : ' + (e.message || e));
+        }
+      });
+    });
+  };
+
+  function buildBathPDF(doc, logoDataURL){
+    var snap = doc.snapshot;
+    var emetteur = snap.emetteur;
+    var fd = snap.formData;
+    var lines = snap.lines;
+    var totals = snap.totals;
+    var legal = snap.legalMentions || {};
+    var cgv = snap.cgv || [];
+
+    var pdf = new window.jspdf.jsPDF({ unit:'mm', format:'a4', compress:true });
+    var pageW = 210, pageH = 297;
+    var marginX = 12, marginTop = 10, marginBottom = 18;
+    var contentW = pageW - 2*marginX;
+
+    var setText = function(c){ pdf.setTextColor(c[0], c[1], c[2]); };
+    var setFill = function(c){ pdf.setFillColor(c[0], c[1], c[2]); };
+    var setDraw = function(c){ pdf.setDrawColor(c[0], c[1], c[2]); };
+
+    /* ─── Filigrane "Brouillon" si statut autre qu'émis (devrait pas arriver ici puisqu'on émet, mais pour sécurité) ─── */
+    var isBrouillon = doc.status !== 'emis';
+    function drawWatermark(){
+      if(!isBrouillon) return;
+      try {
+        pdf.saveGraphicsState();
+        pdf.setGState(new pdf.GState({opacity: 0.12}));
+        setText(PDF_COLORS.danger);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(110);
+        pdf.text('Brouillon', pageW/2, pageH/2 + 30, { align:'center', angle: 30 });
+        pdf.restoreGraphicsState();
+      } catch(e){
+        /* Fallback sans GState */
+        pdf.setTextColor(248, 215, 218);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(100);
+        pdf.text('Brouillon', pageW/2, pageH/2 + 30, { align:'center', angle: 30 });
+      }
+    }
+
+    /* ─── Header de page (n=1 : full header ; n>1 : header compact) ─── */
+    function drawPageHeader(isFirst){
+      drawWatermark();
+
+      if(isFirst){
+        /* Bandeau supérieur : fond blanc, séparateur or */
+        /* Logo zone gauche */
+        if(logoDataURL){
+          try { pdf.addImage(logoDataURL, 'PNG', marginX, marginTop, 32, 22); }
+          catch(e){ drawLogoText(); }
+        } else {
+          drawLogoText();
+        }
+
+        /* Titre devis + chantier zone droite */
+        setText(PDF_COLORS.text);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(13);
+        pdf.text('Devis n° ' + pdfClean(doc.number) + ' du ' + new Date(doc.date).toLocaleDateString('fr-FR'), pageW - marginX, marginTop + 4, { align:'right' });
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(11);
+        setText(PDF_COLORS.muted);
+        pdf.text('Chantier :', pageW - marginX, marginTop + 11, { align:'right' });
+        setText(PDF_COLORS.text);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(9);
+        var chantier = pdfClean((fd['client.prenom'] || '') + ' ' + (fd['client.nom'] || ''));
+        if(chantier) pdf.text(chantier, pageW - marginX, marginTop + 16, { align:'right' });
+        if(fd['client.adresseChantier']){
+          var addr = pdf.splitTextToSize(pdfClean(fd['client.adresseChantier']), 80);
+          pdf.text(addr, pageW - marginX, marginTop + 21, { align:'right' });
+        }
+
+        /* Activités sous le logo */
+        setText(PDF_COLORS.text);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        var activitesLines = pdf.splitTextToSize(pdfClean(emetteur.activites), 90);
+        pdf.text(activitesLines.slice(0, 4), marginX, marginTop + 28);
+
+        /* Bloc émetteur encadré (zone gauche, plus bas) */
+        var emY = 60;
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(13);
+        setText(PDF_COLORS.text);
+        pdf.text(pdfClean(emetteur.raisonSociale || emetteur.nom || 'AJ PRO RÉNOVATION'), marginX, emY);
+        emY += 6;
+        pdf.setFont('helvetica', 'italic');
+        pdf.setFontSize(9);
+        setText(PDF_COLORS.muted);
+        var addrParts = (emetteur.adresse || '').split(',').map(function(p){ return p.trim(); });
+        addrParts.forEach(function(p){
+          pdf.text(pdfClean(p), marginX, emY);
+          emY += 4;
+        });
+        if(emetteur.email) { pdf.text('Email : ' + pdfClean(emetteur.email), marginX, emY); emY += 4; }
+        if(emetteur.tel) { pdf.text('Tél : ' + pdfClean(emetteur.tel), marginX, emY); emY += 4; }
+        emY += 2;
+        pdf.text(pdfClean(emetteur.rcs || ''), marginX, emY);
+
+        return 95; /* y de départ pour le tableau */
+      } else {
+        /* Pages suivantes : header compact */
+        setText(PDF_COLORS.text);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(10);
+        pdf.text('Devis n° ' + pdfClean(doc.number), marginX, marginTop + 5);
+        setText(PDF_COLORS.muted);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(9);
+        var chantier = pdfClean((fd['client.prenom'] || '') + ' ' + (fd['client.nom'] || ''));
+        pdf.text(chantier, pageW - marginX, marginTop + 5, { align:'right' });
+        return marginTop + 12;
+      }
+    }
+
+    function drawLogoText(){
+      setFill(PDF_COLORS.night);
+      pdf.rect(marginX, marginTop, 32, 22, 'F');
+      setText(PDF_COLORS.gold);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(10);
+      pdf.text('AJ', marginX + 16, marginTop + 9, { align:'center' });
+      pdf.setFontSize(7);
+      setText([255,255,255]);
+      pdf.text('PRO', marginX + 16, marginTop + 14, { align:'center' });
+      pdf.setFontSize(5);
+      setText(PDF_COLORS.gold);
+      pdf.text('RÉNOVATION', marginX + 16, marginTop + 19, { align:'center' });
+    }
+
+    /* ─── En-tête tableau ─── */
+    function drawTableHeader(y){
+      setFill(PDF_COLORS.headerBg);
+      pdf.rect(marginX, y, contentW, 7, 'F');
+      setText([255,255,255]);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8.5);
+      pdf.text('N°', marginX + 2, y + 5);
+      pdf.text('Désignation', marginX + 16, y + 5);
+      pdf.text('Qté', marginX + contentW - 60, y + 5, { align:'right' });
+      pdf.text('U', marginX + contentW - 47, y + 5, { align:'right' });
+      pdf.text('PUHT', marginX + contentW - 28, y + 5, { align:'right' });
+      pdf.text('Total H.T', marginX + contentW - 2, y + 5, { align:'right' });
+      return y + 7;
+    }
+
+    /* ─── Footer ─── */
+    function drawFooter(){
+      setText(PDF_COLORS.muted);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(7);
+      var footY = pageH - 12;
+      var line1 = 'Sarl ' + pdfClean(emetteur.raisonSociale || 'AJ Pro Rénovation') + ' au capital de ' + pdfClean(emetteur.capital || '7 500 €') + ' - Tel : ' + pdfClean(emetteur.tel || '') + ' - Email : ' + pdfClean(emetteur.email || '');
+      var line2 = 'APE : ' + pdfClean(emetteur.ape || '4120A') + ' - SIRET : ' + pdfClean(emetteur.siret || '') + ' - TVA intracommunautaire : ' + pdfClean(emetteur.tvaIntracom || emetteur.tva || '');
+      var line3 = 'IBAN : ' + pdfClean(emetteur.iban || '') + ' - BIC : ' + pdfClean(emetteur.bic || '');
+      pdf.text(line1, pageW/2, footY, { align:'center' });
+      pdf.text(line2, pageW/2, footY + 3, { align:'center' });
+      pdf.text(line3, pageW/2, footY + 6, { align:'center' });
+      pdf.text(pdfClean(doc.number), marginX, footY + 6);
+      var totalPages = pdf.internal.getNumberOfPages();
+      var currentPage = pdf.internal.getCurrentPageInfo().pageNumber;
+      pdf.text('page ' + currentPage + ' sur ' + totalPages, pageW - marginX, footY + 6, { align:'right' });
+    }
+
+    /* ─── Dessine une ligne du tableau ─── */
+    function drawTableRow(item, num, y, alt){
+      var rowH = 0;
+      /* Calcule la hauteur nécessaire selon la longueur de la désignation */
+      var labelLines = pdf.splitTextToSize(pdfClean(item.label), contentW - 90);
+      rowH = Math.max(6, labelLines.length * 3.4 + 2);
+      var descLines = [];
+      if(item.description){
+        var desc = pdfClean(item.description);
+        if(desc && desc !== pdfClean(item.label)){
+          descLines = pdf.splitTextToSize(desc, contentW - 90);
+          rowH += descLines.length * 3.0;
+        }
+      }
+      rowH += 2; /* padding */
+
+      /* Saut de page si nécessaire */
+      if(y + rowH > pageH - marginBottom - 10){
+        drawFooter();
+        pdf.addPage();
+        y = drawPageHeader(false);
+        y = drawTableHeader(y);
+      }
+
+      /* Fond alterné */
+      if(alt){ setFill([249, 247, 243]); pdf.rect(marginX, y, contentW, rowH, 'F'); }
+
+      /* Bordures */
+      setDraw(PDF_COLORS.border);
+      pdf.setLineWidth(0.1);
+      pdf.line(marginX, y + rowH, marginX + contentW, y + rowH);
+
+      /* N° */
+      setText(PDF_COLORS.text);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8.5);
+      pdf.text(pdfClean(num), marginX + 2, y + 4);
+
+      /* Désignation */
+      var dy = y + 4;
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8.5);
+      pdf.text(labelLines, marginX + 16, dy);
+      dy += labelLines.length * 3.4;
+      if(descLines.length){
+        pdf.setFontSize(7.5);
+        setText(PDF_COLORS.muted);
+        pdf.text(descLines, marginX + 16, dy);
+      }
+
+      /* Qté */
+      setText(PDF_COLORS.text);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(8.5);
+      var qtyStr = item.qty != null ? String(item.qty).replace('.', ',') : '';
+      pdf.text(qtyStr, marginX + contentW - 60, y + 4, { align:'right' });
+
+      /* Unité */
+      pdf.text(pdfClean(item.unit || ''), marginX + contentW - 47, y + 4, { align:'right' });
+
+      /* PUHT */
+      var puhtStr = item.price ? Number(item.price).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+      pdf.text(puhtStr, marginX + contentW - 28, y + 4, { align:'right' });
+
+      /* Total HT (rouge si négatif) */
+      if(item.total < 0) setText(PDF_COLORS.danger);
+      var totalStr = (item.total != null && item.total !== 0)
+        ? Number(item.total).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2})
+        : (item.total === 0 && (item.showWhenZero || item.displayOnly) ? '0,00' : '');
+      pdf.text(totalStr, marginX + contentW - 2, y + 4, { align:'right' });
+      setText(PDF_COLORS.text);
+
+      return y + rowH;
+    }
+
+    /* ─── En-tête de section ─── */
+    function drawSectionHeader(sec, y){
+      var rowH = 7;
+      if(y + rowH > pageH - marginBottom - 10){
+        drawFooter();
+        pdf.addPage();
+        y = drawPageHeader(false);
+        y = drawTableHeader(y);
+      }
+      setFill(PDF_COLORS.cream);
+      pdf.rect(marginX, y, contentW, rowH, 'F');
+      setDraw(PDF_COLORS.border);
+      pdf.line(marginX, y + rowH, marginX + contentW, y + rowH);
+
+      setText(PDF_COLORS.text);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(9);
+      pdf.text(String(sec.sectionNum), marginX + 2, y + 5);
+      var titleLines = pdf.splitTextToSize(pdfClean(sec.sectionTitle), contentW - 60);
+      pdf.text(titleLines[0] || '', marginX + 16, y + 5);
+
+      if(sec.isOption){
+        setFill([232, 98, 26]);
+        pdf.rect(marginX + contentW - 30, y + 1.5, 28, 4, 'F');
+        setText([255,255,255]);
+        pdf.setFontSize(7);
+        pdf.text('OPTION', marginX + contentW - 16, y + 4.5, { align:'center' });
+      }
+      return y + rowH;
+    }
+
+    /* ─── Sous-total de section ─── */
+    function drawSectionTotal(sec, y){
+      var rowH = 7;
+      if(y + rowH > pageH - marginBottom - 10){
+        drawFooter();
+        pdf.addPage();
+        y = drawPageHeader(false);
+        y = drawTableHeader(y);
+      }
+      setFill(PDF_COLORS.light);
+      pdf.rect(marginX, y, contentW, rowH, 'F');
+      setText(PDF_COLORS.text);
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8.5);
+      var lbl = 'Sous-total ' + pdfClean(sec.sectionTitle);
+      var lblLines = pdf.splitTextToSize(lbl, contentW - 50);
+      pdf.text(lblLines[0] || lbl, marginX + 16, y + 5);
+      if(sec.isOption){
+        pdf.setFontSize(7);
+        pdf.text('Option', marginX + contentW - 35, y + 5, { align:'right' });
+        pdf.setFontSize(8.5);
+      }
+      var totStr = sec.sousTotal !== 0
+        ? Number(sec.sousTotal).toLocaleString('fr-FR', {minimumFractionDigits:2, maximumFractionDigits:2})
+        : '';
+      pdf.text(totStr, marginX + contentW - 2, y + 5, { align:'right' });
+      return y + rowH + 1;
+    }
+
+    /* ═══ CONSTRUCTION DU PDF ═══ */
+    var y = drawPageHeader(true);
+    y = drawTableHeader(y);
+
+    var altRow = false;
+    lines.forEach(function(sec){
+      y = drawSectionHeader(sec, y);
+      sec.items.forEach(function(item){
+        y = drawTableRow(item, item.key, y, altRow);
+        altRow = !altRow;
+      });
+      y = drawSectionTotal(sec, y);
+      altRow = false;
+    });
+
+    /* ═══ Encart totaux ═══ */
+    if(y + 70 > pageH - marginBottom){
+      drawFooter();
+      pdf.addPage();
+      y = drawPageHeader(false);
+    }
+    y += 4;
+
+    /* Mention TVA légale */
+    setText(PDF_COLORS.text);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(7);
+    var tvaLines = pdf.splitTextToSize(pdfClean(legal.tvaText || ''), contentW * 0.55);
+    pdf.text(tvaLines, marginX, y + 4);
+
+    /* Encart totaux à droite */
+    var boxX = marginX + contentW * 0.6;
+    var boxW = contentW * 0.4;
+    var boxY = y;
+    setDraw(PDF_COLORS.text);
+    pdf.setLineWidth(0.3);
+    pdf.rect(boxX, boxY, boxW, 26);
+    setText(PDF_COLORS.text);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.text('Devis (EUR)', boxX + 3, boxY + 5);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    var boxLineY = boxY + 10;
+    pdf.text('Total H.T', boxX + 3, boxLineY);
+    pdf.text(totals.totalHT.toLocaleString('fr-FR', {minimumFractionDigits:2}), boxX + boxW - 3, boxLineY, { align:'right' });
+    boxLineY += 5;
+    pdf.text('TVA', boxX + 3, boxLineY);
+    pdf.text(totals.tva.toLocaleString('fr-FR', {minimumFractionDigits:2}), boxX + boxW - 3, boxLineY, { align:'right' });
+    boxLineY += 5;
+    pdf.setFont('helvetica', 'bold');
+    pdf.text('Total T.T.C', boxX + 3, boxLineY);
+    pdf.text(totals.totalTTC.toLocaleString('fr-FR', {minimumFractionDigits:2}), boxX + boxW - 3, boxLineY, { align:'right' });
+
+    /* Tableau % TVA / Base / Total TVA */
+    var tvaTblY = boxY + 28;
+    setFill(PDF_COLORS.cream);
+    pdf.rect(boxX, tvaTblY, boxW, 5, 'F');
+    setText(PDF_COLORS.text);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(7.5);
+    pdf.text('% TVA', boxX + 3, tvaTblY + 3.5);
+    pdf.text('Base', boxX + boxW/2, tvaTblY + 3.5, { align:'center' });
+    pdf.text('Total TVA', boxX + boxW - 3, tvaTblY + 3.5, { align:'right' });
+    pdf.setFont('helvetica', 'normal');
+    pdf.text(totals.vatRate.toFixed(2).replace('.',',') + '%', boxX + 3, tvaTblY + 9);
+    pdf.text(totals.totalHT.toLocaleString('fr-FR', {minimumFractionDigits:2}), boxX + boxW/2, tvaTblY + 9, { align:'center' });
+    pdf.text(totals.tva.toLocaleString('fr-FR', {minimumFractionDigits:2}), boxX + boxW - 3, tvaTblY + 9, { align:'right' });
+
+    y = tvaTblY + 14;
+
+    /* Validité, mode règlement, conditions */
+    setText(PDF_COLORS.text);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.text('Validité du devis : ' + new Date(doc.date).toLocaleDateString('fr-FR'), marginX, y);
+    y += 4;
+    pdf.text('Délai de règlement :', marginX, y);
+    y += 4;
+    pdf.text('Mode de règlement : ' + pdfClean(legal.paymentMode || 'Virement'), marginX, y);
+    y += 4;
+    pdf.text('Conditions de règlement :', marginX, y);
+    y += 4;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(8.5);
+    pdf.text('  • ' + (totals.depositPct || 30) + ',00% à la signature à verser sur le compte IBAN : ' + pdfClean(emetteur.iban || ''), marginX + 2, y);
+    y += 4;
+    pdf.text('    soit ' + totals.acompte.toLocaleString('fr-FR', {minimumFractionDigits:2}) + ' EUR TTC', marginX + 2, y);
+    y += 6;
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    pdf.text('Délai de règlement : Règlement comptant', marginX, y);
+    y += 6;
+
+    /* Assurance */
+    pdf.setFontSize(8.5);
+    pdf.text('Assurance Professionnelle : ' + pdfClean(emetteur.assurance || ''), marginX, y);
+    y += 4;
+    pdf.text('Activités couvertes : ' + pdfClean(emetteur.assuranceActivites || ''), marginX, y);
+    y += 4;
+    pdf.text('Attestation fournie sur simple demande', marginX, y);
+    y += 8;
+
+    /* Bloc signature */
+    if(y + 40 > pageH - marginBottom){
+      drawFooter(); pdf.addPage(); y = drawPageHeader(false);
+    }
+    setDraw(PDF_COLORS.border);
+    pdf.setLineWidth(0.3);
+    pdf.rect(marginX, y, contentW * 0.6, 38);
+    setText(PDF_COLORS.text);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(9);
+    pdf.text('Devis n° ' + pdfClean(doc.number), marginX + 3, y + 5);
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(8);
+    var sigText = pdf.splitTextToSize(pdfClean(legal.signatureText || ''), contentW * 0.55);
+    pdf.text(sigText, marginX + 3, y + 11);
+
+    pdf.setFont('helvetica', 'normal');
+    pdf.setFontSize(9);
+    setText(PDF_COLORS.text);
+    pdf.text('Pour l\'Entreprise', marginX + contentW * 0.65, y + 5);
+
+    drawFooter();
+
+    /* ═══ PAGE CGV ═══ */
+    pdf.addPage();
+    drawWatermark();
+    var cgvY = marginTop + 4;
+    setText(PDF_COLORS.text);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(13);
+    pdf.text('Conditions générales de vente', pageW/2, cgvY, { align:'center' });
+    cgvY += 8;
+    pdf.setFont('helvetica', 'bold');
+    pdf.setFontSize(7.5);
+    var introCgv = pdf.splitTextToSize(pdfClean('Toute commande de travaux implique de la part du client l\'acceptation sans réserve des conditions générales ci-dessous et la renonciation à ses propres conditions, sauf convention spéciale contraire écrite.'), contentW);
+    pdf.text(introCgv, marginX, cgvY);
+    cgvY += introCgv.length * 3.2 + 2;
+
+    cgv.forEach(function(article){
+      pdf.setFont('helvetica', 'bold');
+      pdf.setFontSize(8);
+      var articleText = 'Article ' + pdfClean(article.article);
+      pdf.text(articleText, marginX, cgvY);
+      cgvY += 4;
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(7);
+      var bodyLines = pdf.splitTextToSize(pdfClean(article.text), contentW);
+      if(cgvY + bodyLines.length * 3 > pageH - marginBottom - 6){
+        drawFooter();
+        pdf.addPage();
+        drawWatermark();
+        cgvY = marginTop + 4;
+      }
+      pdf.text(bodyLines, marginX, cgvY);
+      cgvY += bodyLines.length * 3 + 2;
+    });
+
+    drawFooter();
+
+    /* ═══ Re-pass pour numéroter toutes les pages avec le bon total ═══ */
+    var totalPages = pdf.internal.getNumberOfPages();
+    for(var p = 1; p <= totalPages; p++){
+      pdf.setPage(p);
+      /* On efface l'ancien footer en redessinant un fond blanc dessus */
+      setFill([255,255,255]);
+      pdf.rect(0, pageH - 13, pageW, 13, 'F');
+      drawFooter();
+    }
+
+    /* Sauvegarde */
+    var nameSafe = pdfClean(fd['client.nom'] || 'client').replace(/[^a-zA-Z0-9-]/g, '-');
+    var fname = doc.number + '-' + nameSafe + '.pdf';
+    pdf.save(fname);
+    showToast('PDF ' + doc.number + ' téléchargé ✓');
+  }
+
+  /* ─── Override ajGenerateLegalPDF pour rediriger les devis SDB ───
+     Différé via setTimeout : la Phase Légal (qui définit ajGenerateLegalPDF
+     dans index.html) s'exécute APRÈS bathroom-quote.js. Sans setTimeout,
+     notre override serait écrasé. */
+  setTimeout(function(){
+    if(window.__AJ_BATH_LEGAL_PATCHED) return;
+    window.__AJ_BATH_LEGAL_PATCHED = true;
+    var _origLegalPDF = window.ajGenerateLegalPDF;
+    window.ajGenerateLegalPDF = function(docId){
+      try {
+        var db = dbLoad();
+        var d = (db.documents || []).find(function(x){ return x.id === docId; });
+        if(d && d.subtype === 'bathroom'){
+          return ajBathGeneratePDF(docId);
+        }
+      } catch(e){}
+      if(typeof _origLegalPDF === 'function') return _origLegalPDF.apply(this, arguments);
+    };
+  }, 1500);
 
   function wizardDelete(draftId){
     customConfirm('Ce brouillon sera définitivement supprimé.',
