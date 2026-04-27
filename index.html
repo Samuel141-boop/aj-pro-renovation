@@ -7004,6 +7004,270 @@ renderHome();
 
   console.log('[AJ PRO] Phase 3 chargée (templates, presets, pièce suivante, dictée vocale ' + (SR?'OK':'non supportée') + ').');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 4 : CROQUIS v2 (analyse enrichie + ruban virtuel)
+   • Dimensions visibles directement sur le croquis après analyse
+   • Détail par segment dans le panneau d'analyse (longueur de chaque mur)
+   • Mode "Ruban virtuel" : tap 2 points → distance affichée
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P4_LOADED) return;
+  window.__AJ_P4_LOADED = true;
+
+  /* État du ruban virtuel par pièce */
+  var rulerMode = false;
+  var rulerCalibPxPerM = null; // pixels par mètre, calculé depuis la dernière analyse
+  var rulerPoints = [];
+
+  /* ─── 1) AMÉLIORATION DE updateAnalysisPreview pour afficher segments ─── */
+  var _origUpdate = window.updateAnalysisPreview;
+  if(_origUpdate){
+    window.updateAnalysisPreview = function(){
+      var r = _origUpdate.apply(this, arguments);
+      // Après le rendu original, on enrichit le panneau avec la liste des segments
+      var a = window._currentAnalysis;
+      if(!a || !a.segLens || !a.segLens.length) return r;
+      var val = (typeof pf === 'function') ? pf((document.getElementById('ai-calib-val')||{}).value) : parseFloat((document.getElementById('ai-calib-val')||{}).value || '0');
+      if(!val || val <= 0) return r;
+      var maxPx = window._currentMaxPx;
+      var ppm = maxPx / val;
+      // Mémorise la calibration pour le ruban virtuel
+      rulerCalibPxPerM = ppm;
+      // Cherche le bloc de preview existant
+      var content = document.getElementById('ai-preview-content');
+      if(!content) return r;
+      // Construit la liste détaillée des murs
+      var segHTML = '<div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--c-divider,rgba(15,32,48,0.08));">' +
+        '<div style="font-size:11px;text-transform:uppercase;letter-spacing:0.6px;color:var(--c-text-muted,#7a8896);font-weight:600;margin-bottom:6px;">Détail des murs détectés</div>';
+      a.segLens.forEach(function(lp, i){
+        var lm = (lp / ppm).toFixed(2);
+        segHTML += '<div style="display:flex;justify-content:space-between;padding:3px 0;font-size:13px;font-family:Inter,sans-serif;">' +
+          '<span>Mur ' + (i+1) + '</span>' +
+          '<span style="font-weight:600;color:#0f2030;">' + lm + ' m</span>' +
+        '</div>';
+      });
+      segHTML += '</div>';
+      // Append seulement si pas déjà présent
+      if(!content.querySelector('[data-aj-segs]')){
+        var wrap = document.createElement('div');
+        wrap.setAttribute('data-aj-segs','1');
+        wrap.innerHTML = segHTML;
+        content.appendChild(wrap);
+      } else {
+        var existing = content.querySelector('[data-aj-segs]');
+        existing.innerHTML = segHTML;
+      }
+      return r;
+    };
+  }
+
+  /* ─── 2) DESSINER LES DIMENSIONS SUR LE CROQUIS APRÈS APPLY ─── */
+  function drawDimensionsOnCanvas(canvas, polygon, ppm){
+    if(!canvas || !polygon || !ppm) return;
+    var ctx = canvas.getContext('2d');
+    if(!ctx) return;
+    // Pour chaque segment du polygone, on écrit la longueur au milieu
+    ctx.save();
+    ctx.font = 'bold 14px Inter, system-ui, sans-serif';
+    ctx.fillStyle = '#c9a96e';
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.lineWidth = 4;
+    ctx.lineJoin = 'round';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for(var i = 0; i < polygon.length - 1; i++){
+      var a = polygon[i], b = polygon[i+1];
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var len = Math.sqrt(dx*dx + dy*dy);
+      if(len < 30) continue; // skip très petits segments
+      var lm = (len / ppm);
+      // Position au milieu, légèrement déporté de la perpendiculaire
+      var midX = (a.x + b.x) / 2;
+      var midY = (a.y + b.y) / 2;
+      // Vecteur perpendiculaire
+      var nx = -dy / len, ny = dx / len;
+      var off = 14;
+      var tx = midX + nx * off;
+      var ty = midY + ny * off;
+      var label = lm.toFixed(2) + ' m';
+      // Stroke (halo blanc) puis fill
+      ctx.strokeText(label, tx, ty);
+      ctx.fillText(label, tx, ty);
+    }
+    ctx.restore();
+  }
+
+  // Patch applyAnalysis pour dessiner les dimensions ET sauvegarder
+  var _origApply = window.applyAnalysis;
+  if(_origApply){
+    window.applyAnalysis = function(){
+      var m = window._proposedMeasures;
+      var a = window._currentAnalysis;
+      var maxPx = window._currentMaxPx;
+      var calibVal = parseFloat(((document.getElementById('ai-calib-val')||{}).value || '0').toString().replace(',','.'));
+      var ppm = (maxPx && calibVal > 0) ? (maxPx / calibVal) : null;
+      // Appel original (pré-remplit champs mesures + close panel)
+      var r = _origApply.apply(this, arguments);
+      // Dessine les cotes sur le croquis
+      if(a && a.poly && ppm){
+        var canvas = document.getElementById('main-canvas');
+        if(canvas){
+          drawDimensionsOnCanvas(canvas, a.poly, ppm);
+          // Sauvegarde le croquis enrichi
+          if(typeof saveCroquis === 'function') setTimeout(saveCroquis, 50);
+        }
+        // Mémorise la calibration globalement
+        rulerCalibPxPerM = ppm;
+        try { localStorage.setItem('aj-ruler-ppm-' + currentPieceId, String(ppm)); } catch(e){}
+      }
+      return r;
+    };
+  }
+
+  /* ─── 3) MODE RUBAN VIRTUEL ─── */
+  function getCachedPpm(){
+    if(rulerCalibPxPerM) return rulerCalibPxPerM;
+    if(!currentPieceId) return null;
+    try {
+      var v = localStorage.getItem('aj-ruler-ppm-' + currentPieceId);
+      if(v) { rulerCalibPxPerM = parseFloat(v); return rulerCalibPxPerM; }
+    } catch(e){}
+    return null;
+  }
+
+  function toggleRulerMode(){
+    if(!currentPieceId){ showToast('Ouvrez une pièce'); return; }
+    var canvas = document.getElementById('main-canvas');
+    if(!canvas){ showToast('Allez sur l\'étape Croquis'); return; }
+    rulerMode = !rulerMode;
+    rulerPoints = [];
+    var btn = document.getElementById('aj-ruler-btn');
+    if(btn){
+      btn.style.background = rulerMode ? '#c9a96e' : '#fff';
+      btn.style.color = rulerMode ? '#0f2030' : '#0f2030';
+      btn.title = rulerMode ? 'Désactiver le ruban' : 'Activer le ruban virtuel (mesurer 2 points)';
+    }
+    if(rulerMode){
+      // Désactive le dessin pendant le mode ruban
+      canvas.style.cursor = 'crosshair';
+      canvas.addEventListener('click', onRulerClick);
+      canvas.addEventListener('pointerdown', stopPropagationCapture, true);
+      var ppm = getCachedPpm();
+      if(!ppm){
+        showToast('⚠ Calibrez d\'abord (bouton "Analyser le croquis" + entrez une longueur)');
+      } else {
+        showToast('Ruban activé : tap 2 points');
+      }
+    } else {
+      canvas.style.cursor = 'crosshair';
+      canvas.removeEventListener('click', onRulerClick);
+      canvas.removeEventListener('pointerdown', stopPropagationCapture, true);
+      // Redessine sans la jauge en cours
+    }
+  }
+
+  function stopPropagationCapture(e){
+    if(rulerMode){ e.stopPropagation(); e.preventDefault(); }
+  }
+
+  function onRulerClick(ev){
+    if(!rulerMode) return;
+    ev.stopPropagation(); ev.preventDefault();
+    var canvas = ev.target;
+    if(!canvas || canvas.id !== 'main-canvas') return;
+    var rect = canvas.getBoundingClientRect();
+    var x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+    rulerPoints.push({ x:x, y:y });
+    var ctx = canvas.getContext('2d');
+    // Dessine un point
+    ctx.save();
+    ctx.fillStyle = '#c9a96e';
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+    if(rulerPoints.length >= 2){
+      var a = rulerPoints[0], b = rulerPoints[1];
+      var dx = b.x - a.x, dy = b.y - a.y;
+      var pxLen = Math.sqrt(dx*dx + dy*dy);
+      var ppm = getCachedPpm();
+      if(!ppm){
+        showToast('Distance pixel : ' + pxLen.toFixed(0) + ' (calibrez pour avoir les mètres)');
+      } else {
+        var lm = pxLen / ppm;
+        // Dessine la ligne + le label
+        ctx.save();
+        ctx.strokeStyle = '#c9a96e';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Label au milieu
+        var midX = (a.x + b.x) / 2, midY = (a.y + b.y) / 2;
+        ctx.font = 'bold 13px Inter, system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = '#0f2030';
+        ctx.lineWidth = 4;
+        var label = lm.toFixed(2) + ' m';
+        ctx.strokeText(label, midX, midY);
+        ctx.fillStyle = '#0f2030';
+        ctx.fillText(label, midX, midY);
+        ctx.restore();
+        showToast(label);
+        // Sauve le croquis modifié
+        if(typeof saveCroquis === 'function') setTimeout(saveCroquis, 50);
+      }
+      // Reset après 2 points pour permettre une nouvelle mesure
+      rulerPoints = [];
+    }
+  }
+
+  /* ─── 4) BOUTON "RUBAN" DANS LA TOOLBAR DU CROQUIS ─── */
+  function injectRulerButton(){
+    var canvas = document.getElementById('main-canvas');
+    if(!canvas) return;
+    var tb = canvas.parentElement && canvas.parentElement.querySelector('.canvas-toolbar');
+    if(!tb) return;
+    if(tb._ajRulerBtn) return;
+    tb._ajRulerBtn = true;
+    var btn = document.createElement('button');
+    btn.id = 'aj-ruler-btn';
+    btn.type = 'button';
+    btn.title = 'Ruban virtuel (mesurer 2 points sur le croquis)';
+    btn.textContent = '📏';
+    btn.style.cssText = 'min-width:34px;height:34px;padding:0 6px;border:1px solid var(--c-border,#e3dccc);background:#fff;border-radius:8px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;font-size:15px;margin-left:6px;';
+    btn.onclick = function(e){ e.preventDefault(); toggleRulerMode(); };
+    tb.appendChild(btn);
+  }
+
+  // Hook into existing initMainCanvas / switchStep
+  var _origSwitchStep3 = window.switchStep;
+  if(_origSwitchStep3){
+    window.switchStep = function(n, btn){
+      var r = _origSwitchStep3.apply(this, arguments);
+      if(n === 1) setTimeout(injectRulerButton, 200);
+      return r;
+    };
+  }
+  setTimeout(injectRulerButton, 1000);
+
+  // Désactive ruler mode quand on quitte la pièce
+  var _origGoBack2 = window.goBack;
+  if(_origGoBack2){
+    window.goBack = function(){
+      if(rulerMode) toggleRulerMode();
+      return _origGoBack2.apply(this, arguments);
+    };
+  }
+
+  console.log('[AJ PRO] Phase 4 chargée (croquis v2 : segments détaillés, dimensions on-canvas, ruban virtuel).');
+})();
 </script>
 </body>
 </html>
