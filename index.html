@@ -8709,6 +8709,216 @@ renderHome();
 
   console.log('[AJ PRO] Phase 9 chargée (signature client + bon de visite PDF).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 10 : SUGGESTIONS INTELLIGENTES PAR TYPE DE PIÈCE
+   • Détecte le type de pièce (Salle de bain, Cuisine, etc.)
+   • Propose en haut un panneau avec les travaux typiques pour ce type
+   • Application en un clic
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P10_LOADED) return;
+  window.__AJ_P10_LOADED = true;
+
+  /* ─── 1) MAPPINGS DE SUGGESTIONS PAR TYPE DE PIÈCE ─── */
+  var SUGGESTIONS = {
+    'Salle de bain': {
+      icon: '🚿',
+      desc: 'Plomberie + élec + carrelage typiques en salle de bain',
+      paintElems: ['plafond','mur'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-ragreage': true,
+        'sol-carrelage': true,
+        'elec-prise-rpl': true,
+        'elec-inter-rpl': true,
+        'elec-ecl': true
+      },
+      plomberie: 'Lavabo / WC suspendu / Douche : à confirmer'
+    },
+    'Cuisine': {
+      icon: '🍳',
+      desc: 'Plomberie évier + élec multi-prises + sol résistant',
+      paintElems: ['plafond','mur'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-carrelage': true,
+        'elec-prises': true,
+        'elec-inter-rpl': true,
+        'elec-ecl': true
+      },
+      plomberie: 'Évier + lave-vaisselle + lave-linge : à voir'
+    },
+    'Salon': {
+      icon: '🛋️',
+      desc: 'Peinture intégrale + sol parquet/stratifié',
+      paintElems: ['plafond','mur','plinthe','porte'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-parquet': true,
+        'elec-prise-rpl': true,
+        'elec-inter-rpl': true
+      }
+    },
+    'Chambre': {
+      icon: '🛏️',
+      desc: 'Peinture standard + sol parquet/moquette',
+      paintElems: ['plafond','mur','plinthe','porte'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-parquet': true,
+        'elec-prise-rpl': true,
+        'elec-inter-rpl': true
+      }
+    },
+    'WC': {
+      icon: '🚽',
+      desc: 'Plomberie WC + carrelage sol',
+      paintElems: ['plafond','mur'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-carrelage': true,
+        'elec-inter-rpl': true,
+        'elec-ecl': true
+      },
+      plomberie: 'WC + lave-mains éventuel'
+    },
+    'Entrée': {
+      icon: '🚪',
+      desc: 'Peinture + sol résistant',
+      paintElems: ['plafond','mur','plinthe','porte'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-carrelage': true,
+        'elec-inter-rpl': true,
+        'elec-ecl': true
+      }
+    },
+    'Bureau': {
+      icon: '💼',
+      desc: 'Peinture + RJ45 + multiprises',
+      paintElems: ['plafond','mur','plinthe','porte'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-parquet': true,
+        'elec-prises': true,
+        'elec-inter-rpl': true,
+        'elec-rj45': true
+      }
+    },
+    'Couloir': {
+      icon: '🏠',
+      desc: 'Peinture + sol fluide',
+      paintElems: ['plafond','mur','plinthe'],
+      cats: {
+        'sol-depose-rev': true,
+        'sol-parquet': true,
+        'elec-inter-rpl': true,
+        'elec-ecl': true
+      }
+    }
+  };
+
+  /* ─── 2) APPLICATION D'UNE SUGGESTION ─── */
+  function applySuggestion(suggestion){
+    if(!currentPieceId) return;
+    var db = dbLoad();
+    var p = db.pieces[currentPieceId]; if(!p) return;
+    p.travaux = p.travaux || {};
+    // Merge non destructif : on ajoute les éléments suggérés sans écraser ce qui existe
+    var existingPaint = (p.travaux.paintElems || []).slice();
+    suggestion.paintElems.forEach(function(pe){
+      if(existingPaint.indexOf(pe) < 0) existingPaint.push(pe);
+    });
+    p.travaux.paintElems = existingPaint;
+
+    p.travaux.cats = p.travaux.cats || {};
+    Object.keys(suggestion.cats || {}).forEach(function(k){
+      p.travaux.cats[k] = true;
+    });
+
+    if(suggestion.plomberie && (!p.travaux.plomberie || p.travaux.plomberie.trim() === '')){
+      p.travaux.plomberie = suggestion.plomberie;
+    }
+
+    p.updatedAt = Date.now();
+    safeSave(db);
+    if(typeof loadPieceUI === 'function') loadPieceUI();
+    showToast('Suggestion appliquée ✓');
+  }
+
+  /* ─── 3) PANNEAU SUGGESTIONS EN HAUT DE LA PIÈCE ─── */
+  function injectSuggestionsPanel(){
+    var screen = document.getElementById('screen-piece');
+    if(!screen || !screen.classList.contains('active')) return;
+    if(!currentPieceId) return;
+    if(screen.querySelector('[data-aj-suggestions]')) return;
+    var p = dbLoad().pieces[currentPieceId];
+    if(!p) return;
+    var s = SUGGESTIONS[p.nom];
+    if(!s) return; // Pas de suggestions pour ce type de pièce
+
+    // Si la pièce a déjà des travaux (cats activés), on n'affiche pas la suggestion
+    var hasCats = p.travaux && p.travaux.cats && Object.values(p.travaux.cats).some(function(v){ return v === true; });
+    var hasPaint = p.travaux && p.travaux.paintElems && p.travaux.paintElems.length > 0;
+    if(hasCats || hasPaint) return; // L'utilisateur a déjà commencé
+
+    var panel = document.createElement('div');
+    panel.setAttribute('data-aj-suggestions','1');
+    panel.style.cssText = 'background:linear-gradient(135deg,rgba(201,169,110,0.12),rgba(201,169,110,0.04));border:1px solid rgba(201,169,110,0.30);border-radius:12px;padding:14px 16px;margin:10px 0;font-family:Inter,sans-serif;';
+    panel.innerHTML =
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        '<div style="font-size:24px;">' + s.icon + '</div>' +
+        '<div style="flex:1;min-width:200px;">' +
+          '<div style="font-weight:700;color:#0f2030;font-size:14px;">Suggestion pour ' + esc(p.nom) + '</div>' +
+          '<div style="font-size:12px;color:#3a4a5c;margin-top:2px;">' + esc(s.desc) + '</div>' +
+        '</div>' +
+        '<button onclick="ajApplySuggestion(\'' + esc(p.nom) + '\')" style="padding:10px 16px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;white-space:nowrap;">⚡ Appliquer</button>' +
+        '<button onclick="this.parentElement.parentElement.remove()" title="Ignorer" style="padding:10px;background:transparent;color:#7a8896;border:none;cursor:pointer;font-size:14px;">✕</button>' +
+      '</div>';
+
+    // Insère après la barre quick-actions ou la checklist
+    var qab = screen.querySelector('[data-aj-qab]');
+    var cb = document.getElementById('aj-checklist-bar');
+    var anchor = qab || cb;
+    if(anchor && anchor.parentNode === screen){
+      screen.insertBefore(panel, anchor.nextSibling);
+    } else {
+      screen.insertBefore(panel, screen.firstChild);
+    }
+  }
+
+  window.ajApplySuggestion = function(pieceName){
+    var s = SUGGESTIONS[pieceName];
+    if(!s){ showToast('Pas de suggestion pour ce type'); return; }
+    customConfirm('Cela ajoute : peinture (' + s.paintElems.join(', ') + ') et ' + Object.keys(s.cats).length + ' travaux typiques. Vos données existantes sont conservées.',
+      function(){
+        applySuggestion(s);
+        // Retire le panneau
+        var p = document.querySelector('[data-aj-suggestions]');
+        if(p) p.remove();
+      },
+      { title:'Appliquer la suggestion ?', okLabel:'Appliquer' });
+  };
+
+  var _origShowScreen10 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen10.apply(this, arguments);
+    if(id === 'screen-piece') setTimeout(injectSuggestionsPanel, 200);
+    return r;
+  };
+  var _origOpenPiece10 = window.openPiece;
+  if(_origOpenPiece10){
+    window.openPiece = function(id){
+      var r = _origOpenPiece10.apply(this, arguments);
+      setTimeout(injectSuggestionsPanel, 250);
+      return r;
+    };
+  }
+  setTimeout(injectSuggestionsPanel, 1100);
+
+  console.log('[AJ PRO] Phase 10 chargée (suggestions par type de pièce : ' + Object.keys(SUGGESTIONS).length + ' types).');
+})();
 </script>
 </body>
 </html>
