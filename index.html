@@ -9992,6 +9992,281 @@ renderHome();
 
   console.log('[AJ PRO] Phase 14 chargée (calendrier / planning).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 15 : LISTE DE MATÉRIAUX PAR INTERVENTION
+   • Modal pour ajouter des matériaux à une intervention (nom, qté, unité, coût)
+   • Liste de courses agrégée par chantier
+   • Affichage des matériaux dans la synthèse devis
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P15_LOADED) return;
+  window.__AJ_P15_LOADED = true;
+
+  /* ─── 1) STOCKAGE DES MATÉRIAUX PAR INTERVENTION ─── */
+  function getMaterials(iid){
+    var db = dbLoad();
+    return ((db.interventionMaterials || {})[iid]) || [];
+  }
+  function setMaterials(iid, list){
+    var db = dbLoad();
+    db.interventionMaterials = db.interventionMaterials || {};
+    if(!list || !list.length) delete db.interventionMaterials[iid];
+    else db.interventionMaterials[iid] = list;
+    safeSave(db);
+  }
+
+  /* ─── 2) MODAL DE GESTION DES MATÉRIAUX ─── */
+  function ensureMaterialsModal(){
+    if(document.getElementById('aj-mat-modal')) return;
+    var m = document.createElement('div');
+    m.id = 'aj-mat-modal';
+    m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.7);z-index:300;backdrop-filter:blur(4px);padding:20px;overflow-y:auto;';
+    m.innerHTML =
+      '<div style="max-width:560px;margin:40px auto;background:#fff;border-radius:14px;overflow:hidden;font-family:Inter,sans-serif;">' +
+        '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;padding:18px 20px;">' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:20px;font-weight:600;color:#c9a96e;">Matériaux</div>' +
+          '<div id="aj-mat-context" style="font-size:12px;color:rgba(255,255,255,0.85);margin-top:2px;"></div>' +
+        '</div>' +
+        '<div style="padding:18px 20px;">' +
+          '<div id="aj-mat-list" style="margin-bottom:14px;"></div>' +
+          '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:12px;">' +
+            '<div style="font-weight:600;color:#0f2030;font-size:13px;margin-bottom:8px;">Ajouter un matériau</div>' +
+            '<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:6px;margin-bottom:8px;">' +
+              '<input type="text" id="aj-mat-name" placeholder="Nom (ex: Peinture mat 10L)" style="padding:8px 10px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:12px;" />' +
+              '<input type="number" id="aj-mat-qty" step="0.1" placeholder="Qté" style="padding:8px 10px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:12px;" />' +
+              '<select id="aj-mat-unit" style="padding:8px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:12px;background:#fff;">' +
+                '<option value="unité">unité</option>' +
+                '<option value="L">L</option>' +
+                '<option value="kg">kg</option>' +
+                '<option value="m">m</option>' +
+                '<option value="m²">m²</option>' +
+                '<option value="m³">m³</option>' +
+                '<option value="rouleau">rouleau</option>' +
+                '<option value="paquet">paquet</option>' +
+              '</select>' +
+              '<input type="number" id="aj-mat-cost" step="0.01" placeholder="€/unité" style="padding:8px 10px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:12px;" />' +
+            '</div>' +
+            '<button onclick="ajAddMaterial()" style="width:100%;padding:10px;background:#c9a96e;color:#0f2030;border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:13px;">+ Ajouter</button>' +
+          '</div>' +
+          '<div id="aj-mat-total" style="margin-top:14px;text-align:right;font-weight:600;color:#0f2030;"></div>' +
+          '<div style="display:flex;gap:8px;margin-top:18px;">' +
+            '<button onclick="ajCloseMaterialsModal()" style="flex:1;padding:12px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;color:#7a8896;font-weight:500;">Fermer</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(m);
+  }
+
+  var _matIid = null;
+
+  window.ajOpenMaterialsModal = function(iid, contextLabel){
+    ensureMaterialsModal();
+    _matIid = iid;
+    document.getElementById('aj-mat-context').textContent = contextLabel || '';
+    renderMatList();
+    document.getElementById('aj-mat-modal').style.display = 'block';
+    setTimeout(function(){
+      var n = document.getElementById('aj-mat-name'); if(n) n.focus();
+    }, 100);
+  };
+  window.ajCloseMaterialsModal = function(){
+    var m = document.getElementById('aj-mat-modal');
+    if(m) m.style.display = 'none';
+    _matIid = null;
+    if(typeof renderSynthese === 'function' && currentScreen === 'screen-synthese') renderSynthese();
+  };
+
+  function renderMatList(){
+    var listEl = document.getElementById('aj-mat-list');
+    if(!listEl || !_matIid) return;
+    var mats = getMaterials(_matIid);
+    var total = 0;
+    if(!mats.length){
+      listEl.innerHTML = '<div style="text-align:center;padding:14px;color:#7a8896;font-size:13px;font-style:italic;">Aucun matériau pour le moment</div>';
+    } else {
+      listEl.innerHTML = mats.map(function(mat, idx){
+        var sub = (mat.qty || 0) * (mat.cost || 0);
+        total += sub;
+        return '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid rgba(15,32,48,0.06);font-size:13px;">' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:500;color:#0f2030;">' + esc(mat.name) + '</div>' +
+            '<div style="font-size:11px;color:#7a8896;">' + (mat.qty || 0) + ' ' + esc(mat.unit || '') + ' × ' + (mat.cost || 0).toLocaleString('fr-FR') + ' € = <b>' + sub.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' €</b></div>' +
+          '</div>' +
+          '<button onclick="ajDeleteMaterial(' + idx + ')" style="background:transparent;border:none;color:#c62828;cursor:pointer;font-size:14px;padding:4px 8px;" title="Supprimer">×</button>' +
+        '</div>';
+      }).join('');
+    }
+    var totalEl = document.getElementById('aj-mat-total');
+    if(totalEl){
+      totalEl.innerHTML = mats.length ? 'Total matériaux : <span style="color:#c9a96e;font-size:16px;">' + total.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' €</span>' : '';
+    }
+  }
+
+  window.ajAddMaterial = function(){
+    if(!_matIid) return;
+    var name = (document.getElementById('aj-mat-name') || {}).value || '';
+    var qty = parseFloat((document.getElementById('aj-mat-qty') || {}).value || '0');
+    var unit = (document.getElementById('aj-mat-unit') || {}).value || 'unité';
+    var cost = parseFloat((document.getElementById('aj-mat-cost') || {}).value || '0');
+    if(!name.trim()){ showToast('Nom requis'); return; }
+    var mats = getMaterials(_matIid);
+    mats.push({ name: name.trim(), qty: qty || 1, unit: unit, cost: cost || 0 });
+    setMaterials(_matIid, mats);
+    document.getElementById('aj-mat-name').value = '';
+    document.getElementById('aj-mat-qty').value = '';
+    document.getElementById('aj-mat-cost').value = '';
+    renderMatList();
+    showToast('Matériau ajouté');
+  };
+
+  window.ajDeleteMaterial = function(idx){
+    if(!_matIid) return;
+    var mats = getMaterials(_matIid);
+    mats.splice(idx, 1);
+    setMaterials(_matIid, mats);
+    renderMatList();
+  };
+
+  /* ─── 3) BOUTON "MATÉRIAUX" SUR CHAQUE INTERVENTION DE LA SYNTHÈSE ─── */
+  var _origRenderSynth15 = window.renderSynthese;
+  if(_origRenderSynth15){
+    window.renderSynthese = function(){
+      var r = _origRenderSynth15.apply(this, arguments);
+      setTimeout(injectMaterialButtons, 90);
+      return r;
+    };
+  }
+
+  function injectMaterialButtons(){
+    var lines = document.querySelectorAll('div[onclick*="openInterventionMenu"]');
+    lines.forEach(function(line){
+      if(line.querySelector('[data-aj-mat-btn]')) return;
+      var oc = line.getAttribute('onclick') || '';
+      var m = oc.match(/openInterventionMenu\('([^']+)'/);
+      if(!m) return;
+      var iid = m[1];
+      var mats = getMaterials(iid);
+      var label = line.querySelector('div[style*="font-weight:600"]') ? line.querySelector('div[style*="font-weight:600"]').textContent : '';
+
+      var btn = document.createElement('button');
+      btn.setAttribute('data-aj-mat-btn','1');
+      btn.title = mats.length ? mats.length + ' matériau(x)' : 'Ajouter des matériaux';
+      btn.textContent = mats.length ? '📦 ' + mats.length : '📦 +';
+      btn.style.cssText = 'background:'+(mats.length?'rgba(201,169,110,0.18)':'transparent')+';color:#7a5a30;border:1px solid '+(mats.length?'#c9a96e':'rgba(15,32,48,0.15)')+';padding:4px 9px;border-radius:6px;cursor:pointer;font-size:11px;font-weight:600;font-family:Inter,sans-serif;margin-left:6px;white-space:nowrap;';
+      btn.onclick = function(e){
+        e.stopPropagation();
+        ajOpenMaterialsModal(iid, label);
+      };
+      line.appendChild(btn);
+    });
+  }
+
+  /* ─── 4) ÉCRAN "LISTE DE COURSES" (matériaux agrégés du chantier) ─── */
+  function renderShoppingList(){
+    if(!currentClientId) return null;
+    var db = dbLoad();
+    var mats = db.interventionMaterials || {};
+    var pieces = Object.values(db.pieces || {}).filter(function(p){ return p.clientId === currentClientId; });
+    var aggregate = {}; // name -> { qty, unit, cost, count }
+    pieces.forEach(function(p){
+      Object.keys(mats).forEach(function(iid){
+        if(iid.indexOf(p.id + '::') !== 0) return;
+        mats[iid].forEach(function(m){
+          var key = (m.name || '').toLowerCase().trim() + '|' + (m.unit || '');
+          if(!aggregate[key]){
+            aggregate[key] = { name: m.name, unit: m.unit, qty: 0, totalCost: 0, count: 0 };
+          }
+          aggregate[key].qty += m.qty || 0;
+          aggregate[key].totalCost += (m.qty || 0) * (m.cost || 0);
+          aggregate[key].count++;
+        });
+      });
+    });
+    return Object.values(aggregate).sort(function(a,b){ return b.totalCost - a.totalCost; });
+  }
+
+  window.ajOpenShoppingList = function(){
+    if(!currentClientId){ showToast('Sélectionnez un client'); return; }
+    var list = renderShoppingList();
+    if(!list || !list.length){ showToast('Aucun matériau saisi pour ce chantier'); return; }
+    var db = dbLoad();
+    var client = db.clients[currentClientId];
+    var html = '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;margin-bottom:6px;">Liste de courses</div>' +
+      '<div style="font-size:12px;color:#3a4a5c;margin-bottom:14px;">' + esc(client.prenom + ' ' + client.nom) + '</div>';
+    var grand = 0;
+    html += '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:10px;margin-bottom:14px;">';
+    list.forEach(function(item){
+      grand += item.totalCost;
+      html += '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(15,32,48,0.05);font-size:13px;">' +
+        '<div><b>' + esc(item.name) + '</b> <span style="color:#7a8896;">— ' + item.qty.toFixed(item.qty % 1 ? 1 : 0) + ' ' + esc(item.unit) + '</span></div>' +
+        '<div style="font-weight:600;">' + item.totalCost.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' €</div>' +
+      '</div>';
+    });
+    html += '<div style="display:flex;justify-content:space-between;padding:8px 0 0;margin-top:8px;border-top:1px solid #c9a96e;font-weight:700;font-size:14px;">' +
+      '<div>TOTAL MATÉRIAUX</div><div style="color:#c9a96e;">' + grand.toLocaleString('fr-FR', {maximumFractionDigits:0}) + ' €</div>' +
+    '</div></div>';
+    html += '<button onclick="ajCopyShoppingList()" style="width:100%;padding:11px;background:#0f2030;color:#c9a96e;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-family:Inter,sans-serif;">📋 Copier la liste en texte</button>';
+
+    // Open in modal
+    if(!document.getElementById('aj-shop-modal')){
+      var m = document.createElement('div');
+      m.id = 'aj-shop-modal';
+      m.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.7);z-index:300;backdrop-filter:blur(4px);padding:20px;overflow-y:auto;';
+      m.innerHTML = '<div style="max-width:520px;margin:40px auto;background:#fff;border-radius:14px;padding:22px;font-family:Inter,sans-serif;"><div id="aj-shop-content"></div><button onclick="document.getElementById(\'aj-shop-modal\').style.display=\'none\'" style="width:100%;padding:11px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;color:#7a8896;font-weight:500;margin-top:10px;">Fermer</button></div>';
+      document.body.appendChild(m);
+      m.addEventListener('click', function(e){ if(e.target === m) m.style.display = 'none'; });
+    }
+    document.getElementById('aj-shop-content').innerHTML = html;
+    document.getElementById('aj-shop-modal').style.display = 'block';
+    window._ajShopList = list;
+  };
+
+  window.ajCopyShoppingList = function(){
+    var list = window._ajShopList || [];
+    if(!list.length) return;
+    var lines = ['LISTE DE COURSES — ' + new Date().toLocaleDateString('fr-FR'), ''];
+    var total = 0;
+    list.forEach(function(item){
+      lines.push('• ' + item.name + ' — ' + item.qty + ' ' + item.unit + ' (' + item.totalCost.toFixed(0) + ' €)');
+      total += item.totalCost;
+    });
+    lines.push('');
+    lines.push('TOTAL : ' + total.toFixed(0) + ' €');
+    var txt = lines.join('\n');
+    try {
+      navigator.clipboard.writeText(txt);
+      showToast('Liste copiée ✓');
+    } catch(e){
+      var w = window.open('', '_blank');
+      if(w) w.document.write('<pre>' + txt.replace(/</g,'&lt;') + '</pre>');
+    }
+  };
+
+  /* Bouton "Liste de courses" sur la synthèse */
+  function injectShopButton(){
+    var screen = document.getElementById('screen-synthese');
+    if(!screen) return;
+    var actionRow = screen.querySelector('div[style*="gap:8px"]');
+    if(!actionRow || actionRow.querySelector('[data-aj-shop]')) return;
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-secondary';
+    btn.setAttribute('data-aj-shop','1');
+    btn.textContent = '📦 Liste de courses';
+    btn.onclick = function(){ ajOpenShoppingList(); };
+    actionRow.insertBefore(btn, actionRow.firstChild);
+  }
+
+  var _origShowScreen15 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen15.apply(this, arguments);
+    if(id === 'screen-synthese') setTimeout(injectShopButton, 150);
+    return r;
+  };
+  setTimeout(injectShopButton, 1000);
+
+  console.log('[AJ PRO] Phase 15 chargée (matériaux par intervention + liste de courses).');
+})();
 </script>
 </body>
 </html>
