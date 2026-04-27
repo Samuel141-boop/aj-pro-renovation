@@ -813,6 +813,84 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
 </head>
 <body>
 
+<!-- AJ PRO — Protection par mot de passe (début) -->
+<style id="aj-auth-hide-style">
+  html { visibility: hidden; }
+  #aj-login-overlay, #aj-login-overlay * { visibility: visible; }
+</style>
+<div id="aj-login-overlay" style="position:fixed;inset:0;background:linear-gradient(135deg,#0f2030 0%,#1a3349 100%);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:'Inter',-apple-system,system-ui,sans-serif;padding:20px;">
+  <form id="aj-login-form" style="background:#fff;padding:38px 34px;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.5);width:100%;max-width:340px;text-align:center;">
+    <div style="font-family:'Cormorant Garamond',Georgia,serif;font-size:26px;font-weight:600;color:#0f2030;letter-spacing:0.5px;">AJ PRO RÉNOVATION</div>
+    <div style="width:36px;height:2px;background:#c9a96e;margin:12px auto 16px;"></div>
+    <div style="color:#3a4a5c;font-size:13px;margin-bottom:22px;">Accès protégé</div>
+    <input id="aj-login-pwd" type="password" placeholder="Mot de passe" autocomplete="current-password" style="width:100%;padding:13px 14px;border:1px solid #d3cab5;border-radius:8px;font-size:16px;outline:none;margin-bottom:10px;background:#fbf8f2;color:#0f2030;" required>
+    <div id="aj-login-error" style="color:#c0392b;font-size:13px;min-height:18px;margin-bottom:6px;"></div>
+    <button type="submit" style="width:100%;padding:12px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;letter-spacing:0.5px;">Se connecter</button>
+  </form>
+</div>
+<script>
+(function(){
+  var EXPECTED_HASH='6a99109c6eb87bde6de1155bc4ab9b53547240ce43f77298fc6be7a54851a221';
+  var STORAGE_KEY='aj-pro-auth-v1';
+  function injectLogout(){
+    function add(){
+      if(document.getElementById('aj-logout-btn'))return;
+      var btn=document.createElement('button');
+      btn.id='aj-logout-btn';
+      btn.textContent='Déconnexion';
+      btn.title='Se déconnecter de cet appareil';
+      btn.style.cssText='position:fixed;bottom:10px;right:10px;z-index:2147483646;padding:6px 12px;font-size:11px;background:rgba(15,32,48,0.85);color:#fff;border:1px solid rgba(201,169,110,0.4);border-radius:6px;cursor:pointer;font-family:Inter,system-ui,sans-serif;opacity:0.45;transition:opacity 0.2s;';
+      btn.onmouseenter=function(){btn.style.opacity='1';};
+      btn.onmouseleave=function(){btn.style.opacity='0.45';};
+      btn.onclick=function(){
+        if(confirm('Se déconnecter de cet appareil ?')){
+          try{localStorage.removeItem(STORAGE_KEY);}catch(e){}
+          location.reload();
+        }
+      };
+      document.body.appendChild(btn);
+    }
+    if(document.body)add();
+    else document.addEventListener('DOMContentLoaded',add);
+  }
+  function showApp(){
+    var ov=document.getElementById('aj-login-overlay');if(ov)ov.remove();
+    var st=document.getElementById('aj-auth-hide-style');if(st)st.remove();
+    injectLogout();
+  }
+  async function sha256(text){
+    var enc=new TextEncoder();
+    var h=await crypto.subtle.digest('SHA-256',enc.encode(text));
+    return Array.from(new Uint8Array(h)).map(function(b){return b.toString(16).padStart(2,'0');}).join('');
+  }
+  try{
+    if(localStorage.getItem(STORAGE_KEY)==='1'){showApp();return;}
+  }catch(e){}
+  var form=document.getElementById('aj-login-form');
+  var pwd=document.getElementById('aj-login-pwd');
+  var err=document.getElementById('aj-login-error');
+  ['keydown','keyup','keypress'].forEach(function(ev){
+    form.addEventListener(ev,function(e){e.stopPropagation();},true);
+  });
+  setTimeout(function(){pwd.focus();},80);
+  form.addEventListener('submit',async function(e){
+    e.preventDefault();
+    err.textContent='';
+    try{
+      var h=await sha256(pwd.value);
+      if(h===EXPECTED_HASH){
+        try{localStorage.setItem(STORAGE_KEY,'1');}catch(e){}
+        showApp();
+      }else{
+        err.textContent='Mot de passe incorrect';
+        pwd.value='';pwd.focus();
+      }
+    }catch(ex){err.textContent='Erreur, réessayez';}
+  });
+})();
+</script>
+<!-- /AJ PRO — Protection par mot de passe (fin) -->
+
 <!-- Bouton hamburger mobile -->
 <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()" aria-label="Menu">☰</button>
 
