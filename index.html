@@ -6658,6 +6658,352 @@ renderHome();
 
   console.log('[AJ PRO] Phase 2B-PDF chargée (export PDF chantier).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 3 : SAISIE ULTRA-RAPIDE EN RENDEZ-VOUS
+   • Templates de pièce (sauver une pièce comme template, appliquer à une nouvelle)
+   • Bouton "Pièce suivante" très visible en bas
+   • Dictée vocale sur tous les <textarea> (Web Speech API)
+   • Quick-add presets : "Peinture standard" / "Rénovation complète" / "Pièce vide"
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P3_LOADED) return;
+  window.__AJ_P3_LOADED = true;
+
+  var TPL_KEY = 'aj-piece-templates-v1';
+
+  /* ─── 1) TEMPLATES DE PIÈCE ─── */
+  function loadTemplates(){
+    try { return JSON.parse(localStorage.getItem(TPL_KEY) || '[]') || []; }
+    catch(e){ return []; }
+  }
+  function saveTemplates(list){
+    try { localStorage.setItem(TPL_KEY, JSON.stringify(list)); return true; }
+    catch(e){ showToast('⚠ Impossible de sauver le template'); return false; }
+  }
+
+  /* Snapshot d'une pièce → template (sans photos/notes — seulement structure) */
+  function pieceToTemplate(p, name){
+    return {
+      id: 'tpl_' + Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      name: name || (p.nom + ' (template)'),
+      createdAt: Date.now(),
+      icon: p.icon,
+      mesures: p.mesures ? JSON.parse(JSON.stringify(p.mesures)) : null,
+      travaux: p.travaux ? JSON.parse(JSON.stringify(p.travaux)) : null,
+      obs: '' // ne pas reprendre les obs spécifiques
+    };
+  }
+
+  /* Applique un template à la pièce courante (currentPieceId) */
+  function applyTemplate(tpl){
+    if(!currentPieceId) return false;
+    var db = dbLoad();
+    var p = db.pieces[currentPieceId]; if(!p) return false;
+    if(tpl.mesures) p.mesures = JSON.parse(JSON.stringify(tpl.mesures));
+    if(tpl.travaux){
+      // Préserve photos et notes — on remplace UNIQUEMENT la structure travaux
+      p.travaux = JSON.parse(JSON.stringify(tpl.travaux));
+      // Nettoie les sous-croquis qui ne devraient pas être dupliqués
+      if(p.travaux.plomberieCroquis) delete p.travaux.plomberieCroquis;
+    }
+    p.updatedAt = Date.now();
+    safeSave(db);
+    if(typeof loadPieceUI === 'function') loadPieceUI();
+    showToast('Template "' + tpl.name + '" appliqué ✓');
+    return true;
+  }
+
+  window.ajSaveCurrentAsTemplate = function(){
+    if(!currentPieceId){ showToast('Ouvrez une pièce d\'abord'); return; }
+    var db = dbLoad();
+    var p = db.pieces[currentPieceId]; if(!p) return;
+    var defaultName = p.nom + ' — modèle';
+    var name = prompt('Nom du template (ex: "Chambre standard peinture") :', defaultName);
+    if(!name || !name.trim()) return;
+    var tpls = loadTemplates();
+    tpls.push(pieceToTemplate(p, name.trim()));
+    if(saveTemplates(tpls)) showToast('Template sauvegardé ✓ (' + tpls.length + ' au total)');
+  };
+
+  window.ajApplyTemplateMenu = function(){
+    if(!currentPieceId){ showToast('Ouvrez une pièce d\'abord'); return; }
+    var tpls = loadTemplates();
+    if(!tpls.length){ showToast('Aucun template — sauvegardez-en un d\'abord'); return; }
+    var opts = tpls.map(function(t){
+      return { label: '📋 ' + t.name, value: t.id };
+    });
+    opts.push({ label: '↻ Annuler', value: '__cancel__' });
+    customPrompt('Appliquer un template à cette pièce', opts, function(value){
+      if(!value || value === '__cancel__') return;
+      var tpl = tpls.find(function(t){ return t.id === value; });
+      if(tpl){
+        customConfirm('Cela va remplacer mesures + travaux par "' + tpl.name + '". Photos et notes sont conservées.',
+          function(){ applyTemplate(tpl); },
+          { title:'Appliquer ce template ?', okLabel:'Appliquer' });
+      }
+    });
+  };
+
+  window.ajManageTemplates = function(){
+    var tpls = loadTemplates();
+    if(!tpls.length){ showToast('Aucun template à gérer'); return; }
+    var opts = tpls.map(function(t){
+      return { label: '🗑 Supprimer : ' + t.name, value: t.id };
+    });
+    opts.push({ label: '↻ Annuler', value: '__cancel__' });
+    customPrompt('Supprimer un template', opts, function(value){
+      if(!value || value === '__cancel__') return;
+      var newList = tpls.filter(function(t){ return t.id !== value; });
+      if(saveTemplates(newList)) showToast('Template supprimé');
+    });
+  };
+
+  /* ─── 2) PRESETS RAPIDES (peinture standard / rénovation complète / vide) ─── */
+  var PRESETS = {
+    'peinture-standard': {
+      name: 'Peinture standard',
+      desc: 'Plafond + murs + plinthes (1 couleur uniforme)',
+      apply: function(p){
+        p.travaux = p.travaux || {};
+        p.travaux.paintElems = ['plafond', 'mur', 'plinthe'];
+        p.travaux.plafond = p.travaux.plafond || { surface:'', types:['Uniformisation'], comment:'', couleur:'Blanc' };
+        p.travaux.murs = p.travaux.murs || [{ surface:'', types:['Uniformisation'], comment:'', couleur:'Blanc' }];
+        p.travaux.plinthe = p.travaux.plinthe || { ml:'', types:['Uniformisation'], comment:'', couleur:'Blanc' };
+      }
+    },
+    'reno-complete': {
+      name: 'Rénovation complète',
+      desc: 'Peinture intégrale + sol + portes/fenêtres + élec',
+      apply: function(p){
+        p.travaux = p.travaux || {};
+        p.travaux.paintElems = ['plafond','mur','plinthe','porte','fenetre'];
+        p.travaux.plafond = p.travaux.plafond || { surface:'', types:['Enduit général'], comment:'', couleur:'Blanc' };
+        p.travaux.murs = p.travaux.murs || [{ surface:'', types:['Enduit général'], comment:'', couleur:'' }];
+        p.travaux.plinthe = p.travaux.plinthe || { ml:'', types:['Uniformisation'], comment:'', couleur:'Blanc' };
+        p.travaux.cats = p.travaux.cats || {};
+        p.travaux.cats['sol-depose-rev'] = true;
+        p.travaux.cats['sol-ragreage'] = true;
+        p.travaux.cats['elec-prise-rpl'] = true;
+        p.travaux.cats['elec-inter-rpl'] = true;
+      }
+    },
+    'piece-vide': {
+      name: 'Pièce vide',
+      desc: 'Aucun travail (à remplir manuellement)',
+      apply: function(p){
+        p.travaux = { paintElems:[], cats:{}, murs:[], portes:[], placards:[], intplacards:[], macDup:{}, plomberie:'', plomberieCroquis:'' };
+      }
+    }
+  };
+
+  window.ajApplyPreset = function(presetKey){
+    if(!currentPieceId){ showToast('Ouvrez une pièce d\'abord'); return; }
+    var preset = PRESETS[presetKey];
+    if(!preset) return;
+    customConfirm('Cela va appliquer "' + preset.name + '" : ' + preset.desc + '. Confirmer ?',
+      function(){
+        var db = dbLoad();
+        var p = db.pieces[currentPieceId]; if(!p) return;
+        preset.apply(p);
+        p.updatedAt = Date.now();
+        safeSave(db);
+        if(typeof loadPieceUI === 'function') loadPieceUI();
+        showToast(preset.name + ' appliqué ✓');
+      },
+      { title:'Appliquer "' + preset.name + '" ?', okLabel:'Appliquer' });
+  };
+
+  /* ─── 3) BOUTON "PIÈCE SUIVANTE" très visible ─── */
+  function injectNextPieceButton(){
+    var screen = document.getElementById('screen-piece');
+    if(!screen || !screen.classList.contains('active')) return;
+    if(screen.querySelector('[data-aj-next-piece]')) return;
+    // Insère en bas du screen-piece (après tout le contenu)
+    var bar = document.createElement('div');
+    bar.setAttribute('data-aj-next-piece','1');
+    bar.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;padding:18px 0 80px;margin-top:24px;border-top:2px dashed rgba(201,169,110,0.35);';
+    bar.innerHTML =
+      '<button class="btn btn-primary" onclick="ajGoNextPiece()" style="flex:2;min-width:200px;padding:18px 20px;font-size:16px;font-weight:600;background:#c9a96e;color:#0f2030;border:1px solid #a8884e;">' +
+        '✓ Terminer cette pièce et passer à la suivante →' +
+      '</button>' +
+      '<button class="btn btn-secondary" onclick="ajGoBackToClient()" style="flex:1;min-width:140px;padding:18px 16px;">' +
+        '↺ Retour au chantier' +
+      '</button>';
+    screen.appendChild(bar);
+  }
+  window.ajGoNextPiece = function(){
+    // Sauve d'abord la pièce courante
+    if(typeof persistPiece === 'function') persistPiece();
+    showToast('Pièce sauvegardée ✓');
+    setTimeout(function(){
+      // Va à l'écran add-piece pour créer la suivante
+      if(typeof showScreen === 'function') showScreen('screen-add-piece');
+    }, 350);
+  };
+  window.ajGoBackToClient = function(){
+    if(typeof persistPiece === 'function') persistPiece();
+    setTimeout(function(){
+      if(typeof goBack === 'function') goBack();
+      else if(typeof showScreen === 'function') showScreen('screen-client');
+    }, 200);
+  };
+
+  /* ─── 4) BARRE D'ACTIONS RAPIDE EN HAUT DE LA PIÈCE ─── */
+  function injectQuickActionsBar(){
+    var screen = document.getElementById('screen-piece');
+    if(!screen || !screen.classList.contains('active')) return;
+    if(screen.querySelector('[data-aj-qab]')) return;
+    var bar = document.createElement('div');
+    bar.setAttribute('data-aj-qab','1');
+    bar.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;padding:12px 0;margin-bottom:12px;border-bottom:1px solid rgba(15,32,48,0.06);';
+    var btnStyle = 'padding:8px 14px;border:1px solid var(--c-border,#e3dccc);background:#fff;border-radius:8px;cursor:pointer;font-family:Inter,sans-serif;font-size:12px;font-weight:600;color:#0f2030;display:inline-flex;align-items:center;gap:5px;';
+    bar.innerHTML =
+      '<button onclick="ajApplyPreset(\'peinture-standard\')" style="' + btnStyle + '" title="Peinture plafond + murs + plinthes">⚡ Peinture standard</button>' +
+      '<button onclick="ajApplyPreset(\'reno-complete\')" style="' + btnStyle + '" title="Rénovation complète">🏗 Rénovation complète</button>' +
+      '<button onclick="ajApplyTemplateMenu()" style="' + btnStyle + '" title="Appliquer un template sauvegardé">📋 Template…</button>' +
+      '<button onclick="ajSaveCurrentAsTemplate()" style="' + btnStyle + '" title="Sauver cette pièce comme template">💾 Sauver template</button>' +
+      '<div style="flex:1"></div>' +
+      '<button onclick="ajApplyPreset(\'piece-vide\')" style="' + btnStyle + 'color:#7a8896;" title="Tout vider">🗑 Vider travaux</button>';
+    // Insère après le bandeau checklist (créé en Phase 1) ou en tout premier
+    var checklist = document.getElementById('aj-checklist-bar');
+    if(checklist && checklist.parentNode === screen){
+      screen.insertBefore(bar, checklist.nextSibling);
+    } else {
+      screen.insertBefore(bar, screen.firstChild);
+    }
+  }
+
+  /* ─── 5) DICTÉE VOCALE (Web Speech API) ─── */
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var recognizer = null;
+  var currentRecField = null;
+
+  function startRec(field){
+    if(!SR){ showToast('⚠ Dictée non supportée par ce navigateur (utilisez Chrome ou Samsung Internet)'); return; }
+    if(recognizer){ try { recognizer.stop(); } catch(e){} recognizer = null; }
+    var r = new SR();
+    r.lang = 'fr-FR';
+    r.continuous = true;
+    r.interimResults = true;
+    var initialValue = field.value || '';
+    var startedAt = Date.now();
+    r.onresult = function(ev){
+      var finalText = '';
+      var interim = '';
+      for(var i = ev.resultIndex; i < ev.results.length; i++){
+        var seg = ev.results[i][0].transcript;
+        if(ev.results[i].isFinal) finalText += seg;
+        else interim += seg;
+      }
+      var sep = (initialValue && !initialValue.endsWith(' ') && !initialValue.endsWith('\n')) ? ' ' : '';
+      field.value = initialValue + sep + finalText + (interim ? ' ' + interim : '');
+      // Trigger input event for autosave
+      field.dispatchEvent(new Event('input', { bubbles:true }));
+    };
+    r.onerror = function(e){
+      showToast('⚠ Dictée : ' + (e.error || 'erreur'));
+      stopRec();
+    };
+    r.onend = function(){
+      currentRecField = null;
+      // Mise à jour finale
+      var btn = document.querySelector('[data-aj-mic-active]');
+      if(btn){ btn.removeAttribute('data-aj-mic-active'); btn.style.background = '#fff'; btn.textContent = '🎙'; }
+    };
+    try { r.start(); } catch(e){ showToast('⚠ Dictée déjà active'); return; }
+    recognizer = r;
+    currentRecField = field;
+  }
+
+  function stopRec(){
+    if(recognizer){
+      try { recognizer.stop(); } catch(e){}
+      recognizer = null;
+    }
+    currentRecField = null;
+    var btn = document.querySelector('[data-aj-mic-active]');
+    if(btn){ btn.removeAttribute('data-aj-mic-active'); btn.style.background = '#fff'; btn.textContent = '🎙'; }
+  }
+
+  function injectMicButtons(){
+    if(!SR) return; // Pas supporté → on n'ajoute rien
+    var fields = document.querySelectorAll('textarea, input[type="text"]');
+    fields.forEach(function(f){
+      if(f._ajMicWired) return;
+      // On ne fait que les champs significatifs (notes, observations, commentaires)
+      var id = (f.id || '').toLowerCase();
+      var ph = (f.placeholder || '').toLowerCase();
+      var name = (f.name || '').toLowerCase();
+      var isNotable = id.indexOf('obs') >= 0 || id.indexOf('note') >= 0 || id.indexOf('comment') >= 0
+                   || ph.indexOf('humid') >= 0 || ph.indexOf('observ') >= 0 || ph.indexOf('comment') >= 0
+                   || ph.indexOf('partic') >= 0 || f.tagName === 'TEXTAREA';
+      if(!isNotable) return;
+      f._ajMicWired = true;
+      // Wrap field in container if not already
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = 'Dictée vocale (français)';
+      btn.textContent = '🎙';
+      btn.style.cssText = 'position:absolute;right:8px;top:8px;width:32px;height:32px;padding:0;border:1px solid var(--c-border,#e3dccc);background:#fff;border-radius:8px;cursor:pointer;font-size:14px;line-height:1;z-index:5;';
+      btn.onclick = function(e){
+        e.preventDefault();
+        if(currentRecField === f){
+          stopRec();
+        } else {
+          startRec(f);
+          btn.setAttribute('data-aj-mic-active','1');
+          btn.style.background = '#c9a96e';
+          btn.textContent = '⏹';
+        }
+      };
+      // Set parent position if needed
+      var parent = f.parentElement;
+      if(parent && parent.style.position !== 'absolute' && parent.style.position !== 'relative'){
+        parent.style.position = 'relative';
+      }
+      // Décalage pour ne pas chevaucher le texte
+      f.style.paddingRight = '48px';
+      parent.appendChild(btn);
+    });
+  }
+
+  /* ─── INTÉGRATION ─── */
+  // Refresh sur navigation/step changes
+  var _origShowScreen4 = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreen4.apply(this, arguments);
+    if(id === 'screen-piece'){
+      setTimeout(function(){
+        injectQuickActionsBar();
+        injectNextPieceButton();
+        injectMicButtons();
+      }, 120);
+    }
+    return r;
+  };
+  var _origSwitchStep2 = window.switchStep;
+  if(_origSwitchStep2){
+    window.switchStep = function(n, btn){
+      var r = _origSwitchStep2.apply(this, arguments);
+      setTimeout(injectMicButtons, 100);
+      return r;
+    };
+  }
+  setTimeout(function(){
+    injectQuickActionsBar();
+    injectNextPieceButton();
+    injectMicButtons();
+  }, 800);
+
+  // Stop dictation when leaving piece screen
+  var _origGoBack = window.goBack;
+  if(_origGoBack){
+    window.goBack = function(){ stopRec(); return _origGoBack.apply(this, arguments); };
+  }
+
+  console.log('[AJ PRO] Phase 3 chargée (templates, presets, pièce suivante, dictée vocale ' + (SR?'OK':'non supportée') + ').');
+})();
 </script>
 </body>
 </html>
