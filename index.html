@@ -12,6 +12,7 @@
 <meta name="application-name" content="AJ PRO Rénovation">
 <meta name="theme-color" content="#0f2030">
 <meta name="description" content="AJ PRO RÉNOVATION — Logiciel de gestion de chantier pour artisans et conducteurs de travaux. Relevés, mesures, devis.">
+<link rel="manifest" href="/manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -8168,6 +8169,140 @@ renderHome();
   }, 2000);
 
   console.log('[AJ PRO] Phase 7 chargée (recherche globale, mode sombre, zones tactiles, raccourcis).');
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 8 : PWA INSTALLABLE + OFFLINE
+   • Service Worker pour fonctionner sans wifi en chantier
+   • Manifest pour installer l'app sur l'écran d'accueil de la tablette
+   • Bouton "Installer l'app" + indicateur en/hors ligne
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P8_LOADED) return;
+  window.__AJ_P8_LOADED = true;
+
+  /* ─── 1) ENREGISTREMENT DU SERVICE WORKER ─── */
+  if('serviceWorker' in navigator){
+    window.addEventListener('load', function(){
+      navigator.serviceWorker.register('/sw.js').then(function(reg){
+        console.log('[AJ PRO] Service Worker enregistré');
+        // Détecte une nouvelle version dispo
+        reg.addEventListener('updatefound', function(){
+          var newSW = reg.installing;
+          if(newSW){
+            newSW.addEventListener('statechange', function(){
+              if(newSW.state === 'installed' && navigator.serviceWorker.controller){
+                showUpdateBanner();
+              }
+            });
+          }
+        });
+      }).catch(function(err){
+        console.warn('[AJ PRO] Service Worker non enregistré :', err);
+      });
+    });
+  }
+
+  function showUpdateBanner(){
+    if(document.getElementById('aj-update-banner')) return;
+    var b = document.createElement('div');
+    b.id = 'aj-update-banner';
+    b.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);z-index:65;background:#c9a96e;color:#0f2030;padding:12px 18px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.25);font-family:Inter,sans-serif;font-size:13px;display:flex;align-items:center;gap:10px;font-weight:600;';
+    b.innerHTML = '<span>🔄 Nouvelle version disponible</span>' +
+      '<button onclick="ajApplyUpdate()" style="background:#0f2030;color:#c9a96e;border:none;padding:6px 12px;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px;">Mettre à jour</button>';
+    document.body.appendChild(b);
+  }
+  window.ajApplyUpdate = function(){
+    if(navigator.serviceWorker.controller){
+      navigator.serviceWorker.getRegistration().then(function(reg){
+        if(reg && reg.waiting) reg.waiting.postMessage({ type:'SKIP_WAITING' });
+        setTimeout(function(){ location.reload(); }, 200);
+      });
+    } else {
+      location.reload();
+    }
+  };
+
+  /* ─── 2) BOUTON "INSTALLER L'APP" ─── */
+  var deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', function(e){
+    e.preventDefault();
+    deferredPrompt = e;
+    showInstallBanner();
+  });
+
+  function showInstallBanner(){
+    if(localStorage.getItem('aj-install-dismissed') === '1') return;
+    if(document.getElementById('aj-install-banner')) return;
+    var b = document.createElement('div');
+    b.id = 'aj-install-banner';
+    b.style.cssText = 'position:fixed;top:80px;right:18px;z-index:55;background:#fff;border:1px solid #c9a96e;border-left:4px solid #c9a96e;border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,0.15);max-width:300px;font-family:Inter,sans-serif;animation:fadein 0.2s ease;';
+    b.innerHTML =
+      '<div style="font-weight:600;color:#0f2030;margin-bottom:4px;font-size:13px;">📲 Installer AJ PRO</div>' +
+      '<div style="font-size:12px;color:#3a4a5c;margin-bottom:10px;">Ajoute l\'app sur l\'écran d\'accueil pour un accès rapide en chantier.</div>' +
+      '<div style="display:flex;gap:6px;">' +
+        '<button onclick="ajPromptInstall()" style="flex:1;padding:8px 12px;background:#c9a96e;color:#0f2030;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Installer</button>' +
+        '<button onclick="ajDismissInstall()" style="flex:1;padding:8px 12px;background:#fff;color:#7a8896;border:1px solid #e3dccc;border-radius:6px;font-size:12px;cursor:pointer;">Plus tard</button>' +
+      '</div>';
+    document.body.appendChild(b);
+  }
+  window.ajPromptInstall = function(){
+    if(!deferredPrompt){
+      // iOS / fallback : montrer instructions manuelles
+      ajShowManualInstall();
+      return;
+    }
+    deferredPrompt.prompt();
+    deferredPrompt.userChoice.then(function(choice){
+      if(choice.outcome === 'accepted') showToast('App installée ✓');
+      deferredPrompt = null;
+      var b = document.getElementById('aj-install-banner');
+      if(b) b.remove();
+    });
+  };
+  window.ajDismissInstall = function(){
+    localStorage.setItem('aj-install-dismissed', '1');
+    var b = document.getElementById('aj-install-banner');
+    if(b) b.remove();
+  };
+  window.ajShowManualInstall = function(){
+    var ua = navigator.userAgent.toLowerCase();
+    var msg = 'Pour installer l\'app :\n\n';
+    if(ua.indexOf('iphone') >= 0 || ua.indexOf('ipad') >= 0){
+      msg += '1. Appuie sur le bouton Partager (carré avec flèche)\n2. Choisis "Sur l\'écran d\'accueil"';
+    } else {
+      msg += '1. Ouvre le menu (⋮) du navigateur\n2. Choisis "Installer l\'application" ou "Ajouter à l\'écran d\'accueil"';
+    }
+    alert(msg);
+  };
+
+  /* ─── 3) INDICATEUR EN/HORS LIGNE ─── */
+  function updateOnlineStatus(){
+    var sync = document.querySelector('.topbar-sync');
+    if(!sync) return;
+    var span = sync.querySelector('span');
+    if(navigator.onLine){
+      sync.style.opacity = '1';
+      if(span) span.textContent = 'Synchronisé';
+      sync.title = 'Connecté à Internet';
+    } else {
+      sync.style.opacity = '0.7';
+      sync.style.color = '#c9a96e';
+      if(span) span.textContent = 'Hors ligne';
+      sync.title = 'Hors ligne — données stockées localement, syncro à la reconnexion';
+    }
+  }
+  window.addEventListener('online', function(){
+    updateOnlineStatus();
+    showToast('🟢 Connecté');
+  });
+  window.addEventListener('offline', function(){
+    updateOnlineStatus();
+    showToast('🟡 Hors ligne — ça continue de marcher');
+  });
+  setTimeout(updateOnlineStatus, 800);
+
+  console.log('[AJ PRO] Phase 8 chargée (PWA installable + offline mode).');
 })();
 </script>
 </body>
