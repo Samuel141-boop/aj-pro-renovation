@@ -10509,6 +10509,253 @@ renderHome();
 
   console.log('[AJ PRO] Phase 16 chargée (comparateur + suggestion prix moyens).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 17 : MODE DÉMO / ONBOARDING TUTORIEL
+   • Tutoriel guidé interactif pour découvrir les fonctionnalités
+   • Mise en valeur des éléments avec spotlight
+   • Auto-affichage à la 1ère utilisation, relançable depuis l'aide
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P17_LOADED) return;
+  window.__AJ_P17_LOADED = true;
+
+  var TOUR_KEY = 'aj-tour-completed';
+
+  /* ─── 1) ÉTAPES DU TUTORIEL ─── */
+  var STEPS = [
+    {
+      title: '👋 Bienvenue dans AJ PRO RÉNOVATION',
+      content: 'Outil de gestion de chantier pensé pour ta tablette et ton stylet. Ce tour rapide t\'explique les fonctions essentielles. (Tu pourras le rejouer plus tard depuis le bouton ?)',
+      target: null
+    },
+    {
+      title: '🏠 Tableau de bord',
+      content: 'L\'accueil. Tu y vois tes derniers chantiers et une bannière "Actions en attente" qui te rappelle ce qu\'il reste à faire (mesures manquantes, prix non saisis, etc.).',
+      target: '.nav-item[data-screen="screen-home"]'
+    },
+    {
+      title: '👥 Clients & chantiers',
+      content: 'Crée tes chantiers ici. Pour chaque client tu peux : ajouter des pièces, dessiner croquis, prendre photos, marquer travaux, signer un bon de visite.',
+      target: '.nav-item[data-screen="screen-clients"]'
+    },
+    {
+      title: '📊 Synthèse devis',
+      content: 'La vue récap de ton chantier. Statuts colorés, prix HT/TTC, export PDF + CSV Excel pour finaliser ton devis au bureau.',
+      target: '#aj-nav-synthese'
+    },
+    {
+      title: '📈 Statistiques',
+      content: 'Ton activité d\'un coup d\'œil : chantiers, photos, devis estimés, top catégories, évolution mensuelle.',
+      target: '#aj-nav-stats'
+    },
+    {
+      title: '📅 Planning',
+      content: 'Calendrier de tes rendez-vous, prochaines visites, navigation par mois.',
+      target: '#aj-nav-planning'
+    },
+    {
+      title: '⚖ Comparateur',
+      content: 'Compare 2 chantiers côte à côte (utile pour pricing comparatif).',
+      target: '#aj-nav-compare'
+    },
+    {
+      title: '⚙ Paramètres devis',
+      content: 'Configure ta TVA (10% rénovation, 20% standard) et ta marge entreprise. Appliquées automatiquement sur tous les devis.',
+      target: '#aj-nav-settings'
+    },
+    {
+      title: '🔍 Recherche globale',
+      content: 'Bouton recherche en haut à droite (ou raccourci Ctrl+K) : trouve un client ou une pièce instantanément.',
+      target: '#aj-search-btn'
+    },
+    {
+      title: '🌙 Mode sombre',
+      content: 'Pour les rendez-vous en soirée. Toggle dans la sidebar.',
+      target: '#aj-dark-btn'
+    },
+    {
+      title: '✏ Le stylet S Pen — point fort',
+      content: 'Pour dessiner : 3 épaisseurs, 3 tailles de gomme, undo/redo. La pression module l\'épaisseur du trait. Active le ruban virtuel 📏 pour mesurer 2 points sur un croquis.',
+      target: null
+    },
+    {
+      title: '📐 Croquis intelligent',
+      content: 'Dessine 4 traits droits formant le contour de la pièce, clique "Analyser le croquis", entre une longueur connue → l\'app calcule auto les autres dimensions et écrit les cotes sur le croquis.',
+      target: null
+    },
+    {
+      title: '✍ Bon de visite signé',
+      content: 'En fin de rendez-vous, fais signer ton client sur la tablette → un PDF avec sa signature et les travaux convenus est généré, à lui envoyer par mail.',
+      target: null
+    },
+    {
+      title: '💾 Sauvegarde',
+      content: 'Tes données sont en local. Pense à exporter une sauvegarde régulièrement (Base de données → Exporter). En cas de souci tu peux tout restaurer.',
+      target: null
+    },
+    {
+      title: '✓ Tu es prêt',
+      content: 'C\'est tout pour le tour. Crée ton 1er chantier, explore. Tu peux relancer ce tutoriel à tout moment via le bouton "?" dans la sidebar.',
+      target: null
+    }
+  ];
+
+  /* ─── 2) OVERLAY AVEC SPOTLIGHT ─── */
+  function ensureTourOverlay(){
+    if(document.getElementById('aj-tour-overlay')) return;
+    var ov = document.createElement('div');
+    ov.id = 'aj-tour-overlay';
+    ov.style.cssText = 'display:none;position:fixed;inset:0;z-index:400;pointer-events:auto;';
+    ov.innerHTML =
+      '<div id="aj-tour-backdrop" style="position:absolute;inset:0;background:rgba(15,32,48,0.78);"></div>' +
+      '<div id="aj-tour-spotlight" style="position:absolute;border-radius:12px;box-shadow:0 0 0 9999px rgba(15,32,48,0.78);pointer-events:none;display:none;transition:all 0.3s ease;"></div>' +
+      '<div id="aj-tour-card" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:380px;width:calc(100% - 40px);background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.45);font-family:Inter,sans-serif;overflow:hidden;">' +
+        '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;padding:20px;">' +
+          '<div id="aj-tour-step" style="font-size:11px;color:#c9a96e;text-transform:uppercase;letter-spacing:1px;font-weight:600;margin-bottom:6px;"></div>' +
+          '<div id="aj-tour-title" style="font-family:Cormorant Garamond,Georgia,serif;font-size:22px;font-weight:600;color:#fff;line-height:1.2;"></div>' +
+        '</div>' +
+        '<div id="aj-tour-content" style="padding:20px;color:#3a4a5c;font-size:14px;line-height:1.6;"></div>' +
+        '<div style="display:flex;gap:8px;padding:0 20px 20px;align-items:center;">' +
+          '<button onclick="ajTourSkip()" style="background:transparent;border:none;color:#7a8896;font-size:12px;cursor:pointer;padding:8px;">Passer</button>' +
+          '<div style="flex:1"></div>' +
+          '<button id="aj-tour-prev" onclick="ajTourPrev()" style="padding:10px 16px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;cursor:pointer;font-weight:500;color:#3a4a5c;font-size:13px;">‹ Précédent</button>' +
+          '<button id="aj-tour-next" onclick="ajTourNext()" style="padding:10px 18px;background:#c9a96e;color:#0f2030;border:none;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;">Suivant ›</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+  }
+
+  var currentStep = 0;
+
+  function showStep(i){
+    var step = STEPS[i];
+    if(!step) return;
+    document.getElementById('aj-tour-step').textContent = (i+1) + ' / ' + STEPS.length;
+    document.getElementById('aj-tour-title').textContent = step.title;
+    document.getElementById('aj-tour-content').textContent = step.content;
+    document.getElementById('aj-tour-prev').style.visibility = i > 0 ? 'visible' : 'hidden';
+    document.getElementById('aj-tour-next').textContent = i === STEPS.length - 1 ? '✓ Terminer' : 'Suivant ›';
+
+    // Spotlight
+    var spotlight = document.getElementById('aj-tour-spotlight');
+    var card = document.getElementById('aj-tour-card');
+    if(step.target){
+      var el = document.querySelector(step.target);
+      if(el){
+        // Open sidebar if needed for tablet
+        if(typeof openSidebar === 'function' && window.innerWidth <= 980){
+          openSidebar();
+        }
+        setTimeout(function(){
+          var rect = el.getBoundingClientRect();
+          if(rect.width === 0 && rect.height === 0){
+            spotlight.style.display = 'none';
+            card.style.left = '50%';
+            card.style.top = '50%';
+            card.style.transform = 'translate(-50%,-50%)';
+            return;
+          }
+          spotlight.style.display = 'block';
+          spotlight.style.left = (rect.left - 6) + 'px';
+          spotlight.style.top = (rect.top - 6) + 'px';
+          spotlight.style.width = (rect.width + 12) + 'px';
+          spotlight.style.height = (rect.height + 12) + 'px';
+
+          // Position card next to target (favor right side)
+          var cardW = 380;
+          var cardH = 280;
+          var leftPos = rect.right + 20;
+          if(leftPos + cardW > window.innerWidth - 20){
+            leftPos = Math.max(20, rect.left - cardW - 20);
+            if(leftPos < 20){
+              // Center below
+              leftPos = (window.innerWidth - cardW) / 2;
+            }
+          }
+          var topPos = rect.top;
+          if(topPos + cardH > window.innerHeight - 20){
+            topPos = Math.max(20, window.innerHeight - cardH - 20);
+          }
+          card.style.left = Math.max(20, leftPos) + 'px';
+          card.style.top = Math.max(20, topPos) + 'px';
+          card.style.transform = 'none';
+        }, 100);
+      } else {
+        spotlight.style.display = 'none';
+        card.style.left = '50%';
+        card.style.top = '50%';
+        card.style.transform = 'translate(-50%,-50%)';
+      }
+    } else {
+      spotlight.style.display = 'none';
+      card.style.left = '50%';
+      card.style.top = '50%';
+      card.style.transform = 'translate(-50%,-50%)';
+    }
+  }
+
+  window.ajTourStart = function(){
+    ensureTourOverlay();
+    currentStep = 0;
+    document.getElementById('aj-tour-overlay').style.display = 'block';
+    showStep(0);
+  };
+  window.ajTourNext = function(){
+    if(currentStep >= STEPS.length - 1){
+      ajTourComplete();
+      return;
+    }
+    currentStep++;
+    showStep(currentStep);
+  };
+  window.ajTourPrev = function(){
+    if(currentStep <= 0) return;
+    currentStep--;
+    showStep(currentStep);
+  };
+  window.ajTourSkip = function(){
+    ajTourComplete();
+  };
+  function ajTourComplete(){
+    var ov = document.getElementById('aj-tour-overlay');
+    if(ov) ov.style.display = 'none';
+    localStorage.setItem(TOUR_KEY, '1');
+  }
+
+  /* ─── 3) BOUTON D'AIDE DANS LA SIDEBAR FOOTER ─── */
+  function injectHelpButton(){
+    if(document.getElementById('aj-help-btn')) return;
+    // Cherche le help existant ou ajoute après le toggle dark
+    var darkBtn = document.getElementById('aj-dark-btn');
+    var anchor = darkBtn || document.querySelector('.sidebar-footer');
+    if(!anchor) return;
+    var btn = document.createElement('button');
+    btn.id = 'aj-help-btn';
+    btn.title = 'Lancer le tutoriel';
+    btn.style.cssText = 'width:100%;padding:10px 14px;background:transparent;color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.12);border-radius:8px;cursor:pointer;font-family:Inter,sans-serif;font-size:12px;margin-bottom:8px;display:flex;align-items:center;justify-content:center;gap:8px;';
+    btn.innerHTML = '<span>?</span><span>Tutoriel guidé</span>';
+    btn.onclick = function(){ ajTourStart(); };
+    if(darkBtn && darkBtn.parentNode){
+      darkBtn.parentNode.insertBefore(btn, darkBtn);
+    } else {
+      anchor.parentNode.insertBefore(btn, anchor);
+    }
+  }
+  setTimeout(injectHelpButton, 1100);
+
+  /* ─── 4) AUTO-LANCEMENT À LA 1ÈRE UTILISATION ─── */
+  setTimeout(function(){
+    if(localStorage.getItem(TOUR_KEY) !== '1'){
+      // Vérifie qu'on est bien sur la page principale (pas en pleine saisie)
+      if(currentScreen === 'screen-home' || !currentScreen){
+        ajTourStart();
+      }
+    }
+  }, 2500);
+
+  console.log('[AJ PRO] Phase 17 chargée (tutoriel onboarding ' + STEPS.length + ' étapes).');
+})();
 </script>
 </body>
 </html>
