@@ -7901,6 +7901,274 @@ renderHome();
 
   console.log('[AJ PRO] Phase 6 chargée (validation DB, auto-backup, IndexedDB photo offload ' + (idbAvailable?'OK':'non disponible') + ').');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — PHASE 7 : POLISH UX FINAL
+   • Recherche globale (clients, pièces, travaux) accessible depuis la topbar
+   • Mode sombre (toggle, persistant par appareil)
+   • Zones tactiles uniformisées (boutons bénéficient d'une min-height confortable)
+   • Raccourcis clavier (Ctrl+K = recherche, Esc = retour)
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_P7_LOADED) return;
+  window.__AJ_P7_LOADED = true;
+
+  /* ─── 1) RECHERCHE GLOBALE ─── */
+  function buildSearchIndex(){
+    var db = dbLoad();
+    var idx = [];
+    Object.values(db.clients || {}).forEach(function(c){
+      idx.push({
+        type:'client',
+        id: c.id,
+        title: c.prenom + ' ' + c.nom,
+        sub: c.adresse || '',
+        keywords: ((c.prenom||'') + ' ' + (c.nom||'') + ' ' + (c.adresse||'') + ' ' + (c.tel||'') + ' ' + (c.obs||'')).toLowerCase()
+      });
+    });
+    Object.values(db.pieces || {}).forEach(function(p){
+      var clientName = '';
+      var cl = (db.clients || {})[p.clientId];
+      if(cl) clientName = cl.prenom + ' ' + cl.nom;
+      idx.push({
+        type:'piece',
+        id: p.id,
+        clientId: p.clientId,
+        title: p.nom + ' — ' + clientName,
+        sub: ((p.mesures && p.mesures.long) ? p.mesures.long + '×' + p.mesures.larg + ' m' : '') + (p.obs ? ' · ' + p.obs.slice(0,40) : ''),
+        keywords: ((p.nom||'') + ' ' + (p.obs||'') + ' ' + clientName).toLowerCase()
+      });
+    });
+    return idx;
+  }
+
+  function performSearch(query){
+    if(!query || query.length < 2) return [];
+    var q = query.toLowerCase().trim();
+    var idx = buildSearchIndex();
+    var scored = idx.map(function(item){
+      var score = 0;
+      var kw = item.keywords;
+      var ti = item.title.toLowerCase();
+      // Title match best
+      if(ti.indexOf(q) >= 0) score += 100;
+      if(ti.indexOf(q) === 0) score += 50;
+      // Keyword match
+      if(kw.indexOf(q) >= 0) score += 20;
+      // Word starts
+      var words = q.split(/\s+/);
+      words.forEach(function(w){
+        if(w.length < 2) return;
+        if(kw.indexOf(' ' + w) >= 0 || kw.indexOf(w + ' ') === 0) score += 10;
+      });
+      return { item: item, score: score };
+    }).filter(function(s){ return s.score > 0; }).sort(function(a,b){ return b.score - a.score; }).slice(0, 12);
+    return scored.map(function(s){ return s.item; });
+  }
+
+  function renderSearchResults(query){
+    var results = performSearch(query);
+    var list = document.getElementById('aj-search-results');
+    if(!list) return;
+    if(!query || query.length < 2){
+      list.innerHTML = '<div style="padding:14px;color:#7a8896;font-family:Inter,sans-serif;font-size:13px;text-align:center;">Tapez au moins 2 caractères…</div>';
+      return;
+    }
+    if(!results.length){
+      list.innerHTML = '<div style="padding:14px;color:#7a8896;font-family:Inter,sans-serif;font-size:13px;text-align:center;">Aucun résultat pour "' + esc(query) + '"</div>';
+      return;
+    }
+    list.innerHTML = results.map(function(r){
+      var icon = r.type === 'client' ? '👤' : '🛋';
+      var typeLbl = r.type === 'client' ? 'Client' : 'Pièce';
+      return '<div class="aj-search-item" data-type="' + r.type + '" data-id="' + r.id + '" data-cid="' + (r.clientId || '') + '" style="padding:12px 16px;border-bottom:1px solid rgba(15,32,48,0.06);cursor:pointer;font-family:Inter,sans-serif;display:flex;align-items:center;gap:12px;">' +
+        '<div style="font-size:20px;">' + icon + '</div>' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;color:#0f2030;font-size:14px;">' + esc(r.title) + '</div>' +
+          '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;">' + typeLbl + (r.sub ? ' · ' + esc(r.sub) : '') + '</div>' +
+        '</div>' +
+        '<div style="color:#c9a96e;font-size:18px;">›</div>' +
+      '</div>';
+    }).join('');
+    // Wire up click
+    list.querySelectorAll('.aj-search-item').forEach(function(el){
+      el.onclick = function(){
+        var type = el.getAttribute('data-type');
+        var id = el.getAttribute('data-id');
+        var cid = el.getAttribute('data-cid');
+        closeSearch();
+        if(type === 'client'){
+          if(typeof openClient === 'function') openClient(id);
+          else { window.currentClientId = id; if(typeof showScreen === 'function') showScreen('screen-client'); }
+        } else if(type === 'piece'){
+          if(cid){ window.currentClientId = cid; }
+          if(typeof openPiece === 'function') openPiece(id);
+        }
+      };
+    });
+  }
+
+  function ensureSearchOverlay(){
+    if(document.getElementById('aj-search-overlay')) return;
+    var ov = document.createElement('div');
+    ov.id = 'aj-search-overlay';
+    ov.style.cssText = 'display:none;position:fixed;inset:0;background:rgba(15,32,48,0.55);z-index:200;backdrop-filter:blur(4px);animation:fadein .15s ease;';
+    ov.innerHTML =
+      '<div style="max-width:560px;margin:80px auto 0;background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,0.4);overflow:hidden;font-family:Inter,sans-serif;">' +
+        '<div style="display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--c-border,#e3dccc);">' +
+          '<div style="font-size:18px;">🔍</div>' +
+          '<input id="aj-search-input" type="search" placeholder="Rechercher un client, une pièce…" style="flex:1;border:none;outline:none;font-size:15px;font-family:Inter,sans-serif;padding:6px 0;" autocomplete="off"/>' +
+          '<button onclick="ajCloseSearch()" style="border:none;background:none;cursor:pointer;font-size:20px;color:#7a8896;padding:4px 8px;">×</button>' +
+        '</div>' +
+        '<div id="aj-search-results" style="max-height:60vh;overflow-y:auto;"></div>' +
+        '<div style="padding:8px 14px;border-top:1px solid var(--c-border,#e3dccc);font-size:11px;color:#7a8896;text-align:center;">Esc pour fermer · Ctrl+K pour ouvrir</div>' +
+      '</div>';
+    document.body.appendChild(ov);
+    ov.addEventListener('click', function(e){
+      if(e.target === ov) closeSearch();
+    });
+    var inp = document.getElementById('aj-search-input');
+    if(inp){
+      inp.addEventListener('input', function(){ renderSearchResults(inp.value); });
+    }
+  }
+
+  window.ajOpenSearch = function(){
+    ensureSearchOverlay();
+    var ov = document.getElementById('aj-search-overlay');
+    if(!ov) return;
+    ov.style.display = 'block';
+    setTimeout(function(){
+      var inp = document.getElementById('aj-search-input');
+      if(inp){ inp.value = ''; inp.focus(); }
+      renderSearchResults('');
+    }, 50);
+  };
+  window.ajCloseSearch = function(){
+    var ov = document.getElementById('aj-search-overlay');
+    if(ov) ov.style.display = 'none';
+  };
+  function closeSearch(){ window.ajCloseSearch(); }
+
+  /* Bouton recherche dans la topbar */
+  function injectSearchButton(){
+    var topbar = document.querySelector('.topbar-actions');
+    if(!topbar || document.getElementById('aj-search-btn')) return;
+    var btn = document.createElement('button');
+    btn.id = 'aj-search-btn';
+    btn.title = 'Rechercher (Ctrl+K)';
+    btn.setAttribute('aria-label','Rechercher');
+    btn.style.cssText = 'background:none;border:1px solid rgba(255,255,255,0.15);color:rgba(255,255,255,0.85);padding:6px 12px;border-radius:8px;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;display:inline-flex;align-items:center;gap:6px;margin-right:8px;';
+    btn.innerHTML = '<span style="font-size:14px;">🔍</span><span>Rechercher</span>';
+    btn.onclick = ajOpenSearch;
+    topbar.insertBefore(btn, topbar.firstChild);
+  }
+  setTimeout(injectSearchButton, 600);
+
+  /* ─── 2) MODE SOMBRE ─── */
+  var DARK_KEY = 'aj-dark-mode';
+  function isDark(){ return localStorage.getItem(DARK_KEY) === '1'; }
+  function applyDarkMode(on){
+    var styleEl = document.getElementById('aj-dark-style');
+    if(on){
+      if(!styleEl){
+        styleEl = document.createElement('style');
+        styleEl.id = 'aj-dark-style';
+        styleEl.textContent = [
+          'html.aj-dark { background:#0a1722 !important; }',
+          'html.aj-dark body, html.aj-dark .main-content, html.aj-dark .screen { background:#0a1722 !important; color:#e8e3d6 !important; }',
+          'html.aj-dark .form-input, html.aj-dark input, html.aj-dark textarea, html.aj-dark select { background:#1a3349 !important; color:#fff !important; border-color:#2a4361 !important; }',
+          'html.aj-dark .form-input::placeholder { color:rgba(255,255,255,0.4) !important; }',
+          'html.aj-dark .piece-card, html.aj-dark .travaux-cat-card, html.aj-dark .travaux-intervention, html.aj-dark .recap-section, html.aj-dark .form-section, html.aj-dark .canvas-zone { background:#162635 !important; border-color:#2a4361 !important; color:#e8e3d6 !important; }',
+          'html.aj-dark .form-label, html.aj-dark .piece-name, html.aj-dark .piece-sub, html.aj-dark .travaux-int-name, html.aj-dark .travaux-int-meta { color:#e8e3d6 !important; }',
+          'html.aj-dark .btn-secondary { background:#1a3349 !important; color:#e8e3d6 !important; border-color:#2a4361 !important; }',
+          'html.aj-dark .canvas-toolbar { background:#162635 !important; border-color:#2a4361 !important; }',
+          'html.aj-dark .canvas-toolbar button { background:#1a3349 !important; color:#e8e3d6 !important; border-color:#2a4361 !important; }',
+          'html.aj-dark canvas { background:#fff !important; }',
+          'html.aj-dark .h-chip, html.aj-dark .lessiv-chip { background:#1a3349 !important; color:#e8e3d6 !important; border-color:#2a4361 !important; }',
+          'html.aj-dark .h-chip.on, html.aj-dark .lessiv-chip.on { background:#c9a96e !important; color:#0f2030 !important; }',
+          'html.aj-dark #aj-checklist-bar { background:rgba(22,38,53,0.97) !important; border-bottom-color:#2a4361 !important; }',
+          'html.aj-dark .photo-thumb { background:#162635 !important; }',
+          'html.aj-dark #synthese-body > div { background:#162635 !important; border-color:#2a4361 !important; color:#e8e3d6 !important; }'
+        ].join('\n');
+        document.head.appendChild(styleEl);
+      }
+      document.documentElement.classList.add('aj-dark');
+    } else {
+      document.documentElement.classList.remove('aj-dark');
+    }
+  }
+  window.ajToggleDarkMode = function(){
+    var newVal = !isDark();
+    localStorage.setItem(DARK_KEY, newVal ? '1' : '0');
+    applyDarkMode(newVal);
+    showToast(newVal ? '🌙 Mode sombre activé' : '☀ Mode clair activé');
+  };
+  // Apply au chargement
+  applyDarkMode(isDark());
+
+  /* Bouton dark mode dans la sidebar (footer) */
+  function injectDarkModeButton(){
+    if(document.getElementById('aj-dark-btn')) return;
+    var footer = document.querySelector('.sidebar-footer');
+    if(!footer) return;
+    var btn = document.createElement('button');
+    btn.id = 'aj-dark-btn';
+    btn.title = 'Basculer mode sombre / clair';
+    btn.style.cssText = 'width:100%;padding:10px 14px;background:transparent;color:rgba(255,255,255,0.7);border:1px solid rgba(255,255,255,0.12);border-radius:8px;cursor:pointer;font-family:Inter,sans-serif;font-size:12px;margin-bottom:10px;display:flex;align-items:center;justify-content:center;gap:8px;';
+    btn.innerHTML = '<span>' + (isDark()?'☀':'🌙') + '</span><span>' + (isDark()?'Mode clair':'Mode sombre') + '</span>';
+    btn.onclick = function(){
+      ajToggleDarkMode();
+      btn.innerHTML = '<span>' + (isDark()?'☀':'🌙') + '</span><span>' + (isDark()?'Mode clair':'Mode sombre') + '</span>';
+    };
+    footer.parentElement.insertBefore(btn, footer);
+  }
+  setTimeout(injectDarkModeButton, 700);
+
+  /* ─── 3) RACCOURCIS CLAVIER ─── */
+  document.addEventListener('keydown', function(e){
+    // Ctrl+K ou Cmd+K → recherche
+    if((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')){
+      e.preventDefault();
+      ajOpenSearch();
+    }
+    // Esc → ferme overlays
+    if(e.key === 'Escape'){
+      var searchOv = document.getElementById('aj-search-overlay');
+      if(searchOv && searchOv.style.display !== 'none'){
+        ajCloseSearch();
+      }
+    }
+  });
+
+  /* ─── 4) ZONES TACTILES UNIFORMISÉES (CSS injection pour bouton min-height) ─── */
+  var styleEl2 = document.createElement('style');
+  styleEl2.id = 'aj-touch-targets';
+  styleEl2.textContent = [
+    /* Garantit une zone tactile min sur tous les boutons */
+    '@media (pointer: coarse) {',
+    '  .btn, button.btn-sm, .ctool, .cdot, .h-chip, .lessiv-chip { min-height:42px !important; }',
+    '  .nav-item, .travaux-cat-card { min-height:48px !important; }',
+    '}',
+    /* Espace les chips entre eux pour éviter les double-tap */
+    '.h-chip, .lessiv-chip { margin:2px !important; }',
+    /* Zone tactile élargie sur les boutons inline (delete, etc.) */
+    '.photo-del, .travaux-int-menu { min-width:38px !important; min-height:38px !important; padding:8px !important; }'
+  ].join('\n');
+  document.head.appendChild(styleEl2);
+
+  /* ─── 5) TOAST DE BIENVENUE PHASE 7 (au premier chargement seulement) ─── */
+  setTimeout(function(){
+    if(!localStorage.getItem('aj-p7-welcomed')){
+      localStorage.setItem('aj-p7-welcomed', '1');
+      setTimeout(function(){
+        showToast('🔍 Nouvelle recherche disponible (Ctrl+K)');
+      }, 1500);
+    }
+  }, 2000);
+
+  console.log('[AJ PRO] Phase 7 chargée (recherche globale, mode sombre, zones tactiles, raccourcis).');
+})();
 </script>
 </body>
 </html>
