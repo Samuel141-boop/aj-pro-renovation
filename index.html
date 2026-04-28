@@ -11915,6 +11915,283 @@ window.FEATURES_ENABLED = Object.assign({
 
   console.log('[AJ PRO] Correctif légal chargé (numérotation + verrou anti-modification).');
 })();
+
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO — EXPORT CHANTIER (Tâche 5 — 2026-04-28)
+   Bouton "📦 Export complet" sur la fiche client.
+   Génère :
+   1) Un JSON LLM-friendly (méta + texte structuré, pas de dataURL d'images)
+   2) Un PDF lisible humain (réutilise ajGeneratePDF Phase 2B.1)
+   Cas d'usage : coller le JSON dans un assistant IA pour générer un devis chiffré.
+   ════════════════════════════════════════════════════════════════════ */
+(function(){
+  if(window.__AJ_EXPORT_LOADED) return;
+  window.__AJ_EXPORT_LOADED = true;
+
+  /* ─── Helpers ─── */
+  function pf(v){ if(v == null) return 0; var n = parseFloat(String(v).replace(',','.')); return isNaN(n) ? 0 : n; }
+  function r2(v){ return Math.round(v * 100) / 100; }
+
+  function computePieceCalculs(p){
+    var m = p.mesures || {};
+    var L = pf(m.long), l = pf(m.larg), H = pf(m.haut);
+    if(!L || !l) return null;
+    var perimetre = 2 * (L + l);
+    var surfaceSol = L * l;
+    var surfaceMursBrute = H ? perimetre * H : 0;
+    return {
+      longueur: L,
+      largeur: l,
+      hauteurSousPlafond: H || null,
+      surfaceSol_m2: r2(surfaceSol),
+      surfacePlafond_m2: r2(surfaceSol),
+      perimetre_ml: r2(perimetre),
+      surfaceMursBrute_m2: surfaceMursBrute ? r2(surfaceMursBrute) : null
+    };
+  }
+
+  function buildPieceTravauxResume(p){
+    var t = p.travaux || {};
+    var cats = t.cats || {};
+    var KEY_LABELS_LOCAL = (function(){
+      /* On extrait les labels lisibles sans dépendre de buildTravauxData (qui peut filtrer) */
+      return {
+        'mac-depose-cloison':'Dépose de cloison','mac-crea-cloison':'Création de cloison',
+        'mac-depose-porte-placard':'Dépose portes de placard','mac-depose-amenag-placard':'Dépose aménagement placard',
+        'mac-depose-fp':'Dépose faux plafond','mac-crea-fp':'Création faux plafond',
+        'mac-ouverture':'Ouverture cloison','mac-pose-porte':'Pose porte',
+        'elec-prise-rpl':'Remplacement prise','elec-inter-rpl':'Remplacement interrupteur',
+        'elec-prises':'Création prises','elec-inter':'Création interrupteurs',
+        'elec-volet':'Création ligne volet','elec-ecl':'Création éclairage',
+        'elec-tab':'Tableau électrique','elec-radiateur':'Pose radiateur électrique',
+        'elec-rj45':'Création ligne RJ45','elec-dep':'Dépose',
+        'sol-depose-rev':'Dépose revêtement','sol-depose-plinthe':'Dépose plinthes',
+        'sol-ragreage':'Ragréage','sol-carrelage':'Pose carrelage',
+        'sol-parquet':'Pose parquet','sol-resine':'Résine / béton ciré',
+        'sol-par-baguette':'Baguette de finition','sol-par-seuil':'Barre de seuil',
+        'pf-porte-rpl':'Remplacement porte','pf-fenetre':'Remplacement fenêtre','pf-volet':'Remplacement volet'
+      };
+    })();
+    var lignes = [];
+    Object.keys(cats).forEach(function(k){
+      if(cats[k] !== true) return;
+      var label = KEY_LABELS_LOCAL[k] || k;
+      var prefix = k.split('-')[0];
+      var category = ({ mac:'maconnerie', plomb:'plomberie', elec:'electricite', sol:'sol', pf:'portes-fenetres' })[prefix] || 'autre';
+      lignes.push({ key: k, label: label, category: category });
+    });
+    /* Peinture */
+    var PE_LABEL = { plafond:'Peinture plafond', mur:'Peinture murs', plinthe:'Peinture plinthes', porte:'Peinture portes', fenetre:'Peinture fenêtres', placard:'Peinture portes placard', radiateur:'Peinture radiateur', 'int-placard':'Peinture intérieur placard', biblio:'Peinture bibliothèque', corniche:'Peinture corniche', 'sol-paint':'Peinture sol' };
+    (t.paintElems || []).forEach(function(pe){
+      lignes.push({ key:'paint-'+pe, label: PE_LABEL[pe] || ('Peinture '+pe), category:'peinture' });
+    });
+    /* Plomberie texte */
+    if(t.plomberie && t.plomberie.trim()){
+      lignes.push({ key:'plomb-text', label:'Travaux plomberie', detail: t.plomberie.trim(), category:'plomberie' });
+    }
+    return lignes;
+  }
+
+  /* ─── Construction du JSON exporté ─── */
+  window.ajBuildChantierExport = function(clientId){
+    if(!clientId) return null;
+    var db = (typeof dbLoad === 'function') ? dbLoad() : null;
+    if(!db || !db.clients[clientId]) return null;
+    var client = db.clients[clientId];
+    var pieces = Object.values(db.pieces || {})
+      .filter(function(p){ return p.clientId === clientId; })
+      .sort(function(a,b){ return (a.createdAt||0) - (b.createdAt||0); });
+
+    var emetteur = (typeof getEmetteur === 'function') ? getEmetteur() : null;
+    var prices = db.interventionPrices || {};
+    var statuses = db.interventionStatus || {};
+
+    var documentsEmis = (db.documents || [])
+      .filter(function(d){ return d.clientId === clientId || (d.snapshot && d.snapshot.client && d.snapshot.client.id === clientId); })
+      .map(function(d){
+        return {
+          number: d.number,
+          type: d.type,
+          subtype: d.subtype || null,
+          date: d.date,
+          status: d.status,
+          locked: !!d.locked,
+          totals: d.totals || null
+        };
+      });
+
+    return {
+      exportMeta: {
+        exportedAt: new Date().toISOString(),
+        exportVersion: 'v1',
+        appCommit: 'aj-pro-2026-04-28',
+        purpose: 'Coller ce JSON dans un assistant IA pour générer un devis chiffré. Toutes les images (photos, croquis, notes) ne sont PAS embarquées (taille). Voir le PDF complémentaire pour le contenu visuel.'
+      },
+      emetteur: emetteur ? {
+        raisonSociale: emetteur.raisonSociale || emetteur.nom,
+        adresse: emetteur.adresse,
+        tel: emetteur.tel,
+        email: emetteur.email,
+        siret: emetteur.siret,
+        tvaIntracom: emetteur.tvaIntracom || emetteur.tva
+      } : null,
+      client: {
+        id: client.id,
+        prenom: client.prenom || '',
+        nom: client.nom || '',
+        telephone: client.tel || '',
+        email: client.email || '',
+        adresseChantier: client.adresse || '',
+        etage: client.etage || '',
+        ascenseur: client.ascenseur || null,
+        codeAcces: client.code || '',
+        typeLogement: client.type || '',
+        dateVisite: client.date || '',
+        prochaineVisite: client.nextVisit || null,
+        observations: client.obs || ''
+      },
+      pieces: pieces.map(function(p){
+        var travauxResume = buildPieceTravauxResume(p);
+        var calculs = computePieceCalculs(p);
+        var photoCount = (p.photos || []).length;
+        var noteCount = (p.msNotes || []).length;
+        var notesText = (p.msNotes || []).map(function(n){
+          return {
+            id: n.id,
+            titre: n.title || 'Note',
+            date: n.date || null,
+            categorieDeduite: n.category || null,
+            ocrText: n.ocrText || null,
+            annotated: !!n.annotated,
+            hasImage: !!n.data
+          };
+        });
+        var photosMeta = (p.photos || []).map(function(ph){
+          return {
+            id: ph.id,
+            date: ph.date || null,
+            categorie: ph.category || null,
+            annotated: !!ph.annotated,
+            hasImage: !!(ph.data || ph.ref)
+          };
+        });
+        return {
+          id: p.id,
+          nom: p.nom,
+          icon: p.icon || null,
+          createdAt: p.createdAt ? new Date(p.createdAt).toISOString() : null,
+          updatedAt: p.updatedAt ? new Date(p.updatedAt).toISOString() : null,
+          observations: p.obs || '',
+          mesures: {
+            longueur_m: pf(p.mesures && p.mesures.long) || null,
+            largeur_m: pf(p.mesures && p.mesures.larg) || null,
+            hauteurSousPlafond_m: pf(p.mesures && p.mesures.haut) || null,
+            nbPortesPleines: pf(p.mesures && p.mesures.qcPP) || null,
+            nbPortesVitrees: pf(p.mesures && p.mesures.qcPV) || null,
+            nbFenetres: pf(p.mesures && p.mesures.qcFen) || null,
+            nbPortesFenetres: pf(p.mesures && p.mesures.qcPF) || null
+          },
+          calculsAuto: calculs,
+          travaux: travauxResume,
+          peinture: {
+            elementsRetenus: (p.travaux && p.travaux.paintElems) || []
+          },
+          plomberie: {
+            descriptionLibre: (p.travaux && p.travaux.plomberie) || ''
+          },
+          medias: {
+            hasCroquis: !!p.croquis,
+            hasBlocNotes: !!p.blocNotes,
+            blocNotesHauteurPx: p.blocNotesHeight || null,
+            nbPhotos: photoCount,
+            nbNotesManuscrites: noteCount,
+            photos: photosMeta,
+            notesManuscrites: notesText
+          }
+        };
+      }),
+      documentsEmis: documentsEmis,
+      _instructionsPourLLM: [
+        "Ce fichier décrit un chantier complet de rénovation.",
+        "Les travaux par pièce sont dans pieces[].travaux (catégorie + label).",
+        "Les peintures cochées sont dans pieces[].peinture.elementsRetenus.",
+        "Les calculs automatiques (surfaces, périmètre) sont dans pieces[].calculsAuto.",
+        "Les notes manuscrites avec OCR sont dans pieces[].medias.notesManuscrites[].ocrText.",
+        "Les images réelles ne sont PAS embarquées — voir le PDF complémentaire.",
+        "Pour générer un devis, propose un prix unitaire HT par ligne, applique TVA 10% (rénovation logement >2 ans), affiche un total TTC + acompte 30%."
+      ]
+    };
+  };
+
+  /* ─── Téléchargement JSON ─── */
+  window.ajExportChantierJSON = function(clientId){
+    var data = ajBuildChantierExport(clientId);
+    if(!data){ if(typeof showToast === 'function') showToast('⚠ Erreur export JSON'); return; }
+    var json = JSON.stringify(data, null, 2);
+    var blob = new Blob([json], { type:'application/json;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var nameSafe = (data.client.nom || 'chantier').replace(/[^a-zA-Z0-9-]/g, '-');
+    var fname = 'AJ-PRO-export-' + nameSafe + '-' + new Date().toISOString().slice(0,10) + '.json';
+    var a = document.createElement('a');
+    a.href = url; a.download = fname;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 1000);
+    if(typeof showToast === 'function') showToast('JSON exporté ✓');
+  };
+
+  /* ─── Export complet : JSON + PDF ─── */
+  window.ajExportChantierComplet = function(){
+    var clientId = window.currentClientId;
+    if(!clientId){ if(typeof showToast === 'function') showToast('Sélectionnez un client'); return; }
+    /* 1. JSON immédiat */
+    ajExportChantierJSON(clientId);
+    /* 2. PDF déclenché 800ms après pour ne pas paralléliser les téléchargements
+          (certains navigateurs bloquent 2 téléchargements simultanés) */
+    setTimeout(function(){
+      if(typeof ajGeneratePDF === 'function') ajGeneratePDF();
+      else if(typeof showToast === 'function') showToast('⚠ Génération PDF non disponible');
+    }, 800);
+  };
+
+  /* ─── Bouton sur la fiche client ─── */
+  function injectExportButton(){
+    var clientScreen = document.getElementById('screen-client');
+    if(!clientScreen) return;
+    if(clientScreen.querySelector('[data-aj-export-complet]')) return;
+    /* Cherche un bouton existant comme ancrage (PDF, Bon de visite, ou fallback premier bouton primary) */
+    var btns = clientScreen.querySelectorAll('button');
+    var hostBtn = null;
+    for(var i=0;i<btns.length;i++){
+      var t = (btns[i].textContent||'').toLowerCase();
+      if(t.indexOf('pdf') >= 0 || t.indexOf('bon de visite') >= 0){ hostBtn = btns[i]; break; }
+    }
+    if(!hostBtn){
+      /* Fallback : ancre sur "+ Pièce" ou autre */
+      for(var j=0;j<btns.length;j++){
+        if((btns[j].textContent||'').toLowerCase().indexOf('pièce') >= 0){ hostBtn = btns[j]; break; }
+      }
+    }
+    if(!hostBtn) return;
+    var btn = document.createElement('button');
+    btn.className = hostBtn.className;
+    btn.setAttribute('data-aj-export-complet','1');
+    btn.textContent = '📦 Export complet';
+    btn.title = 'Génère un PDF lisible + un JSON pour assistant IA';
+    btn.style.marginLeft = '8px';
+    btn.onclick = function(){ ajExportChantierComplet(); };
+    if(hostBtn.parentElement) hostBtn.parentElement.insertBefore(btn, hostBtn.nextSibling);
+  }
+
+  var _origShowScreenExp = window.showScreen;
+  window.showScreen = function(id){
+    var r = _origShowScreenExp.apply(this, arguments);
+    if(id === 'screen-client') setTimeout(injectExportButton, 200);
+    return r;
+  };
+  setTimeout(injectExportButton, 1300);
+
+  console.log('[AJ PRO] Export Chantier (Tâche 5) chargé — JSON + PDF disponibles.');
+})();
 </script>
 </body>
 </html>
