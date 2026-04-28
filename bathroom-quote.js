@@ -1274,11 +1274,110 @@
       updateCustomLine._t = setTimeout(wizardRender, 350);
     }
 
+    /* ─── Commit E IA : modal alternatives produits catalogue ──── */
+    function closeAlternativesModal(){
+      var m = document.getElementById('aj-editor-alt-modal');
+      if(m) m.remove();
+    }
+
+    function openAlternativesModal(sectionId, key){
+      if(!window.QUOTE_CATALOG){
+        if(typeof showToast === 'function') showToast('⚠ Catalogue produits non chargé');
+        return;
+      }
+      var products = window.QUOTE_CATALOG.getProductsForKey(key);
+      var T = window.QUOTE_TEMPLATE_SDB;
+      var line = T ? T.getLine(key) : null;
+      if(!products.length){
+        /* Aucun catalogue pour cette ligne — affiche quand même la modal avec un bouton Google */
+        products = [window.QUOTE_CATALOG.placeholderForKey(key, line)];
+      }
+
+      closeAlternativesModal();
+      var modal = document.createElement('div');
+      modal.id = 'aj-editor-alt-modal';
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(15,32,48,0.55);backdrop-filter:blur(4px);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:30px 16px;font-family:Inter,sans-serif;overflow:auto;';
+
+      var lineLabel = line ? line.label : key;
+      var currentSearchQuery = (line ? line.label : key) + ' fournisseur sanitaire';
+      var googleSearchUrl = 'https://www.google.com/search?q=' + encodeURIComponent(currentSearchQuery);
+
+      var productsHTML = products.map(function(p){
+        var supplierUrl = window.QUOTE_CATALOG.buildSupplierUrl(p);
+        var googleUrl   = window.QUOTE_CATALOG.buildSearchUrl(p);
+        return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;' + (p.isDefault ? 'border-color:#c9a96e;background:rgba(201,169,110,0.04);' : '') + '">' +
+          '<div style="flex:1;min-width:200px;">' +
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:3px;">' +
+              (p.isDefault ? '<span style="background:rgba(201,169,110,0.20);color:#7a5a30;padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:0.5px;">DÉFAUT MODÈLE</span>' : '') +
+              (p.marque ? '<span style="font-weight:700;color:#0f2030;font-size:13px;">' + safeEsc(p.marque) + '</span>' : '') +
+              (p.fournisseur ? '<span style="background:rgba(13,70,144,0.10);color:#0d4690;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:600;">' + safeEsc(p.fournisseur) + '</span>' : '') +
+            '</div>' +
+            '<div style="font-size:13px;color:#3a4a5c;line-height:1.4;">' + safeEsc(p.modele) + '</div>' +
+            (p.ref ? '<div style="font-size:10.5px;color:#7a8896;font-family:monospace;margin-top:2px;">Ref. ' + safeEsc(p.ref) + '</div>' : '') +
+          '</div>' +
+          '<div style="text-align:right;flex-shrink:0;">' +
+            '<div style="font-size:18px;font-weight:700;color:#0f2030;">' + (p.prixHT ? p.prixHT.toLocaleString('fr-FR') + ' €' : '— €') + '</div>' +
+            '<div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;">/ ' + safeEsc(p.unit || 'U') + ' HT</div>' +
+          '</div>' +
+          '<div style="display:flex;flex-direction:column;gap:4px;flex-shrink:0;">' +
+            (p.tags && p.tags.indexOf('placeholder') < 0
+              ? '<button onclick="AJBath._editor.applyAlternative(\'' + sectionId + '\',\'' + key + '\',\'' + p.id + '\')" style="padding:8px 14px;background:#1d4d33;color:#fff;border:none;border-radius:7px;cursor:pointer;font-family:Inter,sans-serif;font-size:12px;font-weight:700;">✓ Appliquer</button>'
+              : '') +
+            (supplierUrl ? '<a href="' + supplierUrl + '" target="_blank" rel="noopener" style="padding:6px 12px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:7px;text-decoration:none;color:#0d4690;font-size:11px;font-weight:600;text-align:center;">→ ' + safeEsc(p.fournisseur || 'Fournisseur') + '</a>' : '') +
+            (googleUrl ? '<a href="' + googleUrl + '" target="_blank" rel="noopener" style="padding:6px 12px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:7px;text-decoration:none;color:#3a4a5c;font-size:11px;font-weight:600;text-align:center;">🔍 Google</a>' : '') +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      modal.innerHTML =
+        '<div style="background:#fbf8f2;border-radius:14px;max-width:720px;width:100%;padding:22px 24px;box-shadow:0 12px 40px rgba(15,32,48,0.35);">' +
+          /* Header */
+          '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px;">' +
+            '<div>' +
+              '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;line-height:1.1;">⇄ Alternatives produits</div>' +
+              '<div style="font-size:12px;color:#7a8896;margin-top:4px;">Ligne <code style="background:rgba(0,0,0,0.06);padding:1px 6px;border-radius:3px;">' + safeEsc(key) + '</code> · ' + safeEsc(lineLabel) + '</div>' +
+            '</div>' +
+            '<button onclick="AJBath._editor.closeAlternativesModal()" style="background:transparent;border:none;font-size:22px;color:#7a8896;cursor:pointer;line-height:1;padding:0 4px;">×</button>' +
+          '</div>' +
+          /* Liste produits */
+          '<div style="display:flex;flex-direction:column;gap:8px;max-height:60vh;overflow:auto;padding:2px;">' + productsHTML + '</div>' +
+          /* Footer : recherche Google */
+          '<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--c-border,#e3dccc);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+            '<div style="flex:1;min-width:200px;font-size:11px;color:#7a8896;line-height:1.5;">Architecture prête pour brancher une vraie API fournisseur (Leroy Merlin / Cedeo / Point P) plus tard.</div>' +
+            '<a href="' + googleSearchUrl + '" target="_blank" rel="noopener" style="padding:8px 14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:7px;text-decoration:none;color:#3a4a5c;font-size:12px;font-weight:600;">🔍 Chercher sur Google</a>' +
+          '</div>' +
+        '</div>';
+
+      modal.onclick = function(e){ if(e.target === modal) closeAlternativesModal(); };
+      document.body.appendChild(modal);
+    }
+
+    function applyAlternative(sectionId, key, productId){
+      if(!window.QUOTE_CATALOG) return;
+      var prod = window.QUOTE_CATALOG.PRODUCTS.find(function(p){ return p.id === productId; });
+      if(!prod){
+        if(typeof showToast === 'function') showToast('Produit introuvable');
+        return;
+      }
+      var newLabel = prod.modele + (prod.marque ? ' — ' + prod.marque : '');
+      mutate(function(fd){
+        fd['override.' + key + '.label'] = newLabel;
+        fd['override.' + key + '.price'] = prod.prixHT;
+        if(prod.unit) fd['override.' + key + '.unit'] = prod.unit;
+      });
+      closeAlternativesModal();
+      if(typeof showToast === 'function') showToast('Alternative appliquée : ' + (prod.marque ? prod.marque + ' ' : '') + prod.modele.slice(0, 40));
+    }
+
     return {
       addLine: addLine, deleteLine: deleteLine, resetLine: resetLine,
       toggleOption: toggleOption, addSection: addSection, deleteSection: deleteSection,
       reorderLine: reorderLine, moveLine: moveLine,
-      updateCustomLine: updateCustomLine
+      updateCustomLine: updateCustomLine,
+      /* Commit E IA — alternatives catalogue produits */
+      openAlternativesModal: openAlternativesModal,
+      closeAlternativesModal: closeAlternativesModal,
+      applyAlternative: applyAlternative
     };
   })();
 
@@ -1294,7 +1393,12 @@
         : 'data-aj-bind="override.' + safeEsc(it.key) + '.' + field + '"';
     }
 
-    /* Boutons d'action (reset / delete / move) */
+    /* Boutons d'action (alt / reset / delete / move) */
+    var altBtn = '';
+    if(window.QUOTE_CATALOG && !it.isCustom && /^5\./.test(it.key)){
+      var nProds = window.QUOTE_CATALOG.getProductsForKey(it.key).length;
+      altBtn = '<button onclick="AJBath._editor.openAlternativesModal(\'' + sectionId + '\',\'' + it.key + '\')" title="Voir alternatives' + (nProds ? ' (' + nProds + ' produit' + (nProds>1?'s':'') + ' catalogue)' : '') + '" style="background:transparent;border:none;color:#0d4690;cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">⇄</button>';
+    }
     var resetBtn = (!it.isCustom && it.hasUserOverride)
       ? '<button onclick="AJBath._editor.resetLine(\'' + it.key + '\')" title="Réinitialiser au défaut" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">↩</button>'
       : '';
@@ -1332,7 +1436,7 @@
       '<div>' + unitSelect + '</div>' +
       '<div><input type="number" ' + bindAttr('price') + ' value="' + it.price + '" step="0.01" inputmode="decimal" style="' + numStyle + '" /></div>' +
       '<div style="text-align:right;font-weight:700;color:' + totalColor + ';font-size:12.5px;font-variant-numeric:tabular-nums;">' + fmtEur(it.total) + '</div>' +
-      '<div style="display:flex;gap:2px;align-items:center;justify-content:flex-end;">' + moveBtns + resetBtn + deleteBtn + '</div>' +
+      '<div style="display:flex;gap:2px;align-items:center;justify-content:flex-end;">' + moveBtns + altBtn + resetBtn + deleteBtn + '</div>' +
     '</div>';
   }
 
