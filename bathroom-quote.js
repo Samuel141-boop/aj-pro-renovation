@@ -1427,10 +1427,14 @@
 
     var keyDisplay = it.isCustom ? '+' : safeEsc(it.key);
     var rowBg = it.isCustom ? 'rgba(201,169,110,0.04)' : 'transparent';
+    /* Commit G IA : badge ✏️ "modifié manuellement" sur les lignes avec overrides */
+    var modifiedDot = (!it.isCustom && it.hasUserOverride)
+      ? '<span title="Modifié manuellement" style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#c9a96e;margin-right:4px;vertical-align:middle;"></span>'
+      : '';
 
     return '<div draggable="true" data-aj-row data-aj-section-id="' + safeEsc(sectionId) + '" data-aj-line-key="' + safeEsc(it.key) + '" style="display:grid;grid-template-columns:22px 50px 1fr 70px 80px 90px 90px 70px;gap:6px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(15,32,48,0.05);font-size:12px;opacity:' + rowOpacity + ';background:' + rowBg + ';">' +
       dragHandle +
-      '<div style="color:#7a8896;font-family:monospace;font-size:11px;">' + keyDisplay + '</div>' +
+      '<div style="color:#7a8896;font-family:monospace;font-size:11px;">' + modifiedDot + keyDisplay + '</div>' +
       '<div><input type="text" ' + bindAttr('label') + ' value="' + safeEsc(it.label).replace(/"/g,'&quot;') + '" placeholder="Désignation..." style="' + lblStyle + '" ' + lblFocus + ' /></div>' +
       '<div><input type="number" ' + bindAttr('qty') + ' value="' + it.qty + '" step="0.01" inputmode="decimal" style="' + numStyle + '" /></div>' +
       '<div>' + unitSelect + '</div>' +
@@ -1493,6 +1497,24 @@
     var clientName = ((draft.formData['client.prenom']||'') + ' ' + (draft.formData['client.nom']||'')).trim() || '— à compléter étape 1';
     var clientAddr = draft.formData['client.adresseChantier']||'';
 
+    /* Commit G IA : warnings de cohérence + score de confiance global */
+    var coherenceWarnings = [];
+    if(window.QUOTE_FUSION && window.QUOTE_FUSION.detectCoherenceWarnings){
+      var activeKeys = [];
+      lines.forEach(function(sec){
+        sec.items.forEach(function(it){ if(!it.displayOnly && it.qty > 0) activeKeys.push(it.key); });
+      });
+      coherenceWarnings = window.QUOTE_FUSION.detectCoherenceWarnings(activeKeys);
+    }
+    /* Score confiance : commence à 100, retire 5 par warning attention, 2 par warning info */
+    var confidenceScore = 100;
+    coherenceWarnings.forEach(function(w){ confidenceScore -= (w.severite === 'attention' ? 5 : 2); });
+    /* Pénalité supplémentaire si pas de mesures */
+    if(!draft.formData['mesures.longueur'] || !draft.formData['mesures.largeur']) confidenceScore -= 8;
+    confidenceScore = Math.max(0, Math.min(100, confidenceScore));
+    var confidenceColor = confidenceScore >= 90 ? '#1d4d33' : (confidenceScore >= 70 ? '#9a4514' : '#c62828');
+    var confidenceLabel = confidenceScore >= 90 ? 'Excellent' : (confidenceScore >= 70 ? 'À ajuster' : 'À revoir');
+
     /* Bandeau client (compact) */
     var clientBanner =
       '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:11px 14px;font-family:Inter,sans-serif;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
@@ -1522,9 +1544,37 @@
     var addSectionBtn =
       '<button onclick="AJBath._editor.addSection()" style="width:100%;padding:13px;background:rgba(255,255,255,0.5);border:2px dashed rgba(15,32,48,0.18);border-radius:10px;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;color:#3a4a5c;font-weight:600;transition:all 0.15s;" onmouseover="this.style.background=\'#fff\';this.style.borderColor=\'#c9a96e\';" onmouseout="this.style.background=\'rgba(255,255,255,0.5)\';this.style.borderColor=\'rgba(15,32,48,0.18)\';">+ Ajouter une section personnalisée</button>';
 
+    /* Commit G IA : bandeau cohérence + score confiance (au-dessus des totaux) */
+    var coherenceBar = '';
+    if(coherenceWarnings.length > 0){
+      coherenceBar =
+        '<div style="background:rgba(232,98,26,0.06);border:1px solid rgba(232,98,26,0.22);border-radius:10px;padding:10px 14px;font-family:Inter,sans-serif;">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+            '<div style="font-weight:700;color:#9a4514;font-size:12px;">💡 Cohérence métier</div>' +
+            '<span style="background:rgba(232,98,26,0.18);color:#9a4514;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700;">' + coherenceWarnings.length + '</span>' +
+          '</div>' +
+          '<ul style="margin:0;padding-left:18px;font-size:11.5px;color:#3a4a5c;line-height:1.6;">' +
+            coherenceWarnings.map(function(w){
+              var sevColor = w.severite === 'attention' ? '#c62828' : '#0d4690';
+              var sevIcon  = w.severite === 'attention' ? '⚠' : 'ⓘ';
+              return '<li><b style="color:' + sevColor + ';">' + sevIcon + ' </b>' + safeEsc(w.message) + '</li>';
+            }).join('') +
+          '</ul>' +
+        '</div>';
+    }
+
     /* Bandeau totaux (sticky en bas, au-dessus des boutons nav du wizard) */
     var totalsBar =
       '<div style="position:sticky;bottom:90px;background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;border-radius:14px;padding:16px 22px;font-family:Inter,sans-serif;box-shadow:0 8px 24px rgba(15,32,48,0.30);z-index:5;">' +
+        /* Score confiance en haut */
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid rgba(255,255,255,0.12);flex-wrap:wrap;">' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<div style="font-size:11px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Cohérence devis</div>' +
+            '<div style="font-size:18px;font-weight:700;color:' + confidenceColor + ';">' + confidenceScore + '%</div>' +
+            '<span style="background:rgba(' + (confidenceScore >= 90 ? '29,77,51' : (confidenceScore >= 70 ? '232,98,26' : '198,40,40')) + ',0.25);color:' + confidenceColor + ';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.5px;">' + confidenceLabel + '</span>' +
+          '</div>' +
+          (coherenceWarnings.length ? '<div style="font-size:11px;color:rgba(255,255,255,0.6);">' + coherenceWarnings.length + ' point' + (coherenceWarnings.length>1?'s':'') + ' à vérifier ↑</div>' : '<div style="font-size:11px;color:rgba(255,255,255,0.6);">Aucune incohérence détectée ✓</div>') +
+        '</div>' +
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:12px;">' +
           '<div><div style="font-size:10px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.5px;">Total HT</div><div style="font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">' + fmtEur(totals.totalHT) + '</div></div>' +
           '<div><div style="font-size:10px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.5px;">TVA ' + totals.vatRate + '%</div><div style="font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">' + fmtEur(totals.tva) + '</div></div>' +
@@ -1542,7 +1592,7 @@
       '</div>';
 
     return '<div style="display:flex;flex-direction:column;gap:11px;">' +
-      clientBanner + hints + sectionsHtml + addSectionBtn + totalsBar + actions +
+      clientBanner + hints + sectionsHtml + addSectionBtn + coherenceBar + totalsBar + actions +
     '</div>';
   }
 

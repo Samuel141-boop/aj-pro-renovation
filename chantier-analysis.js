@@ -601,6 +601,7 @@
           conflits: fusionResult.conflits || [],
           doublons: fusionResult.doublons || [],
           drapeaux: fusionResult.drapeaux || [],
+          coherenceWarnings: fusionResult.coherenceWarnings || [],  /* Commit G IA */
           engineMeta: fusionResult.meta || {}
         };
         totalDoublons += fusionMeta.doublons.length;
@@ -608,6 +609,10 @@
         /* Propage les drapeaux au niveau global (avec contexte pièce) */
         fusionMeta.drapeaux.forEach(function(d){
           allFlags.push({ type:d.type, message:d.message, pieceNom:p.nom });
+        });
+        /* Propage les warnings de cohérence au niveau global */
+        fusionMeta.coherenceWarnings.forEach(function(w){
+          allFlags.push({ type:'cohérence ' + w.severite, message:w.message, pieceNom:p.nom, isCoherence:true });
         });
       }
 

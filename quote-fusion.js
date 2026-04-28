@@ -201,6 +201,85 @@
     }
   ];
 
+  /* ─── RÈGLES DE COHÉRENCE MÉTIER (Commit G IA) ────────────────
+     Détectent les incohérences ou oublis probables APRÈS construction
+     de la fusion. Permettent d'avertir l'utilisateur en RDV ou avant
+     l'émission ("Tu as la baignoire mais pas la plomberie. Oubli ?"). */
+  var COHERENCE_RULES = [
+    {
+      id: 'douche-sans-plomberie',
+      trigger: function(keys){ return (keys['2.9'] || keys['2.10'] || keys['5.2.1']) && !keys['3.1']; },
+      severite: 'attention',
+      message: 'Création douche / receveur présent mais aucune ligne plomberie douche (3.1). Oubli probable.'
+    },
+    {
+      id: 'plomberie-douche-sans-paroi',
+      trigger: function(keys){ return keys['3.1'] && !keys['3.2'] && !keys['5.2.8'] && !keys['5.2.9']; },
+      severite: 'info',
+      message: 'Plomberie douche posée sans aucune paroi (3.2 / 5.2.8 / 5.2.9). Confirmer la configuration douche ouverte.'
+    },
+    {
+      id: 'baignoire-sans-plomberie',
+      trigger: function(keys){ return (keys['2.11'] || keys['5.3.1']) && !keys['3.3']; },
+      severite: 'attention',
+      message: 'Baignoire / tablier baignoire présent mais aucune ligne plomberie baignoire (3.3). Oubli probable.'
+    },
+    {
+      id: 'baignoire-et-douche',
+      trigger: function(keys){ return keys['3.1'] && keys['3.3']; },
+      severite: 'info',
+      message: 'Baignoire ET douche cochées dans la même pièce — confirmer la configuration (assez d\'espace).'
+    },
+    {
+      id: 'carrelage-mural-sans-ba13',
+      trigger: function(keys){ return keys['2.19'] && !keys['2.8']; },
+      severite: 'info',
+      message: 'Pose carrelage mural sans reprise BA13 hydro (2.8). Mur déjà sain et plan ? Sinon ajouter 2.8.'
+    },
+    {
+      id: 'seche-serviettes-eau-sans-tes',
+      trigger: function(keys){ return keys['5.5.1'] && !keys['5.5.2']; },
+      severite: 'attention',
+      message: 'Sèche-serviettes eau chaude (5.5.1) sans tés de raccordement + robinet thermostatique (5.5.2). Manque la fourniture.'
+    },
+    {
+      id: 'plafond-suspendu-sans-annulation',
+      trigger: function(keys){ return (keys['8.1'] || keys['8.2']) && !keys['8.5']; },
+      severite: 'info',
+      message: 'Plafond suspendu créé. La pose plafonnier 4.9 doit-elle être annulée via ligne 8.5 (déduction −60 €) ?'
+    },
+    {
+      id: 'option-depose-sol-sans-pose',
+      trigger: function(keys){ return keys['7.1'] && !keys['2.16']; },
+      severite: 'attention',
+      message: 'Dépose carrelage sol cochée (option 7.1) mais aucune pose carrelage sol (2.16). Sol final = ?'
+    },
+    {
+      id: 'meuble-vasque-sans-miroir',
+      trigger: function(keys){ return (keys['2.24'] || keys['5.4.1']) && !keys['2.25'] && !keys['5.4.8']; },
+      severite: 'info',
+      message: 'Meuble vasque sans miroir (2.25 ou 5.4.8). Oubli ou choix client ?'
+    },
+    {
+      id: 'wc-suspendu-sans-chassis',
+      trigger: function(keys){ return keys['3.7'] && !keys['5.6.1']; },
+      severite: 'info',
+      message: 'Plomberie WC suspendu (3.7) cochée mais châssis Geberit (5.6.1) à 0. Confirmer la fourniture châssis.'
+    },
+    {
+      id: 'ballon-sans-securite',
+      trigger: function(keys){ return keys['3.13'] && !keys['5.7.2']; },
+      severite: 'attention',
+      message: 'Remplacement ballon (3.13) sans groupe de sécurité (5.7.2). Manque la fourniture obligatoire.'
+    },
+    {
+      id: 'lave-linge-sans-prise',
+      trigger: function(keys){ return keys['3.5'] && !keys['4.7']; },
+      severite: 'info',
+      message: 'Évacuation lave-linge (3.5) sans alimentation électrique appareil (4.7). Vérifier ligne existante.'
+    }
+  ];
+
   /* Drapeaux critiques (mots-clés → message à valider) */
   var FLAG_RULES = [
     { patterns:[/copro/i, /copropri[ée]t[ée]/i, /\bsyndic\b/i],
@@ -281,6 +360,21 @@
   function keyToSk(key){
     var line = getTpl().getLine(key);
     return line ? line.semanticKey : null;
+  }
+
+  /* Détecte les warnings de cohérence à partir d'un set de templateKey actifs */
+  function detectCoherenceWarnings(activeTemplateKeys){
+    var keys = {};
+    (activeTemplateKeys || []).forEach(function(k){ keys[k] = true; });
+    var out = [];
+    COHERENCE_RULES.forEach(function(rule){
+      try {
+        if(rule.trigger(keys)){
+          out.push({ id: rule.id, severite: rule.severite, message: rule.message });
+        }
+      } catch(e){ /* ignore une règle cassée */ }
+    });
+    return out;
   }
 
   /* Détecte les drapeaux dans un texte */
@@ -531,6 +625,10 @@
     /* Drapeaux critiques (depuis notes seulement pour V1) */
     var drapeaux = detectFlags(notes);
 
+    /* Commit G IA : warnings de cohérence métier (douche sans plomberie, etc.) */
+    var allActiveKeys = lignesSures.concat(lignesProbables).concat(lignesAConfirmer).map(function(l){ return l.templateKey; });
+    var coherenceWarnings = detectCoherenceWarnings(allActiveKeys);
+
     /* Comptage des sources non-vides (pour meta) */
     var nbSources = 0;
     if(travauxCoches.length) nbSources++;
@@ -548,6 +646,7 @@
       doublons          : doublons,
       conflits          : conflits,
       drapeaux          : drapeaux,
+      coherenceWarnings : coherenceWarnings,
       meta              : {
         nbSources       : nbSources,
         nbLignesSures   : lignesSures.length,
@@ -557,9 +656,10 @@
         nbDoublons      : doublons.length,
         nbConflits      : conflits.length,
         nbDrapeaux      : drapeaux.length,
+        nbCoherenceWarnings: coherenceWarnings.length,
         durationMs      : Date.now() - t0,
         engine          : 'local-heuristics-v1',
-        engineVersion   : '1.0.0'
+        engineVersion   : '1.1.0'
       }
     };
   }
@@ -607,20 +707,23 @@
     PAINT_TO_TEMPLATE : PAINT_TO_TEMPLATE,
     KEYWORD_RULES     : KEYWORD_RULES,
     FLAG_RULES        : FLAG_RULES,
+    COHERENCE_RULES   : COHERENCE_RULES,
     SOURCE_PRIORITY   : SOURCE_PRIORITY,
 
     /* Helpers */
     findSectionInfo   : findSectionInfo,
     detectFlags       : detectFlags,
+    detectCoherenceWarnings: detectCoherenceWarnings,
 
     /* Constantes */
     CONF_HIGH         : CONF_HIGH,
     CONF_MEDIUM       : CONF_MEDIUM,
-    VERSION           : '1.0.0'
+    VERSION           : '1.1.0'
   };
 
   console.log('[QUOTE_FUSION] Moteur de fusion local chargé · ' +
               Object.keys(WORKS_TO_TEMPLATE).length + ' cats Travaux · ' +
               KEYWORD_RULES.length + ' règles mots-clés · ' +
-              FLAG_RULES.length + ' drapeaux · v' + window.QUOTE_FUSION.VERSION);
+              FLAG_RULES.length + ' drapeaux · ' +
+              COHERENCE_RULES.length + ' règles cohérence · v' + window.QUOTE_FUSION.VERSION);
 })();
