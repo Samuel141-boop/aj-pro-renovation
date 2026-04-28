@@ -4859,6 +4859,31 @@ renderHome();
 <script>
 
 /* ════════════════════════════════════════════════════════════════════
+   AJ PRO — FEATURE FLAGS CENTRALISÉS (2026-04-28)
+   Permet de désactiver des modules sans supprimer leur code.
+   Réactivation : window.FEATURES_ENABLED.X = true; location.reload();
+   ════════════════════════════════════════════════════════════════════ */
+window.FEATURES_ENABLED = Object.assign({
+  suggestions: false,    /* Phase 10 — désactivé 2026-04-28 (Tâche 2) */
+  carte:       false,    /* Phase 19 — désactivé 2026-04-28 (Tâche 3) */
+  comparateur: false,    /* Phase 16 — désactivé 2026-04-28 (Tâche 3) */
+  planning:    false,    /* Phase 14 — désactivé 2026-04-28 (Tâche 3) */
+  recap:       false     /* Récapitulatif (HTML statique + FAB Phase 1) — désactivé 2026-04-28 (Tâche 3) */
+}, window.FEATURES_ENABLED || {});
+
+/* Cache les entrées UI statiques du Récapitulatif si flag false (le code reste intact) */
+(function(){
+  function hideRecapEntries(){
+    if(window.FEATURES_ENABLED.recap === true) return;
+    var navItem = document.querySelector('.sidebar-nav .nav-item[data-section="recap"]');
+    if(navItem) navItem.style.display = 'none';
+    document.querySelectorAll('button[onclick="showRecap()"]').forEach(function(b){ b.style.display = 'none'; });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideRecapEntries);
+  else hideRecapEntries();
+})();
+
+/* ════════════════════════════════════════════════════════════════════
    AJ PRO — PHASE 1 ENHANCEMENTS
    • Moteur dessin HiDPI + pression S Pen + 3 épaisseurs + gomme variable + undo/redo
    • Annotation de photos
@@ -5546,6 +5571,12 @@ renderHome();
       '<button id="aj-fab-note" type="button" title="Note manuscrite rapide" style="width:46px;height:46px;border:none;border-radius:10px;background:#fbf8f2;color:#0f2030;font-size:20px;cursor:pointer;">📝</button>' +
       '<button id="aj-fab-recap" type="button" title="Voir checklist / récap" style="width:46px;height:46px;border:none;border-radius:10px;background:#fbf8f2;color:#0f2030;font-size:20px;cursor:pointer;">✓</button>';
     document.body.appendChild(fab);
+
+    /* Tâche 3 (2026-04-28) : masque le bouton FAB Récap si flag désactivé */
+    if((window.FEATURES_ENABLED || {}).recap !== true){
+      var recapBtn = document.getElementById('aj-fab-recap');
+      if(recapBtn) recapBtn.style.display = 'none';
+    }
 
     document.getElementById('aj-fab-photo').onclick = function(){
       // Si pas sur step photos, on switch ; sinon ouvre directement
@@ -9773,10 +9804,16 @@ renderHome();
    • Vue calendrier mensuelle des visites passées et à venir
    • Champ "prochaine visite" sur chaque client
    • Liste rapide des prochains rendez-vous
+
+   ⚠ DÉSACTIVÉ LE 2026-04-28 (Tâche 3) — code préservé pour réactivation.
    ════════════════════════════════════════════════════════════════════ */
 (function(){
   if(window.__AJ_P14_LOADED) return;
   window.__AJ_P14_LOADED = true;
+  if((window.FEATURES_ENABLED || {}).planning !== true){
+    console.log('[AJ PRO] Phase 14 (Planning) — UI désactivée.');
+    return;
+  }
 
   /* ─── 1) ÉCRAN CALENDRIER ─── */
   function ensureCalendarScreen(){
@@ -10301,10 +10338,16 @@ renderHome();
    AJ PRO — PHASE 16 : COMPARATEUR DE CHANTIERS + PRIX MOYENS
    • Écran "Comparer 2 chantiers" en split view
    • Suggestion auto du prix moyen quand tu saisis un prix sur la synthèse
+
+   ⚠ DÉSACTIVÉ LE 2026-04-28 (Tâche 3) — code préservé pour réactivation.
    ════════════════════════════════════════════════════════════════════ */
 (function(){
   if(window.__AJ_P16_LOADED) return;
   window.__AJ_P16_LOADED = true;
+  if((window.FEATURES_ENABLED || {}).comparateur !== true){
+    console.log('[AJ PRO] Phase 16 (Comparateur) — UI désactivée.');
+    return;
+  }
 
   /* ─── 1) ÉCRAN COMPARATEUR ─── */
   function ensureComparatorScreen(){
@@ -10969,10 +11012,16 @@ renderHome();
    • Vue carte avec markers de tous les chantiers
    • Click marker → fiche client
    • Géocodage automatique des adresses (Nominatim, gratuit)
+
+   ⚠ DÉSACTIVÉ LE 2026-04-28 (Tâche 3) — code préservé. Leaflet jamais chargé.
    ════════════════════════════════════════════════════════════════════ */
 (function(){
   if(window.__AJ_P19_LOADED) return;
   window.__AJ_P19_LOADED = true;
+  if((window.FEATURES_ENABLED || {}).carte !== true){
+    console.log('[AJ PRO] Phase 19 (Carte) — UI désactivée. Leaflet non chargé.');
+    return;
+  }
 
   /* ─── 1) CHARGEMENT DE LEAFLET ─── */
   var leafletLoaded = false;
