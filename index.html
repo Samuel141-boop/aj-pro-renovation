@@ -8732,10 +8732,22 @@ renderHome();
    • Détecte le type de pièce (Salle de bain, Cuisine, etc.)
    • Propose en haut un panneau avec les travaux typiques pour ce type
    • Application en un clic
+
+   ⚠ DÉSACTIVÉ LE 2026-04-28 — UI seulement.
+   Le code (SUGGESTIONS, applySuggestion, injectSuggestionsPanel) reste intact
+   ci-dessous, mais aucun patch UI n'est appliqué (return early).
+   Pour réactiver : window.FEATURES_ENABLED.suggestions = true; location.reload();
    ════════════════════════════════════════════════════════════════════ */
 (function(){
   if(window.__AJ_P10_LOADED) return;
   window.__AJ_P10_LOADED = true;
+
+  /* Feature flag centralisé (sera étendu par Tâche 3 pour Carte/Comparateur/Planning/Récap) */
+  window.FEATURES_ENABLED = window.FEATURES_ENABLED || {};
+  if(window.FEATURES_ENABLED.suggestions !== true){
+    console.log('[AJ PRO] Phase 10 — suggestions par type de pièce désactivées (FEATURES_ENABLED.suggestions=false). Code préservé pour réactivation.');
+    return;
+  }
 
   /* ─── 1) MAPPINGS DE SUGGESTIONS PAR TYPE DE PIÈCE ─── */
   var SUGGESTIONS = {
