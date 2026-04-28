@@ -5545,7 +5545,14 @@ window.FEATURES_ENABLED = Object.assign({
         'gap:6px',
         'align-items:center'
       ].join(';');
-      screen.insertBefore(bar, screen.firstChild);
+      /* Tâche 1bis (2026-04-28) : la checklist doit être APRÈS la barre quick-actions
+         pour éviter le chevauchement visuel quand le sticky s'enclenche. */
+      var qab = screen.querySelector('[data-aj-qab]');
+      if(qab && qab.parentNode === screen){
+        screen.insertBefore(bar, qab.nextSibling);
+      } else {
+        screen.insertBefore(bar, screen.firstChild);
+      }
     }
     var p = dbLoad().pieces[currentPieceId];
     var comp = pieceCompletion(p);
@@ -6937,10 +6944,12 @@ window.FEATURES_ENABLED = Object.assign({
       '<button onclick="ajSaveCurrentAsTemplate()" style="' + btnStyle + '" title="Sauver cette pièce comme template">💾 Sauver template</button>' +
       '<div style="flex:1"></div>' +
       '<button onclick="ajApplyPreset(\'piece-vide\')" style="' + btnStyle + 'color:#7a8896;" title="Tout vider">🗑 Vider travaux</button>';
-    // Insère après le bandeau checklist (créé en Phase 1) ou en tout premier
+    /* Tâche 1bis (2026-04-28) : la barre quick-actions doit être AVANT la checklist
+       en DOM, pour qu'elle sorte du viewport avant que la checklist ne devienne sticky
+       et ne masque ses cartes. */
     var checklist = document.getElementById('aj-checklist-bar');
     if(checklist && checklist.parentNode === screen){
-      screen.insertBefore(bar, checklist.nextSibling);
+      screen.insertBefore(bar, checklist);
     } else {
       screen.insertBefore(bar, screen.firstChild);
     }
