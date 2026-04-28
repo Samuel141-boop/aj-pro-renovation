@@ -2,7 +2,7 @@
    Stratégie : cache-first pour le shell, network-first avec fallback cache pour le reste.
    Permet à l'app de fonctionner hors-ligne (utile en chantier sans wifi). */
 
-const CACHE_VERSION = 'aj-pro-v11-2026-04-28-catalog';
+const CACHE_VERSION = 'aj-pro-v12-2026-04-28-aibridge';
 const SHELL_CACHE = 'aj-pro-shell-' + CACHE_VERSION;
 /* Runtime cache versionné aussi : à chaque bump, l'ancien est purgé */
 const RUNTIME_CACHE = 'aj-pro-runtime-' + CACHE_VERSION;
@@ -16,6 +16,7 @@ const SHELL_FILES = [
   '/quote-template-sdb.js',
   '/quote-fusion.js',
   '/catalog-products.js',
+  '/ai-bridge.js',
   '/bathroom-quote.js',
   '/chantier-analysis.js'
 ];

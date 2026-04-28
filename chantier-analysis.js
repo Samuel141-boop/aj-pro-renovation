@@ -949,14 +949,73 @@
   }
 
   function renderActionBar(){
+    /* Commit F IA : bouton "Analyser avec IA" caché derrière feature flag.
+       Activable via : window.FEATURES_ENABLED.aiAnalysis = true; */
+    var aiBtn = '';
+    var ff = window.FEATURES_ENABLED || {};
+    if(ff.aiAnalysis && window.AI_BRIDGE){
+      aiBtn = '<button type="button" onclick="window.AJAnalysis.enrichWithAI()" title="Enrichir l\'analyse avec une IA cloud (Claude)" style="padding:11px 16px;background:linear-gradient(135deg,#0f2030,#1a3349);color:#c9a96e;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-size:13px;">🤖 Analyser avec IA</button>';
+    }
     return '<div id="aj-analysis-action-bar" style="position:sticky;bottom:14px;display:flex;gap:10px;align-items:center;background:rgba(244,239,231,0.97);backdrop-filter:blur(8px);padding:14px;border-radius:12px;border:1px solid var(--c-border,#e3dccc);box-shadow:0 4px 16px rgba(0,0,0,0.08);font-family:Inter,sans-serif;flex-wrap:wrap;margin-top:14px;">' +
       '<div style="flex:1;min-width:200px;">' +
         '<div style="font-weight:700;color:#0f2030;font-size:14px;">Brouillon de devis</div>' +
         '<div id="aj-analysis-counter" style="font-size:12px;color:#7a8896;margin-top:2px;">— sélectionne les suggestions à inclure</div>' +
       '</div>' +
       '<button type="button" onclick="window.AJAnalysis.refresh()" style="padding:11px 16px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;cursor:pointer;font-weight:600;color:#0f2030;font-size:13px;">↻ Réanalyser</button>' +
+      aiBtn +
       '<button type="button" id="aj-analysis-create-draft" style="padding:13px 22px;background:#1d4d33;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-size:14px;">📝 Créer brouillon de devis</button>' +
     '</div>';
+  }
+
+  /* Commit F IA : enrichit l'analyse avec l'IA (Claude API via proxy) */
+  function enrichWithAI(){
+    if(!window.AI_BRIDGE){
+      if(typeof showToast === 'function') showToast('⚠ AI_BRIDGE non chargé');
+      return;
+    }
+    var analysis = window._ajCurrentAnalysis;
+    if(!analysis){
+      if(typeof showToast === 'function') showToast('Lance d\'abord une analyse');
+      return;
+    }
+    /* Construit le payload depuis la première pièce SDB analysée
+       (V1 : une pièce à la fois ; V2 : itérer sur toutes) */
+    var firstSdb = analysis.pieces.find(function(p){ return p.supported && p.fusionMeta; });
+    if(!firstSdb){
+      if(typeof showToast === 'function') showToast('Aucune pièce SDB analysable');
+      return;
+    }
+
+    if(typeof showToast === 'function') showToast('🤖 Analyse IA en cours...');
+
+    window.AI_BRIDGE.enrichAnalysis({
+      pieceType: 'salle-de-bain',
+      travauxCoches: firstSdb.catsActives,
+      brouillonFormData: {},
+      notesTexte: firstSdb.observations,
+      mesures: firstSdb.mesures,
+      photos: [],
+      croquis: [],
+      fusionResult: {
+        lignesSures: firstSdb.suggestions.filter(function(s){ return s.confidence === 'haute'; }),
+        lignesProbables: firstSdb.suggestions.filter(function(s){ return s.confidence === 'moyenne'; }),
+        lignesAConfirmer: firstSdb.suggestions.filter(function(s){ return s.confidence === 'faible'; }),
+        drapeaux: firstSdb.fusionMeta.drapeaux,
+        meta: firstSdb.fusionMeta.engineMeta
+      }
+    }).then(function(enrichment){
+      if(typeof showToast === 'function'){
+        var msg = '🤖 IA (' + enrichment.mode + ') : ';
+        if(enrichment.error){
+          msg += 'erreur — ' + enrichment.error.slice(0, 60);
+        } else {
+          msg += enrichment.lignesMissing.length + ' lignes manquantes, ' + enrichment.flagsAdd.length + ' drapeaux ajoutés';
+          if(enrichment.notes) msg += ' · ' + enrichment.notes.slice(0, 80);
+        }
+        showToast(msg);
+      }
+      console.log('[AJ Analysis IA enrichment]', enrichment);
+    });
   }
 
   function renderAnalysisScreen(){
@@ -1218,6 +1277,7 @@
     findTemplateItem: findTemplateItem,
     refresh: renderAnalysisScreen,
     createDraftFromAnalysis: createDraftFromAnalysis,
+    enrichWithAI: enrichWithAI,  /* Commit F IA */
     /* Tables exposées pour extension future */
     SDB_CATS_TO_TEMPLATE: SDB_CATS_TO_TEMPLATE,
     SDB_PAINT_TO_TEMPLATE: SDB_PAINT_TO_TEMPLATE,
