@@ -2,7 +2,7 @@
    Stratégie : cache-first pour le shell, network-first avec fallback cache pour le reste.
    Permet à l'app de fonctionner hors-ligne (utile en chantier sans wifi). */
 
-const CACHE_VERSION = 'aj-pro-v8-2026-04-28-analysis';
+const CACHE_VERSION = 'aj-pro-v9-2026-04-28-template-canon';
 const SHELL_CACHE = 'aj-pro-shell-' + CACHE_VERSION;
 /* Runtime cache versionné aussi : à chaque bump, l'ancien est purgé */
 const RUNTIME_CACHE = 'aj-pro-runtime-' + CACHE_VERSION;
@@ -13,6 +13,7 @@ const SHELL_FILES = [
   '/manifest.json',
   '/icon-192.png',
   '/icon-512.png',
+  '/quote-template-sdb.js',
   '/bathroom-quote.js',
   '/chantier-analysis.js'
 ];
