@@ -5482,7 +5482,21 @@ renderHome();
     if(!bar){
       bar = document.createElement('div');
       bar.id = 'aj-checklist-bar';
-      bar.style.cssText = 'position:sticky;top:72px;z-index:25;background:rgba(244,239,231,0.97);backdrop-filter:blur(8px);padding:8px 12px;margin:-12px -12px 12px;border-bottom:1px solid var(--c-border,#e3dccc);display:flex;flex-wrap:wrap;gap:6px;align-items:center;';
+      /* Fond opaque (plus de transparence + plus de backdrop-filter), z-index élevé pour passer au-dessus des cartes quick-actions injectées juste après dans le DOM. */
+      bar.style.cssText = [
+        'position:sticky',
+        'top:72px',
+        'z-index:60',
+        'background:#f4efe7',
+        'box-shadow:0 1px 0 rgba(15,32,48,0.04), 0 8px 16px -8px rgba(15,32,48,0.10)',
+        'padding:10px 12px',
+        'margin:-12px -12px 12px',
+        'border-bottom:1px solid var(--c-border,#e3dccc)',
+        'display:flex',
+        'flex-wrap:wrap',
+        'gap:6px',
+        'align-items:center'
+      ].join(';');
       screen.insertBefore(bar, screen.firstChild);
     }
     var p = dbLoad().pieces[currentPieceId];
