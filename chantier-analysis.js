@@ -574,6 +574,10 @@
       .filter(function(p){ return p.clientId === clientId; })
       .sort(function(a,b){ return (a.createdAt||0) - (b.createdAt||0); });
 
+    var allFlags = [];  // agrégat global pour le bandeau "Drapeaux à confirmer"
+    var totalDoublons = 0;
+    var totalConflits = 0;
+
     var pieceAnalyses = pieces.map(function(p){
       var pieceType = detectPieceType(p);
       var registryEntry = pieceType ? TEMPLATE_REGISTRY[pieceType] : null;
@@ -582,6 +586,30 @@
 
       var suggestions = supported ? mapPieceToSuggestions(p, template) : [];
       var aConfirmer = detectAConfirmer(p);
+
+      /* Commit D IA : enrichissement via quote-fusion en parallèle (sans casser le moteur legacy) */
+      var fusionResult = supported ? runFusionForPiece(p) : null;
+      var fusionMeta = null;
+      if(fusionResult){
+        var sourcesMap = buildSourcesMap(fusionResult);
+        /* Attache les sources structurées à chaque suggestion existante */
+        suggestions.forEach(function(sug){
+          var fs = sourcesMap[sug.templateKey];
+          if(fs && fs.length) sug._fusionSources = fs;
+        });
+        fusionMeta = {
+          conflits: fusionResult.conflits || [],
+          doublons: fusionResult.doublons || [],
+          drapeaux: fusionResult.drapeaux || [],
+          engineMeta: fusionResult.meta || {}
+        };
+        totalDoublons += fusionMeta.doublons.length;
+        totalConflits += fusionMeta.conflits.length;
+        /* Propage les drapeaux au niveau global (avec contexte pièce) */
+        fusionMeta.drapeaux.forEach(function(d){
+          allFlags.push({ type:d.type, message:d.message, pieceNom:p.nom });
+        });
+      }
 
       return {
         pieceId: p.id,
@@ -600,19 +628,24 @@
         paintElems: (p.travaux||{}).paintElems || [],
         plomberie: (p.travaux||{}).plomberie || '',
         suggestions: suggestions,
-        aConfirmer: aConfirmer
+        aConfirmer: aConfirmer,
+        fusionMeta: fusionMeta
       };
     });
 
     return {
       client: client,
       pieces: pieceAnalyses,
+      allFlags: allFlags,
       stats: {
         totalPieces: pieces.length,
         supportedPieces: pieceAnalyses.filter(function(p){ return p.supported; }).length,
         totalSuggestions: pieceAnalyses.reduce(function(n, p){ return n + p.suggestions.length; }, 0),
         totalPhotos: pieceAnalyses.reduce(function(n, p){ return n + p.nbPhotos; }, 0),
-        totalNotes: pieceAnalyses.reduce(function(n, p){ return n + p.nbNotes; }, 0)
+        totalNotes: pieceAnalyses.reduce(function(n, p){ return n + p.nbNotes; }, 0),
+        totalDoublons: totalDoublons,
+        totalConflits: totalConflits,
+        totalFlags: allFlags.length
       },
       generatedAt: Date.now()
     };
@@ -646,9 +679,116 @@
     'faible':  { color:'#7a8896', bg:'rgba(15,32,48,0.08)',   label:'Faible' }
   };
 
+  /* ─── Commit D IA : enrichissements via quote-fusion ─────────── */
+
+  /* Mapping source → icône visuelle (badges des suggestions) */
+  var SOURCE_ICONS = {
+    'obligatoire': { icon:'🔒', label:'Obligatoire (modèle)' },
+    'travaux'    : { icon:'✋', label:'Travail coché' },
+    'brouillon'  : { icon:'📋', label:'Brouillon déjà saisi' },
+    'notes'      : { icon:'📝', label:'Note / observation' },
+    'croquis'    : { icon:'✏️', label:'Croquis' },
+    'photos'     : { icon:'📸', label:'Photo' }
+  };
+
   function renderConfidenceBadge(conf){
     var d = CONF_BADGE[conf] || CONF_BADGE.moyenne;
     return '<span style="display:inline-block;padding:1px 7px;border-radius:99px;background:'+d.bg+';color:'+d.color+';font-size:10px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;">'+d.label+'</span>';
+  }
+
+  /* Badges des sources d'une suggestion (issues de quote-fusion) */
+  function renderSourceBadges(sources){
+    if(!sources || !sources.length) return '';
+    var unique = {};
+    sources.forEach(function(s){ unique[s.source || s] = true; });
+    return Object.keys(unique).map(function(src){
+      var d = SOURCE_ICONS[src] || { icon:'·', label:src };
+      return '<span title="' + safeEsc(d.label) + '" style="display:inline-block;font-size:11px;margin-right:3px;line-height:1;">' + d.icon + '</span>';
+    }).join('');
+  }
+
+  /* Bandeau global "Drapeaux à confirmer absolument" */
+  function renderGlobalFlagsBanner(allFlags){
+    if(!allFlags || !allFlags.length) return '';
+    var seen = {};
+    var unique = allFlags.filter(function(f){
+      var k = f.type + '|' + f.message;
+      if(seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+    if(!unique.length) return '';
+    return '<div style="background:rgba(232,98,26,0.08);border:1px solid rgba(232,98,26,0.28);border-radius:14px;padding:14px 18px;margin-bottom:14px;font-family:Inter,sans-serif;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+        '<div style="font-weight:700;color:#9a4514;font-size:13px;">⚠ Points à confirmer absolument</div>' +
+        '<span style="background:rgba(232,98,26,0.20);color:#9a4514;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;">' + unique.length + '</span>' +
+      '</div>' +
+      '<ul style="margin:0;padding-left:18px;font-size:12px;color:#3a4a5c;line-height:1.6;">' +
+      unique.map(function(f){
+        return '<li><b style="color:#9a4514;">' + safeEsc(f.type.toUpperCase()) + ' :</b> ' + safeEsc(f.message) + '</li>';
+      }).join('') +
+      '</ul>' +
+    '</div>';
+  }
+
+  /* Conflits altGroup (alternatives mutuellement exclusives résolues) */
+  function renderConflictsBox(conflits){
+    if(!conflits || !conflits.length) return '';
+    return '<div style="background:rgba(106,74,142,0.06);border:1px solid rgba(106,74,142,0.22);border-radius:10px;padding:10px 14px;margin-bottom:10px;font-family:Inter,sans-serif;">' +
+      '<div style="font-weight:700;color:#4a3565;font-size:12px;margin-bottom:6px;">⚖ Alternatives arbitrées automatiquement</div>' +
+      conflits.map(function(c){
+        return '<div style="font-size:11px;color:#3a4a5c;line-height:1.55;">' +
+          '<b>' + safeEsc(c.altGroupLabel) + '</b> : retenu ' +
+          '<code style="background:rgba(0,0,0,0.06);padding:1px 5px;border-radius:3px;font-size:10.5px;">' + safeEsc(c.retenu.templateKey) + '</code>' +
+          ' parmi ' + c.candidats.map(function(cd){ return '<code style="background:rgba(0,0,0,0.04);padding:1px 4px;border-radius:3px;font-size:10.5px;">' + safeEsc(cd.templateKey) + '</code>'; }).join(', ') +
+        '</div>';
+      }).join('') +
+    '</div>';
+  }
+
+  /* Badge compact pour les doublons fusionnés (sources multiples) */
+  function renderDoublonsBadge(doublons){
+    if(!doublons || !doublons.length) return '';
+    return '<span title="Lignes détectées par plusieurs sources et fusionnées intelligemment (anti-doublon par semanticKey)" style="background:rgba(13,70,144,0.10);color:#0d4690;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;font-family:Inter,sans-serif;">🔀 ' + doublons.length + ' fusionné' + (doublons.length>1?'s':'') + '</span>';
+  }
+
+  /* Lance quote-fusion sur une pièce, retourne le résultat structuré */
+  function runFusionForPiece(piece){
+    if(!window.QUOTE_FUSION) return null;
+    var notesParts = [];
+    if(piece.obs) notesParts.push(piece.obs);
+    if((piece.travaux||{}).plomberie) notesParts.push(piece.travaux.plomberie);
+    (piece.msNotes || []).forEach(function(n){
+      if(n.title) notesParts.push(n.title);
+      if(n.ocrText) notesParts.push(n.ocrText);
+    });
+
+    try {
+      return window.QUOTE_FUSION.analyze({
+        pieceType: 'salle-de-bain',
+        travauxCoches: Object.keys((piece.travaux||{}).cats||{}).filter(function(k){ return piece.travaux.cats[k] === true; }),
+        elementsPeints: (piece.travaux||{}).paintElems || [],
+        notesTexte: notesParts.join(' '),
+        mesures: piece.mesures || {},
+        photos: (piece.photos || []).map(function(p){ return { id:p.id, zone: p.zone || null, label: p.title || null }; }),
+        croquis: piece.croquis ? [{ id:'sketch-'+piece.id, zone: piece.croquisZone || null, label: 'Croquis' }] : []
+      });
+    } catch(e){
+      console.warn('[QUOTE_FUSION] erreur sur pièce', piece.id, e);
+      return null;
+    }
+  }
+
+  /* Construit une map { templateKey → sources structurées } depuis un résultat fusion */
+  function buildSourcesMap(fusionResult){
+    var map = {};
+    if(!fusionResult) return map;
+    ['lignesSures', 'lignesProbables', 'lignesAConfirmer'].forEach(function(cat){
+      (fusionResult[cat] || []).forEach(function(line){
+        map[line.templateKey] = line.sources || [];
+      });
+    });
+    return map;
   }
 
   function renderSuggestionRow(sug){
@@ -658,16 +798,19 @@
     var unit = safeEsc(item.unit || '');
     var price = item.defaultPrice || 0;
     var qty = item.defaultQty != null ? item.defaultQty : 1;
-    var sources = (sug.sources || []).map(safeEsc).join(' · ');
+    /* Sources : priorité aux sources structurées de fusion (avec icônes), fallback sur les strings legacy */
+    var sourcesIconsHTML = sug._fusionSources ? renderSourceBadges(sug._fusionSources) : '';
+    var sourcesText = (sug.sources || []).map(safeEsc).join(' · ');
     return '<label class="aj-sug-row" style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-bottom:1px solid rgba(15,32,48,0.06);cursor:pointer;font-family:Inter,sans-serif;">' +
       '<input type="checkbox" data-aj-sug data-tk="'+safeEsc(sug.templateKey)+'" data-cat="'+safeEsc(sug.category)+'" data-conf="'+safeEsc(sug.confidence)+'" checked style="margin-top:3px;width:18px;height:18px;accent-color:#c9a96e;flex-shrink:0;cursor:pointer;" />' +
       '<div style="flex:1;min-width:0;">' +
         '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
           '<span style="font-family:monospace;font-size:11px;color:#7a8896;">'+safeEsc(sug.templateKey)+'</span>' +
           renderConfidenceBadge(sug.confidence) +
+          (sourcesIconsHTML ? '<span style="display:inline-flex;align-items:center;gap:1px;">'+sourcesIconsHTML+'</span>' : '') +
         '</div>' +
         '<div style="font-size:13px;color:#0f2030;font-weight:500;margin-top:2px;line-height:1.4;">'+label+'</div>' +
-        '<div style="font-size:11px;color:#7a8896;margin-top:2px;">'+sources+'</div>' +
+        '<div style="font-size:11px;color:#7a8896;margin-top:2px;">'+sourcesText+'</div>' +
       '</div>' +
       '<div style="text-align:right;flex-shrink:0;font-family:Inter,sans-serif;">' +
         '<div style="font-size:11px;color:#7a8896;">'+(qty)+' '+unit+'</div>' +
@@ -727,6 +870,10 @@
       byCategory[k].sort(function(a,b){ return confidenceLevel(b.confidence) - confidenceLevel(a.confidence); });
     });
 
+    /* Commit D IA : extras de fusion (conflits + badge doublons) */
+    var conflictsHTML = pa.fusionMeta ? renderConflictsBox(pa.fusionMeta.conflits) : '';
+    var doublonsBadge = pa.fusionMeta ? renderDoublonsBadge(pa.fusionMeta.doublons) : '';
+
     return '<div data-aj-piece="'+safeEsc(pa.pieceId)+'" style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:14px;padding:18px 20px;margin-bottom:14px;font-family:Inter,sans-serif;">' +
       /* Header pièce */
       '<div style="display:flex;align-items:flex-start;gap:14px;margin-bottom:14px;flex-wrap:wrap;">' +
@@ -735,16 +882,19 @@
           '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;line-height:1.1;">'+safeEsc(pa.nom)+'</div>' +
           (dims ? '<div style="font-size:12px;color:#3a4a5c;margin-top:3px;">'+safeEsc(dims)+'</div>' : '') +
         '</div>' +
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px;font-family:Inter,sans-serif;">' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;font-size:11px;font-family:Inter,sans-serif;align-items:center;">' +
           (pa.hasCroquis ? '<span style="background:rgba(201,169,110,0.12);color:#7a5a30;padding:3px 9px;border-radius:99px;font-weight:600;">✏️ Croquis</span>' : '') +
           (pa.nbPhotos ? '<span style="background:rgba(13,70,144,0.10);color:#0d4690;padding:3px 9px;border-radius:99px;font-weight:600;">📷 '+pa.nbPhotos+' photo'+(pa.nbPhotos>1?'s':'')+'</span>' : '') +
           (pa.nbNotes ? '<span style="background:rgba(106,74,142,0.10);color:#4a3565;padding:3px 9px;border-radius:99px;font-weight:600;">📝 '+pa.nbNotes+' note'+(pa.nbNotes>1?'s':'')+'</span>' : '') +
           (pa.catsActives.length ? '<span style="background:rgba(45,106,79,0.10);color:#1d4d33;padding:3px 9px;border-radius:99px;font-weight:600;">✓ '+pa.catsActives.length+' cat. cochée'+(pa.catsActives.length>1?'s':'')+'</span>' : '') +
+          doublonsBadge +
         '</div>' +
       '</div>' +
 
       /* Bandeau "À confirmer" si présent */
       aConfirmerHTML +
+      /* Bandeau conflits altGroup résolus */
+      conflictsHTML +
 
       /* Aucune suggestion ? */
       (pa.suggestions.length === 0 ?
@@ -842,6 +992,7 @@
     }
 
     var html = renderAnalysisHeader(analysis) +
+      renderGlobalFlagsBanner(analysis.allFlags) +
       analysis.pieces.map(renderPieceCard).join('') +
       renderActionBar();
 

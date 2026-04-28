@@ -88,7 +88,7 @@ Plan séquencé en 7 commits courts, ordre de bataille pour ROI temps maximum :
 - ✅ **A. Template SDB canonique** — `quote-template-sdb.js` source de vérité unique
 - ✅ **B. Éditeur de devis direct** — étape 12 transformée en éditeur tabulaire complet (édition inline + drag-drop + ajout/suppression + toggle Option + totaux sticky temps réel)
 - ✅ **C. Moteur de fusion intelligent** — `quote-fusion.js` 100% local, anti-doublon par semanticKey, priorité Travaux > Brouillon > Notes > Croquis > Photos. 20 cats + 23 règles regex + 6 drapeaux. Performance : 30 lignes en 1ms.
-- ⏳ **D. Écran Analyse chantier enrichi** — pastilles confiance + badges source + bouton « Générer le brouillon » → ouvre l'éditeur B
+- ✅ **D. Écran Analyse chantier enrichi** — `chantier-analysis.js` consomme maintenant `quote-fusion` en parallèle du moteur legacy. Badges sources visuels (✋📋📝✏️📸🔒) sur chaque suggestion, bandeau global « Drapeaux à confirmer absolument », box « Alternatives arbitrées » par pièce, badge compact « 🔀 N fusionnés ». Cas RDV réel : 40 lignes en 3ms, 15 doublons fusionnés, drapeaux propagés au global.
 - ⏳ **E. Catalogue produits + alternatives** — `catalog-products.js`, ~80-120 réfs, bouton « ⇄ Alternative » + « 🔍 Google »
 - ⏳ **F. Hook API IA prêt mais débranché** — `ai-bridge.js`, interface `enrichAnalysis()`, stub Claude API documenté
 - ⏳ **G. Garde-fous + cohérence** — avertissements, indicateurs de confiance, traçabilité, tests RDV historiques
