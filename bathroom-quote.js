@@ -416,16 +416,78 @@
     return false;
   }
 
+  /* generateLines — combine template + overrides + lignes/sections custom + ordre custom.
+     Conventions formData (étendues par le commit B éditeur) :
+       override.<key>.qty            number    qty manuelle (vide = défaut)
+       override.<key>.price          number    PUHT manuel
+       override.<key>.label          string    libellé personnalisé
+       override.<key>.unit           string    unité personnalisée (U/m²/ml/forfait/h)
+       override.<key>.deleted        boolean   ligne masquée du devis
+       override.<sectionId>.isOption boolean   bascule section en option (ou hors-option)
+       override.<sectionId>.title    string    titre de section custom
+       _customLines.<sectionId>      JSON      [{key,label,unit,qty,price,isFourniture}]
+       _customSections               JSON      [{id,num,title,isOption,isFourniture}]
+       _order.<sectionId>            JSON      ['2.16','custom-X','2.17',...] (ordre custom)
+       _sectionOrder                 JSON      ['sec-1-...','sec-2-...',...] (ordre des sections)
+  */
   function generateLines(template, formData){
     var measures = computeMeasurements(formData);
     var sections = [];
 
-    template.sections.forEach(function(sec){
+    function parseJSONField(path){
+      var raw = formData[path];
+      if(!raw) return null;
+      try { var v = JSON.parse(raw); return v; } catch(e){ return null; }
+    }
+
+    /* Sections custom ajoutées par l'utilisateur (suffixées au catalog) */
+    var customSections = parseJSONField('_customSections') || [];
+    var allSections = template.sections.concat(customSections.map(function(cs){
+      return {
+        id: cs.id,
+        num: cs.num,
+        title: cs.title,
+        isOption: !!cs.isOption,
+        isFourniture: !!cs.isFourniture,
+        items: [],
+        isCustom: true
+      };
+    }));
+
+    /* Ordre custom des sections */
+    var sectionOrder = parseJSONField('_sectionOrder');
+    if(Array.isArray(sectionOrder) && sectionOrder.length){
+      var byId = {};
+      allSections.forEach(function(s){ byId[s.id] = s; });
+      var ordered = [];
+      var consumed = {};
+      sectionOrder.forEach(function(id){
+        if(byId[id] && !consumed[id]){ ordered.push(byId[id]); consumed[id] = true; }
+      });
+      allSections.forEach(function(s){ if(!consumed[s.id]) ordered.push(s); });
+      allSections = ordered;
+    }
+
+    allSections.forEach(function(sec){
       var sectionLines = [];
 
+      /* Override toggle Option/Essentiel sur la section */
+      var ovIsOption = formData['override.' + sec.id + '.isOption'];
+      var sectionIsOption = (ovIsOption === true || ovIsOption === 'true') ? true
+                          : (ovIsOption === false || ovIsOption === 'false') ? false
+                          : !!sec.isOption;
+
+      /* Override titre de section (pour custom + renommage standard) */
+      var ovSecTitle = formData['override.' + sec.id + '.title'];
+      var sectionTitle = (ovSecTitle != null && ovSecTitle !== '') ? ovSecTitle : sec.title;
+
       var processItem = function(it){
+        /* Skip lignes supprimées par l'utilisateur */
+        if(formData['override.' + it.key + '.deleted'] === true || formData['override.' + it.key + '.deleted'] === 'true') return;
+
         var qty = it.defaultQty != null ? it.defaultQty : 0;
         var price = it.defaultPrice != null ? it.defaultPrice : 0;
+        var unit = it.unit;
         var include = false;
         var displayLabel = it.label;
 
@@ -433,16 +495,20 @@
         if(it.isMandatory){
           include = true;
         } else if(it.displayOnly){
-          /* Lignes informatives (commentaires, mise en sécurité) toujours affichées */
           include = true;
         } else if(it.trigger){
           if(evaluateTrigger(it.trigger, formData)){
             include = true;
           } else if(it.showWhenZero){
-            /* Affichée à 0 € pour montrer ce qui a été discuté */
             include = true; price = 0;
           }
         }
+
+        /* Force include si l'utilisateur a override le label/qty/price (ligne ré-incluse manuellement) */
+        var hasUserOverride = formData['override.' + it.key + '.label'] != null
+                          || formData['override.' + it.key + '.qty'] != null
+                          || formData['override.' + it.key + '.price'] != null;
+        if(hasUserOverride && !include) include = true;
 
         if(!include) return;
 
@@ -458,13 +524,15 @@
           displayLabel = it.label + ' (fourni par le client)';
         }
 
-        /* Override utilisateur depuis le récap */
+        /* Overrides utilisateur depuis le récap */
         var ovQty = formData['override.' + it.key + '.qty'];
         var ovPrice = formData['override.' + it.key + '.price'];
         var ovLabel = formData['override.' + it.key + '.label'];
+        var ovUnit = formData['override.' + it.key + '.unit'];
         if(ovQty != null && ovQty !== '') qty = pf(ovQty);
         if(ovPrice != null && ovPrice !== '') price = pf(ovPrice);
         if(ovLabel) displayLabel = ovLabel;
+        if(ovUnit) unit = ovUnit;
 
         /* Cas négatif (annulation, ex: 8.5) */
         var total = qty * price;
@@ -474,13 +542,17 @@
           key: it.key,
           label: displayLabel,
           description: it.description || '',
-          unit: it.unit,
+          unit: unit,
           qty: r2(qty),
           price: r2(price),
           total: r2(total),
           isFourniture: it.isFourniture || sec.isFourniture || false,
+          isMandatory: !!it.isMandatory,
+          isNegative: !!it.isNegative,
           showWhenZero: !!it.showWhenZero,
-          displayOnly: !!it.displayOnly
+          displayOnly: !!it.displayOnly,
+          isCustom: false,
+          hasUserOverride: hasUserOverride || (ovUnit != null && ovUnit !== '')
         });
       };
 
@@ -489,14 +561,56 @@
         sub.items.forEach(processItem);
       });
 
+      /* Lignes custom ajoutées par l'utilisateur dans cette section */
+      var customLines = parseJSONField('_customLines.' + sec.id) || [];
+      customLines.forEach(function(cl){
+        if(cl.deleted) return;
+        var q = parseFloat(cl.qty);  if(isNaN(q)) q = 1;
+        var p = parseFloat(cl.price); if(isNaN(p)) p = 0;
+        sectionLines.push({
+          key: cl.key,
+          label: cl.label || '(ligne sans titre)',
+          description: '',
+          unit: cl.unit || 'U',
+          qty: r2(q),
+          price: r2(p),
+          total: r2(q * p),
+          isFourniture: !!cl.isFourniture,
+          isMandatory: false,
+          isNegative: false,
+          showWhenZero: false,
+          displayOnly: false,
+          isCustom: true,
+          hasUserOverride: false
+        });
+      });
+
+      /* Réordonnement custom des lignes dans la section */
+      var orderRaw = parseJSONField('_order.' + sec.id);
+      if(Array.isArray(orderRaw) && orderRaw.length){
+        var idxMap = {};
+        sectionLines.forEach(function(l, i){ idxMap[l.key] = i; });
+        var ordered = [];
+        var consumed = {};
+        orderRaw.forEach(function(k){
+          if(idxMap[k] != null && !consumed[k]){
+            ordered.push(sectionLines[idxMap[k]]);
+            consumed[k] = true;
+          }
+        });
+        sectionLines.forEach(function(l){ if(!consumed[l.key]) ordered.push(l); });
+        sectionLines = ordered;
+      }
+
       if(sectionLines.length){
         var sousTotal = sectionLines.reduce(function(s, l){ return s + l.total; }, 0);
         sections.push({
           sectionId: sec.id,
           sectionNum: sec.num,
-          sectionTitle: sec.title,
-          isOption: !!sec.isOption,
+          sectionTitle: sectionTitle,
+          isOption: sectionIsOption,
           isFourniture: !!sec.isFourniture,
+          isCustom: !!sec.isCustom,
           items: sectionLines,
           sousTotal: r2(sousTotal)
         });
@@ -970,67 +1084,362 @@
     }
   ];
 
-  /* ─── ÉTAPE 12 : RÉCAPITULATIF ÉDITABLE ─── */
+  /* ─── ÉTAPE 12 : ÉDITEUR DE DEVIS DIRECT (Commit B IA) ─────────────
+     Récapitulatif transformé en éditeur tabulaire complet :
+     - édition inline label / qté / unité / PUHT (input transparent, focus = bordé doré)
+     - ajout / suppression de lignes (template = soft via override.deleted, custom = hard)
+     - ajout de sections personnalisées
+     - bascule Option / Essentiel par section
+     - drag-drop pour réordonner les lignes (HTML5 native) + boutons ▲▼ pour le tactile
+     - sous-totaux + Total HT / TVA / TTC / acompte en temps réel (sticky)
+     Aucune régression sur le wizard 1-11 ni sur l'émission PDF.
+     ───────────────────────────────────────────────────────────────── */
+
+  /* Helpers d'édition exposés sur AJBath._editor (utilisés par les onclick du HTML) */
+  var EDITOR = (function(){
+    function getJSON(path){
+      if(!_currentDraft) return null;
+      var raw = _currentDraft.formData[path];
+      if(!raw) return null;
+      try { return JSON.parse(raw); } catch(e){ return null; }
+    }
+    function setJSON(path, val){
+      if(!_currentDraft) return;
+      _currentDraft.formData[path] = JSON.stringify(val);
+    }
+    function genCustomKey(){ return 'custom-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+    function genCustomSectionId(){ return 'sec-custom-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+
+    /* Modifie le draft puis re-render immédiat (sans debounce, pour les actions structurelles) */
+    function mutate(fn){
+      if(!_currentDraft) return;
+      fn(_currentDraft.formData);
+      saveDraft(_currentDraft);
+      wizardRender();
+    }
+
+    /* Wrap un confirm asynchrone (utilise customConfirm si dispo, fallback sync) */
+    function askConfirm(msg, opts, onYes){
+      if(typeof customConfirm === 'function') customConfirm(msg, onYes, opts || {});
+      else if(window.confirm(msg)) onYes();
+    }
+
+    /* Ajoute une ligne custom dans une section existante */
+    function addLine(sectionId){
+      mutate(function(){
+        var path = '_customLines.' + sectionId;
+        var lines = getJSON(path) || [];
+        lines.push({ key: genCustomKey(), label: '', unit: 'U', qty: 1, price: 0 });
+        setJSON(path, lines);
+      });
+      /* Focus le label de la nouvelle ligne pour saisie immédiate */
+      setTimeout(function(){
+        var inputs = document.querySelectorAll('[data-aj-custom-line$="|label"]');
+        if(inputs.length){
+          var last = inputs[inputs.length - 1];
+          if(last && last.focus){ last.focus(); last.scrollIntoView({block:'center', behavior:'smooth'}); }
+        }
+      }, 80);
+    }
+
+    /* Supprime une ligne (template = soft delete via override.deleted ; custom = hard delete) */
+    function deleteLine(sectionId, key, isCustom){
+      askConfirm('Supprimer cette ligne du devis ?',
+        { title:'Supprimer la ligne', okLabel:'Supprimer', danger:true },
+        function(){
+          mutate(function(fd){
+            if(isCustom){
+              var path = '_customLines.' + sectionId;
+              var lines = getJSON(path) || [];
+              lines = lines.filter(function(l){ return l.key !== key; });
+              if(lines.length) setJSON(path, lines); else delete fd[path];
+            } else {
+              fd['override.' + key + '.deleted'] = true;
+            }
+          });
+        });
+    }
+
+    /* Réinitialise tous les overrides d'une ligne template (label/qty/price/unit/deleted) */
+    function resetLine(key){
+      mutate(function(fd){
+        delete fd['override.' + key + '.label'];
+        delete fd['override.' + key + '.qty'];
+        delete fd['override.' + key + '.price'];
+        delete fd['override.' + key + '.unit'];
+        delete fd['override.' + key + '.deleted'];
+      });
+      if(typeof showToast === 'function') showToast('Ligne réinitialisée au défaut');
+    }
+
+    /* Bascule une section entre Essentiel et Option (et inversement) */
+    function toggleOption(sectionId){
+      mutate(function(fd){
+        var current = fd['override.' + sectionId + '.isOption'];
+        var template = getBathroomTemplate();
+        var sec = template.sections.find(function(s){ return s.id === sectionId; });
+        var customSecs = getJSON('_customSections') || [];
+        var custom = customSecs.find(function(cs){ return cs.id === sectionId; });
+        var defaultIsOption = sec ? !!sec.isOption : (custom ? !!custom.isOption : false);
+        var newVal = (current === true || current === 'true') ? false :
+                     (current === false || current === 'false') ? true : !defaultIsOption;
+        if(newVal === defaultIsOption) delete fd['override.' + sectionId + '.isOption'];
+        else fd['override.' + sectionId + '.isOption'] = newVal;
+      });
+    }
+
+    /* Ajoute une nouvelle section personnalisée */
+    function addSection(){
+      mutate(function(){
+        var customSecs = getJSON('_customSections') || [];
+        var template = getBathroomTemplate();
+        var maxNum = 0;
+        template.sections.forEach(function(s){ var n = parseInt(s.num, 10); if(!isNaN(n) && n > maxNum) maxNum = n; });
+        customSecs.forEach(function(cs){ var n = parseInt(cs.num, 10); if(!isNaN(n) && n > maxNum) maxNum = n; });
+        customSecs.push({
+          id: genCustomSectionId(),
+          num: maxNum + 1,
+          title: 'Nouvelle section',
+          isOption: false,
+          isFourniture: false
+        });
+        setJSON('_customSections', customSecs);
+      });
+    }
+
+    /* Supprime une section custom (hard delete + nettoie ses lignes/ordre/overrides) */
+    function deleteSection(sectionId){
+      askConfirm('Supprimer cette section et toutes ses lignes ?',
+        { title:'Supprimer la section', okLabel:'Supprimer', danger:true },
+        function(){
+          mutate(function(fd){
+            var customSecs = getJSON('_customSections') || [];
+            customSecs = customSecs.filter(function(cs){ return cs.id !== sectionId; });
+            if(customSecs.length) setJSON('_customSections', customSecs); else delete fd['_customSections'];
+            delete fd['_customLines.' + sectionId];
+            delete fd['_order.' + sectionId];
+            delete fd['override.' + sectionId + '.isOption'];
+            delete fd['override.' + sectionId + '.title'];
+          });
+        });
+    }
+
+    /* Réordonne par drag-drop : déplace fromKey juste avant toKey dans la même section */
+    function reorderLine(sectionId, fromKey, toKey){
+      if(fromKey === toKey) return;
+      mutate(function(){
+        var template = getBathroomTemplate();
+        var lines = generateLines(template, _currentDraft.formData);
+        var sec = lines.find(function(s){ return s.sectionId === sectionId; });
+        if(!sec) return;
+        var keys = sec.items.map(function(l){ return l.key; });
+        var fromIdx = keys.indexOf(fromKey);
+        var toIdx = keys.indexOf(toKey);
+        if(fromIdx < 0 || toIdx < 0) return;
+        var moved = keys.splice(fromIdx, 1)[0];
+        keys.splice(toIdx, 0, moved);
+        setJSON('_order.' + sectionId, keys);
+      });
+    }
+
+    /* Déplace une ligne d'un cran (boutons ▲▼ — fallback tactile au drag) */
+    function moveLine(sectionId, key, direction){
+      mutate(function(){
+        var template = getBathroomTemplate();
+        var lines = generateLines(template, _currentDraft.formData);
+        var sec = lines.find(function(s){ return s.sectionId === sectionId; });
+        if(!sec) return;
+        var keys = sec.items.map(function(l){ return l.key; });
+        var idx = keys.indexOf(key);
+        if(idx < 0) return;
+        var newIdx = direction === 'up' ? idx - 1 : idx + 1;
+        if(newIdx < 0 || newIdx >= keys.length) return;
+        var tmp = keys[idx]; keys[idx] = keys[newIdx]; keys[newIdx] = tmp;
+        setJSON('_order.' + sectionId, keys);
+      });
+    }
+
+    /* Met à jour un champ d'une ligne custom (label/qty/price/unit) — debounced re-render */
+    function updateCustomLine(sectionId, key, field, value){
+      if(!_currentDraft) return;
+      var path = '_customLines.' + sectionId;
+      var lines = getJSON(path) || [];
+      var line = lines.find(function(l){ return l.key === key; });
+      if(!line) return;
+      if(field === 'qty' || field === 'price') value = pf(value);
+      line[field] = value;
+      setJSON(path, lines);
+      saveDraft(_currentDraft);
+      clearTimeout(updateCustomLine._t);
+      updateCustomLine._t = setTimeout(wizardRender, 350);
+    }
+
+    return {
+      addLine: addLine, deleteLine: deleteLine, resetLine: resetLine,
+      toggleOption: toggleOption, addSection: addSection, deleteSection: deleteSection,
+      reorderLine: reorderLine, moveLine: moveLine,
+      updateCustomLine: updateCustomLine
+    };
+  })();
+
+  /* Rendu d'une ligne du devis dans l'éditeur (commune template + custom) */
+  function renderEditorRow(sectionId, it){
+    var totalColor = it.total < 0 ? '#c62828' : '#0f2030';
+    var rowOpacity = it.displayOnly ? '0.72' : '1';
+
+    /* Source du bind : template = data-aj-bind="override.X.Y" ; custom = data-aj-custom-line="sec|key|field" */
+    function bindAttr(field){
+      return it.isCustom
+        ? 'data-aj-custom-line="' + safeEsc(sectionId) + '|' + safeEsc(it.key) + '|' + field + '"'
+        : 'data-aj-bind="override.' + safeEsc(it.key) + '.' + field + '"';
+    }
+
+    /* Boutons d'action (reset / delete / move) */
+    var resetBtn = (!it.isCustom && it.hasUserOverride)
+      ? '<button onclick="AJBath._editor.resetLine(\'' + it.key + '\')" title="Réinitialiser au défaut" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">↩</button>'
+      : '';
+    var deleteBtn = it.isMandatory
+      ? '<span title="Ligne obligatoire — non supprimable" style="color:rgba(122,136,150,0.5);font-size:12px;padding:2px 4px;line-height:1;">🔒</span>'
+      : '<button onclick="AJBath._editor.deleteLine(\'' + sectionId + '\',\'' + it.key + '\',' + (it.isCustom ? 'true' : 'false') + ')" title="Supprimer la ligne" style="background:transparent;border:none;color:#c62828;cursor:pointer;font-size:13px;padding:2px 4px;line-height:1;">🗑</button>';
+    var moveBtns =
+      '<div style="display:flex;flex-direction:column;gap:0;line-height:1;">' +
+        '<button onclick="AJBath._editor.moveLine(\'' + sectionId + '\',\'' + it.key + '\',\'up\')" title="Monter" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:9px;padding:0 4px;line-height:1.1;">▲</button>' +
+        '<button onclick="AJBath._editor.moveLine(\'' + sectionId + '\',\'' + it.key + '\',\'down\')" title="Descendre" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:9px;padding:0 4px;line-height:1.1;">▼</button>' +
+      '</div>';
+
+    var dragHandle = '<div data-aj-drag-handle style="cursor:grab;color:rgba(15,32,48,0.25);font-size:13px;line-height:1;user-select:none;text-align:center;" title="Glisser pour réordonner">⋮⋮</div>';
+
+    /* Style inputs : transparent → bordé doré au focus */
+    var lblStyle = 'width:100%;background:transparent;border:none;border-bottom:1px dashed transparent;padding:4px 6px;font-family:Inter,sans-serif;font-size:12px;color:#0f2030;border-radius:4px;transition:all 0.15s;';
+    var lblFocus = 'onfocus="this.style.background=\'#fff\';this.style.borderBottom=\'1px solid #c9a96e\';" onblur="this.style.background=\'transparent\';this.style.borderBottom=\'1px dashed transparent\';"';
+    var numStyle = 'width:100%;text-align:right;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;background:#fff;color:#0f2030;outline:none;';
+
+    /* Sélecteur d'unité — préserve les valeurs custom non standard */
+    var unitOptions = ['U','m²','ml','m³','h','forfait','jour','kg','lot'];
+    if(it.unit && unitOptions.indexOf(it.unit) < 0) unitOptions.unshift(it.unit);
+    var unitSelect = '<select ' + bindAttr('unit') + ' style="width:100%;padding:5px 4px;border:1px solid var(--c-border,#e3dccc);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;background:#fff;color:#0f2030;outline:none;">' +
+      unitOptions.map(function(u){ return '<option value="' + safeEsc(u) + '"' + (u === it.unit ? ' selected' : '') + '>' + safeEsc(u) + '</option>'; }).join('') +
+    '</select>';
+
+    var keyDisplay = it.isCustom ? '+' : safeEsc(it.key);
+    var rowBg = it.isCustom ? 'rgba(201,169,110,0.04)' : 'transparent';
+
+    return '<div draggable="true" data-aj-row data-aj-section-id="' + safeEsc(sectionId) + '" data-aj-line-key="' + safeEsc(it.key) + '" style="display:grid;grid-template-columns:22px 50px 1fr 70px 80px 90px 90px 70px;gap:6px;align-items:center;padding:6px 12px;border-bottom:1px solid rgba(15,32,48,0.05);font-size:12px;opacity:' + rowOpacity + ';background:' + rowBg + ';">' +
+      dragHandle +
+      '<div style="color:#7a8896;font-family:monospace;font-size:11px;">' + keyDisplay + '</div>' +
+      '<div><input type="text" ' + bindAttr('label') + ' value="' + safeEsc(it.label).replace(/"/g,'&quot;') + '" placeholder="Désignation..." style="' + lblStyle + '" ' + lblFocus + ' /></div>' +
+      '<div><input type="number" ' + bindAttr('qty') + ' value="' + it.qty + '" step="0.01" inputmode="decimal" style="' + numStyle + '" /></div>' +
+      '<div>' + unitSelect + '</div>' +
+      '<div><input type="number" ' + bindAttr('price') + ' value="' + it.price + '" step="0.01" inputmode="decimal" style="' + numStyle + '" /></div>' +
+      '<div style="text-align:right;font-weight:700;color:' + totalColor + ';font-size:12.5px;font-variant-numeric:tabular-nums;">' + fmtEur(it.total) + '</div>' +
+      '<div style="display:flex;gap:2px;align-items:center;justify-content:flex-end;">' + moveBtns + resetBtn + deleteBtn + '</div>' +
+    '</div>';
+  }
+
+  /* Rendu d'une section dans l'éditeur (header + lignes + footer) */
+  function renderEditorSection(sec){
+    var optBadge = sec.isOption
+      ? '<span style="background:rgba(232,98,26,0.15);color:#9a4514;padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:0.5px;">OPTION</span>'
+      : '<span style="background:rgba(29,77,51,0.10);color:#1d4d33;padding:2px 8px;border-radius:99px;font-size:9px;font-weight:700;letter-spacing:0.5px;">ESSENTIEL</span>';
+    var customBadge = sec.isCustom
+      ? '<span style="background:rgba(122,136,150,0.15);color:#3a4a5c;padding:2px 7px;border-radius:99px;font-size:9px;font-weight:600;">PERSONNALISÉ</span>' : '';
+
+    /* Titre éditable inline (override.<sectionId>.title — appliqué par generateLines) */
+    var titleStyle = 'flex:1;min-width:120px;background:transparent;border:none;border-bottom:1px dashed transparent;padding:3px 4px;font-family:Inter,sans-serif;font-size:13px;font-weight:700;color:#0f2030;border-radius:3px;outline:none;';
+    var titleFocus = 'onfocus="this.style.background=\'#fff\';this.style.borderBottom=\'1px solid #c9a96e\';" onblur="this.style.background=\'transparent\';this.style.borderBottom=\'1px dashed transparent\';"';
+
+    var headerHtml =
+      '<div data-aj-section-drop="' + safeEsc(sec.sectionId) + '" style="background:#fbf8f2;padding:9px 14px;border-bottom:1px solid var(--c-border,#e3dccc);display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
+        '<div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;">' +
+          '<div style="font-weight:700;color:#0f2030;font-size:13px;font-family:monospace;flex-shrink:0;">' + sec.sectionNum + '.</div>' +
+          '<input type="text" data-aj-bind="override.' + safeEsc(sec.sectionId) + '.title" value="' + safeEsc(sec.sectionTitle).replace(/"/g,'&quot;') + '" placeholder="Titre de la section" style="' + titleStyle + '" ' + titleFocus + ' />' +
+          optBadge + customBadge +
+        '</div>' +
+        '<div style="font-weight:700;color:#0f2030;font-size:13px;flex-shrink:0;font-variant-numeric:tabular-nums;">' + fmtEur(sec.sousTotal) + '</div>' +
+      '</div>';
+
+    var rowsHtml = sec.items.map(function(it){ return renderEditorRow(sec.sectionId, it); }).join('');
+
+    var deleteBtn = sec.isCustom
+      ? '<button onclick="AJBath._editor.deleteSection(\'' + sec.sectionId + '\')" style="background:transparent;border:1px solid rgba(198,40,40,0.3);color:#c62828;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:Inter,sans-serif;font-size:11px;font-weight:600;">🗑 Supprimer la section</button>'
+      : '';
+    var footerHtml =
+      '<div style="background:rgba(251,248,242,0.5);padding:8px 14px;border-top:1px solid rgba(15,32,48,0.05);display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+        '<button onclick="AJBath._editor.addLine(\'' + safeEsc(sec.sectionId) + '\')" style="background:#fff;border:1px solid var(--c-border,#e3dccc);color:#0f2030;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:Inter,sans-serif;font-size:11px;font-weight:600;">+ Ajouter une ligne</button>' +
+        '<button onclick="AJBath._editor.toggleOption(\'' + safeEsc(sec.sectionId) + '\')" style="background:#fff;border:1px solid var(--c-border,#e3dccc);color:#3a4a5c;padding:6px 12px;border-radius:6px;cursor:pointer;font-family:Inter,sans-serif;font-size:11px;font-weight:600;">' + (sec.isOption ? '↩ Marquer comme essentiel' : '⤴ Marquer comme option') + '</button>' +
+        deleteBtn +
+      '</div>';
+
+    return '<div data-aj-section="' + safeEsc(sec.sectionId) + '" style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;overflow:hidden;font-family:Inter,sans-serif;' + (sec.isOption ? 'opacity:0.92;' : '') + '">' +
+      headerHtml + rowsHtml + footerHtml +
+    '</div>';
+  }
+
   function renderRecap(draft){
     var template = getBathroomTemplate();
     var lines = generateLines(template, draft.formData);
     var settings = { vatRate: template.vatRate, depositPct: template.depositPct };
     var totals = computeTotals(lines, settings);
 
-    /* Stocke résultat sur le draft pour le commit C */
+    /* Stocke résultat sur le draft (référencé par wizardEmit pour le snapshot) */
     draft.lines = lines;
     draft.totals = totals;
 
     var hasOptions = lines.some(function(s){ return s.isOption; });
+    var clientName = ((draft.formData['client.prenom']||'') + ' ' + (draft.formData['client.nom']||'')).trim() || '— à compléter étape 1';
+    var clientAddr = draft.formData['client.adresseChantier']||'';
 
-    return '<div style="display:flex;flex-direction:column;gap:14px;">' +
-      /* Bandeau client */
-      '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:14px 16px;font-family:Inter,sans-serif;">' +
-        '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:4px;">Client</div>' +
-        '<div style="font-weight:700;color:#0f2030;font-size:15px;">' + safeEsc((draft.formData['client.prenom']||'') + ' ' + (draft.formData['client.nom']||'') || '— à compléter étape 1') + '</div>' +
-        '<div style="font-size:12px;color:#3a4a5c;">' + safeEsc(draft.formData['client.adresseChantier']||'') + '</div>' +
-      '</div>' +
-
-      /* Tableau des lignes */
-      lines.map(function(sec){
-        var optBadge = sec.isOption ? '<span style="background:rgba(232,98,26,0.15);color:#9a4514;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;margin-left:8px;">OPTION</span>' : '';
-        return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;overflow:hidden;font-family:Inter,sans-serif;">' +
-          '<div style="background:#fbf8f2;padding:10px 14px;border-bottom:1px solid var(--c-border,#e3dccc);display:flex;justify-content:space-between;align-items:center;">' +
-            '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + sec.sectionNum + '. ' + safeEsc(sec.sectionTitle) + optBadge + '</div>' +
-            '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + fmtEur(sec.sousTotal) + '</div>' +
-          '</div>' +
-          '<div>' +
-          sec.items.map(function(it){
-            return '<div style="display:grid;grid-template-columns:80px 1fr 70px 90px 100px;gap:8px;align-items:center;padding:8px 14px;border-bottom:1px solid rgba(15,32,48,0.05);font-size:12px;">' +
-              '<div style="color:#7a8896;font-family:monospace;">' + safeEsc(it.key) + '</div>' +
-              '<div style="color:#0f2030;line-height:1.4;"><input type="text" data-aj-bind="override.' + it.key + '.label" value="' + (it.label || '').replace(/"/g,'&quot;') + '" style="width:100%;background:transparent;border:none;font-family:Inter,sans-serif;font-size:12px;color:#0f2030;padding:2px 4px;border-radius:4px;" /></div>' +
-              '<div><input type="number" data-aj-bind="override.' + it.key + '.qty" value="' + it.qty + '" step="0.01" style="width:100%;text-align:right;padding:4px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;background:#fff;" /></div>' +
-              '<div><input type="number" data-aj-bind="override.' + it.key + '.price" value="' + it.price + '" step="0.01" style="width:100%;text-align:right;padding:4px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:4px;font-family:Inter,sans-serif;font-size:12px;background:#fff;" /> <span style="color:#7a8896;font-size:10px;">' + safeEsc(it.unit) + '</span></div>' +
-              '<div style="text-align:right;font-weight:600;color:' + (it.total < 0 ? '#c62828' : '#0f2030') + ';">' + fmtEur(it.total) + '</div>' +
-            '</div>';
-          }).join('') +
-          '</div>' +
-        '</div>';
-      }).join('') +
-
-      /* Bandeau totaux */
-      '<div style="background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;border-radius:14px;padding:20px 24px;font-family:Inter,sans-serif;">' +
-        '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#c9a96e;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:14px;">Totaux</div>' +
-        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;">' +
-          '<div><div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">Total HT</div><div style="font-size:22px;font-weight:600;margin-top:2px;">' + fmtEur(totals.totalHT) + '</div></div>' +
-          '<div><div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">TVA ' + totals.vatRate + '%</div><div style="font-size:22px;font-weight:600;margin-top:2px;">' + fmtEur(totals.tva) + '</div></div>' +
-          '<div><div style="font-size:11px;color:#c9a96e;text-transform:uppercase;font-weight:600;">Total TTC</div><div style="font-size:26px;font-weight:700;margin-top:2px;color:#c9a96e;">' + fmtEur(totals.totalTTC) + '</div></div>' +
-          '<div><div style="font-size:11px;color:rgba(255,255,255,0.6);text-transform:uppercase;">Acompte ' + totals.depositPct + '%</div><div style="font-size:18px;font-weight:600;margin-top:2px;">' + fmtEur(totals.acompte) + '</div></div>' +
+    /* Bandeau client (compact) */
+    var clientBanner =
+      '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:10px;padding:11px 14px;font-family:Inter,sans-serif;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
+        '<div style="flex:1;min-width:200px;">' +
+          '<div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Client</div>' +
+          '<div style="font-weight:700;color:#0f2030;font-size:14px;">' + safeEsc(clientName) + '</div>' +
+          (clientAddr ? '<div style="font-size:11px;color:#3a4a5c;">' + safeEsc(clientAddr) + '</div>' : '') +
         '</div>' +
-        (hasOptions ? '<div style="margin-top:14px;padding-top:14px;border-top:1px solid rgba(255,255,255,0.15);font-size:12px;color:rgba(255,255,255,0.75);">+ <b style="color:#c9a96e;">' + fmtEur(totals.totalOptionsHT) + '</b> en options HT (à valider par le client à la signature)</div>' : '') +
-      '</div>' +
+        '<div style="font-size:11px;color:#7a8896;text-align:right;font-style:italic;">Édite directement les lignes ci-dessous</div>' +
+      '</div>';
 
-      /* Boutons d'action */
-      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;">' +
+    /* Aide rapide */
+    var hints =
+      '<div style="background:rgba(201,169,110,0.08);border-left:3px solid #c9a96e;padding:8px 12px;border-radius:6px;font-family:Inter,sans-serif;font-size:11px;color:#3a4a5c;line-height:1.55;">' +
+        '<b>Édition :</b> clique sur n\'importe quelle valeur · ' +
+        '<b>+</b> ajoute une ligne · ' +
+        '<b>▲▼</b> ou glisser-déposer pour réordonner · ' +
+        '<b>🗑</b> supprime · ' +
+        '<b>↩</b> réinitialise une ligne au défaut · ' +
+        '<b>🔒</b> ligne obligatoire' +
+      '</div>';
+
+    /* Sections */
+    var sectionsHtml = lines.map(renderEditorSection).join('');
+
+    /* Bouton ajout section */
+    var addSectionBtn =
+      '<button onclick="AJBath._editor.addSection()" style="width:100%;padding:13px;background:rgba(255,255,255,0.5);border:2px dashed rgba(15,32,48,0.18);border-radius:10px;cursor:pointer;font-family:Inter,sans-serif;font-size:13px;color:#3a4a5c;font-weight:600;transition:all 0.15s;" onmouseover="this.style.background=\'#fff\';this.style.borderColor=\'#c9a96e\';" onmouseout="this.style.background=\'rgba(255,255,255,0.5)\';this.style.borderColor=\'rgba(15,32,48,0.18)\';">+ Ajouter une section personnalisée</button>';
+
+    /* Bandeau totaux (sticky en bas, au-dessus des boutons nav du wizard) */
+    var totalsBar =
+      '<div style="position:sticky;bottom:90px;background:linear-gradient(135deg,#0f2030,#1a3349);color:#fff;border-radius:14px;padding:16px 22px;font-family:Inter,sans-serif;box-shadow:0 8px 24px rgba(15,32,48,0.30);z-index:5;">' +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(125px,1fr));gap:12px;">' +
+          '<div><div style="font-size:10px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.5px;">Total HT</div><div style="font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">' + fmtEur(totals.totalHT) + '</div></div>' +
+          '<div><div style="font-size:10px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.5px;">TVA ' + totals.vatRate + '%</div><div style="font-size:20px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">' + fmtEur(totals.tva) + '</div></div>' +
+          '<div><div style="font-size:10px;color:#c9a96e;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">Total TTC</div><div style="font-size:24px;font-weight:700;margin-top:2px;color:#c9a96e;font-variant-numeric:tabular-nums;">' + fmtEur(totals.totalTTC) + '</div></div>' +
+          '<div><div style="font-size:10px;color:rgba(255,255,255,0.6);text-transform:uppercase;letter-spacing:0.5px;">Acompte ' + totals.depositPct + '%</div><div style="font-size:16px;font-weight:600;margin-top:2px;font-variant-numeric:tabular-nums;">' + fmtEur(totals.acompte) + '</div></div>' +
+        '</div>' +
+        (hasOptions ? '<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.15);font-size:11px;color:rgba(255,255,255,0.78);">+ <b style="color:#c9a96e;font-variant-numeric:tabular-nums;">' + fmtEur(totals.totalOptionsHT) + '</b> en options HT (à valider par le client à la signature)</div>' : '') +
+      '</div>';
+
+    /* Boutons d'action */
+    var actions =
+      '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">' +
         '<button onclick="AJBath.wizardSaveDraft()" style="flex:1;min-width:160px;padding:14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;cursor:pointer;font-weight:600;color:#0f2030;font-family:Inter,sans-serif;font-size:14px;">💾 Enregistrer brouillon</button>' +
-        '<button onclick="AJBath.wizardEmit()" style="flex:2;min-width:200px;padding:14px;background:#1d4d33;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-family:Inter,sans-serif;font-size:14px;">📋 Émettre devis officiel (commit C)</button>' +
-      '</div>' +
-      '<div style="font-size:11px;color:#7a8896;text-align:center;font-family:Inter,sans-serif;font-style:italic;">L\'émission verrouillée + génération PDF arrivent au commit C. Pour l\'instant tu peux saisir et enregistrer un brouillon.</div>';
+        '<button onclick="AJBath.wizardEmit()" style="flex:2;min-width:200px;padding:14px;background:#1d4d33;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-family:Inter,sans-serif;font-size:14px;">📋 Émettre devis officiel — verrouillage immédiat</button>' +
+      '</div>';
+
+    return '<div style="display:flex;flex-direction:column;gap:11px;">' +
+      clientBanner + hints + sectionsHtml + addSectionBtn + totalsBar + actions +
+    '</div>';
   }
 
   /* ─── MACHINE D'ÉTAT WIZARD ─── */
@@ -1849,8 +2258,19 @@
   /* ─── EVENT DELEGATION POUR DATA-AJ-BIND ─── */
   document.addEventListener('input', function(e){
     var t = e.target;
-    var path = t.getAttribute && t.getAttribute('data-aj-bind');
-    if(!path || !_currentDraft) return;
+    if(!t || !t.getAttribute || !_currentDraft) return;
+    /* Champs custom de l'éditeur (lignes ajoutées via "+ Ajouter une ligne") */
+    var customSpec = t.getAttribute('data-aj-custom-line');
+    if(customSpec){
+      var parts = customSpec.split('|');
+      if(parts.length === 3 && EDITOR){
+        EDITOR.updateCustomLine(parts[0], parts[1], parts[2], t.value);
+      }
+      return;
+    }
+    /* Champs standards data-aj-bind */
+    var path = t.getAttribute('data-aj-bind');
+    if(!path) return;
     var v;
     if(t.type === 'checkbox'){ v = t.checked; }
     else if(t.type === 'number'){ v = t.value; /* gardé en string pour préserver l'édition partielle */ }
@@ -1860,8 +2280,18 @@
 
   document.addEventListener('change', function(e){
     var t = e.target;
-    var path = t.getAttribute && t.getAttribute('data-aj-bind');
-    if(!path || !_currentDraft) return;
+    if(!t || !t.getAttribute || !_currentDraft) return;
+    /* Custom select (unit) sur ligne custom */
+    var customSpec = t.getAttribute('data-aj-custom-line');
+    if(customSpec && t.tagName === 'SELECT'){
+      var parts = customSpec.split('|');
+      if(parts.length === 3 && EDITOR){
+        EDITOR.updateCustomLine(parts[0], parts[1], parts[2], t.value);
+      }
+      return;
+    }
+    var path = t.getAttribute('data-aj-bind');
+    if(!path) return;
     if(t.tagName === 'SELECT' || t.type === 'checkbox'){
       var v = t.type === 'checkbox' ? t.checked : t.value;
       wizardSetField(path, v);
@@ -1883,6 +2313,55 @@
     wizardSetField(path, val);
     /* Re-render immédiat pour les toggles (UI conditionnelle) */
     setTimeout(wizardRender, 50);
+  });
+
+  /* ─── DRAG & DROP DES LIGNES DU DEVIS (Commit B IA) ─────────────
+     HTML5 native, drag dans la même section uniquement. */
+  var _dragSource = null;
+  document.addEventListener('dragstart', function(e){
+    var row = e.target && e.target.closest && e.target.closest('[data-aj-row]');
+    if(!row) return;
+    _dragSource = {
+      sectionId: row.getAttribute('data-aj-section-id'),
+      key: row.getAttribute('data-aj-line-key')
+    };
+    if(e.dataTransfer){
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', _dragSource.key); } catch(err){}
+    }
+    row.style.opacity = '0.4';
+  });
+  document.addEventListener('dragend', function(e){
+    var row = e.target && e.target.closest && e.target.closest('[data-aj-row]');
+    if(row) row.style.opacity = '';
+    _dragSource = null;
+    /* Nettoie les indicateurs visuels */
+    document.querySelectorAll('[data-aj-row]').forEach(function(r){
+      r.style.boxShadow = '';
+    });
+  });
+  document.addEventListener('dragover', function(e){
+    var row = e.target && e.target.closest && e.target.closest('[data-aj-row]');
+    if(!row || !_dragSource) return;
+    if(row.getAttribute('data-aj-section-id') !== _dragSource.sectionId) return;
+    e.preventDefault();
+    if(e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    /* Indicateur visuel : surligne la cible */
+    document.querySelectorAll('[data-aj-row]').forEach(function(r){ r.style.boxShadow = ''; });
+    if(row.getAttribute('data-aj-line-key') !== _dragSource.key){
+      row.style.boxShadow = 'inset 0 2px 0 #c9a96e';
+    }
+  });
+  document.addEventListener('drop', function(e){
+    var row = e.target && e.target.closest && e.target.closest('[data-aj-row]');
+    if(!row || !_dragSource) return;
+    if(row.getAttribute('data-aj-section-id') !== _dragSource.sectionId) return;
+    e.preventDefault();
+    var toKey = row.getAttribute('data-aj-line-key');
+    var sectionId = _dragSource.sectionId;
+    var fromKey = _dragSource.key;
+    _dragSource = null;
+    if(EDITOR && fromKey && toKey) EDITOR.reorderLine(sectionId, fromKey, toKey);
   });
 
   /* Trigger sets auto (data-aj-trigger-set) — applique au render */
@@ -1965,11 +2444,13 @@
     wizardSaveDraft: wizardSaveDraft,
     wizardEmit: wizardEmit,
     wizardDelete: wizardDelete,
-    /* Calculs (utilisables depuis console + commit C) */
+    /* Calculs (utilisables depuis console) */
     computeMeasurements: computeMeasurements,
     generateLines: generateLines,
     computeTotals: computeTotals,
-    STEPS: STEPS
+    STEPS: STEPS,
+    /* Éditeur de devis direct (Commit B IA) — utilisé par les onclick des sections/lignes */
+    _editor: EDITOR
   });
 
   console.log('[AJ PRO Bath] Module Devis Salle de Bain chargé · ' + BATHROOM_TEMPLATE.sections.length + ' sections · ' + (function(){

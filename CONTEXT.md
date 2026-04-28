@@ -29,7 +29,7 @@ Outil métier de relevé chantier sur tablette Samsung avec stylet, qui transfor
 |---|---:|---|
 | `index.html` | ~12 300 | App principale, monolithique. Contient toutes les phases 1-21 + correctif légal + bloc FEATURES_ENABLED + Tâche 5 export. |
 | `quote-template-sdb.js` | ~720 | **★ Source de vérité du modèle SDB** (Commit A IA). 148 lignes du PDF $002612 modélisées avec champs enrichis : `zone`, `action`, `semanticKey` (anti-doublon), `tags`, `priceMode`, `altGroupId`/`altDefault` (8 groupes d'alternatives), `deductionFor` (déductions négatives type 8.5). Helpers : `getLine`, `getLinesByZone`, `getLinesByAction`, `getLineBySemanticKey`, `getMandatoryLines`, `getDeductionLines`, `getAlternativeGroups`. Adapter `toLegacy()` pour rétro-compat avec bathroom-quote.js. Consommé par bathroom-quote.js, chantier-analysis.js (à venir) et futurs modules quote-fusion / quote-editor / catalog-products. |
-| `bathroom-quote.js` | 1 983 | Module Devis SDB. **Le template inline a été extrait** vers `quote-template-sdb.js` ; ce fichier consomme `window.QUOTE_TEMPLATE_SDB.toLegacy()`. Reste responsable du wizard 12 étapes, récap éditable, génération PDF officiel verrouillé `DEV-2026-XXX`. |
+| `bathroom-quote.js` | 2 464 | Module Devis SDB. Template extrait vers `quote-template-sdb.js`. Wizard 12 étapes + **éditeur de devis direct (Commit B)** sur l'étape 12 : édition inline label/qté/unité/PUHT, ajout/suppression lignes/sections, drag-drop, toggle Option, totaux temps réel sticky. Génération PDF officiel verrouillé `DEV-2026-XXX`. |
 | `chantier-analysis.js` | 1 081 | Module Analyse rendez-vous (Commit 1/3 session 3) : moteur de mapping cats/notes/keywords → suggestions du template SDB, écran de validation, création brouillon. Continue à consommer `window.AJBath.TEMPLATE` (qui pointe désormais vers la source canonique via toLegacy). |
 | `sw.js` | ~115 | Service Worker offline-first, runtime cache versionné (v9-template-canon). |
 | `manifest.json` | 27 | PWA installable |
@@ -78,13 +78,14 @@ Voir `DECISIONS.md` pour l'historique des choix architecturaux. La session a por
 - ✅ Export chantier complet (PDF + JSON LLM-friendly)
 - ✅ **Module Analyse rendez-vous (Commit 1/3)** — moteur de mapping + écran de validation + création brouillon
 - ✅ **Couche IA — Commit A : Template SDB canonique** (`quote-template-sdb.js`). 148 lignes du PDF $002612 modélisées avec schéma enrichi (zone, action, semanticKey, alternatives, déductions). bathroom-quote.js refactoré pour consommer cette source unique. Aucun changement fonctionnel visible — fondation pour les commits B-G.
+- ✅ **Couche IA — Commit B : Éditeur de devis direct sur étape 12.** Récapitulatif transformé en éditeur tabulaire complet : édition inline label/qté/unité/PUHT (input transparent → bordé doré au focus), ajout/suppression lignes (template = soft-delete via override.deleted, custom = hard), ajout de sections personnalisées, bascule Option↔Essentiel par section, drag-drop HTML5 natif (limité à la même section) + boutons ▲▼ tactiles, sous-totaux + Total HT/TVA/TTC/acompte sticky en temps réel. Helpers exposés sur `AJBath._editor`. `generateLines()` étendu pour `override.X.unit/.deleted`, `override.<sec>.isOption/.title`, `_customLines`, `_customSections`, `_order`, `_sectionOrder`. **Aucune régression** sur le wizard 1-11 ni sur l'émission PDF officiel.
 
 ## Roadmap couche IA (validée Session 4)
 
 Plan séquencé en 7 commits courts, ordre de bataille pour ROI temps maximum :
 
 - ✅ **A. Template SDB canonique** — `quote-template-sdb.js` source de vérité unique
-- ⏳ **B. Éditeur de devis direct** — étape 12 récap → éditeur tabulaire complet (drag-drop, ajout/suppression lignes/sections, toggle Option, sous-totaux temps réel). Plus gros gain temps utilisateur immédiat.
+- ✅ **B. Éditeur de devis direct** — étape 12 transformée en éditeur tabulaire complet (édition inline + drag-drop + ajout/suppression + toggle Option + totaux sticky temps réel)
 - ⏳ **C. Moteur de fusion intelligent** — `quote-fusion.js`, anti-doublon par semanticKey, priorité Travaux > Brouillon > Notes > Croquis > Photos
 - ⏳ **D. Écran Analyse chantier enrichi** — pastilles confiance + badges source + bouton « Générer le brouillon » → ouvre l'éditeur B
 - ⏳ **E. Catalogue produits + alternatives** — `catalog-products.js`, ~80-120 réfs, bouton « ⇄ Alternative » + « 🔍 Google »
