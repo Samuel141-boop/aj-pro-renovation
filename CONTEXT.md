@@ -37,15 +37,16 @@ Outil métier de relevé chantier sur tablette Samsung avec stylet, qui transfor
 | `vercel.json` | 41 | Headers no-cache pour HTML / SW / JS modules |
 | `_drafts/catalog-v0.json` | 2 731 | Brouillon S1 — extraction normalisée des 148 lignes du template SDB vers schéma unifié. **Non chargé par l'app**, prêt pour S1. |
 
-## Sidebar actuelle (après simplification Session 5, 2026-04-30)
+## Sidebar actuelle (après simplification Session 6, 2026-04-30)
 
-Visibles : **Tableau de bord · Clients · Pièces · Mesures · Travaux · Photos · Notes** (recentrée sur la prise de notes chantier).
+Visibles : **Tableau de bord · Clients · Pièces · Mesures · Photos · Notes** (6 items — Travaux retiré en Session 6, recentrée sur la prise de note chantier au stylet Samsung).
 
 **Désactivés via `window.FEATURES_ENABLED`** (code conservé, réactivable par flag) :
 - Anciens : Carte · Comparateur · Planning · Récapitulatif · Suggestions par type de pièce
 - Session 5 : Documents émis (`documentsNav`) · Devis salle de bain (`bathroomNav`) · Analyse rendez-vous (`analysisNav`) · Statistiques (`statsNav`) · Synthèse devis (`syntheseNav`) · Paramètres devis (`settingsNav`) · Tutoriel guidé (`tutorialBtn`) · Carte « Besoin d'aide ? » footer (`helpFooter`) · Carte « Prochaine action » dashboard (`dashNextAction`) · Barre quick-actions fiche pièce (`pieceQuickActions`) · Checklist 0/5 fiche pièce (`pieceChecklist`)
+- **Session 6 : Travaux sidebar (`travauxNav`) · Boutons PDF Synthèse + fiche client (`pdfButtons`) · Bon de visite (`bonDeVisiteBtn`) · Export complet (`exportCompletBtn`) · Barre flottante FAB photo/croquis/note/✓ (`floatingActionBar`) · Tous les micros 🎙 dictée vocale (`micButtons`) · Calcul rapide des murs Mesures (`calculRapideMurs`) · Annotations libres sous Croquis (`croquisAnnotations`)**
 
-Pour réactiver tout : `Object.assign(window.FEATURES_ENABLED, {syntheseNav:true, statsNav:true, settingsNav:true, documentsNav:true, bathroomNav:true, analysisNav:true, tutorialBtn:true, helpFooter:true, dashNextAction:true, pieceQuickActions:true, pieceChecklist:true}); location.reload();`
+Pour tout réactiver : `Object.assign(window.FEATURES_ENABLED, {syntheseNav:true, statsNav:true, settingsNav:true, documentsNav:true, bathroomNav:true, analysisNav:true, tutorialBtn:true, helpFooter:true, dashNextAction:true, pieceQuickActions:true, pieceChecklist:true, travauxNav:true, pdfButtons:true, bonDeVisiteBtn:true, exportCompletBtn:true, floatingActionBar:true, micButtons:true, calculRapideMurs:true, croquisAnnotations:true}); location.reload();`
 
 ## Workflow utilisateur cible
 
@@ -71,6 +72,24 @@ Mot de passe d'accès : `Jérome0307`.
 - **Production** : https://aj-pro-renovation.vercel.app
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
+
+## État au 2026-04-30 (Session 6 — recentrage prise de note tablette/stylet)
+
+Suite logique de la Session 5 : on continue d'enlever tout ce qui parasite la prise de note chantier. Code conservé via `FEATURES_ENABLED`.
+
+- ✅ **Sidebar** — item « Travaux » masqué via `travauxNav`. Sidebar passe de 7 → 6 items (Tableau de bord, Clients, Pièces, Mesures, Photos, Notes).
+- ✅ **Fiche client** — boutons « 📄 PDF », « ✍ Bon de visite » et « 📦 Export complet » masqués (3 flags : `pdfButtons`, `bonDeVisiteBtn`, `exportCompletBtn`). Le code de génération PDF/JSON reste fonctionnel pour le jour où on en aura besoin.
+- ✅ **Barre flottante (FAB)** — la pastille basse (📷✏️📝✓) en mode rendez-vous est masquée via `floatingActionBar`.
+- ✅ **Micros / dictée vocale** — `injectMicButtons` désactivé globalement via `micButtons`. Nettoie aussi les éventuels boutons 🎙 déjà injectés. **Plus aucun micro visible dans tout le logiciel.**
+- ✅ **Mesures** — bloc « ⚡ Calcul rapide — Surface des murs » masqué via `calculRapideMurs`. Le bloc « Dimensions complètes » reste accessible.
+- ✅ **Bloc Croquis (step-1) — amélioration majeure pour stylet Samsung** :
+  - Hauteur canvas **340px → 600px** (espace d'écriture quasi doublé)
+  - Fond canvas explicitement blanc (`background:#fff`)
+  - Bouton « ⛶ **Ouvrir en grand pour écrire au stylet** » mis **plein largeur, en btn-primary doré, 16px de padding** (CTA principal)
+  - Bouton « Analyser comme croquis géométrique de pièce » dégradé en btn-secondary fin (action secondaire)
+  - Description recadrée pour l'usage stylet ("écris au stylet, prends tes notes manuscrites")
+  - Section « Annotations libres » **masquée** via `croquisAnnotations` (textarea conservé en DOM pour préserver les données existantes des users)
+- 🔄 SW bumpé `v13-simplification` → `v14-simplification2`. Vide le cache Application → SW au reload.
 
 ## État au 2026-04-30 (Session 5 — simplification fonctionnelle)
 

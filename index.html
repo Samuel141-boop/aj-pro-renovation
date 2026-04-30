@@ -1339,7 +1339,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     <div class="form-section">
       <div class="form-section-title">Croquis & bloc-notes visuel</div>
       <div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:10px;line-height:1.5">
-        Trace ton croquis de pièce, écris au stylet, ajoute des cotes, des flèches, des annotations libres. Cette zone est polyvalente : croquis géométrique <i>ou</i> bloc-notes chantier visuel.
+        Trace ton croquis, écris au stylet, prends tes notes manuscrites. Pour plus de confort sur tablette, ouvre le mode <b>plein écran</b> ci-dessous.
       </div>
       <div class="canvas-zone" id="croquis-zone">
         <div class="canvas-toolbar">
@@ -1353,18 +1353,20 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
           <div class="cdot" style="background:#c62828" onclick="setColor('#c62828',this)"></div>
           <button class="ctool" onclick="clearCanvas()" style="margin-left:4px">🗑️</button>
         </div>
-        <canvas id="main-canvas" style="width:100%;display:block;cursor:crosshair;touch-action:none;height:340px"></canvas>
+        <canvas id="main-canvas" style="width:100%;display:block;cursor:crosshair;touch-action:none;height:600px;background:#fff"></canvas>
       </div>
-      <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="openCanvasFull()">⛶ Plein écran</button>
-        <button class="btn btn-accent" style="flex:1.4;min-width:200px" onclick="analyzeCroquis()">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l1.5 4.5L19 9l-4.5 1.5L13 15l-1.5-4.5L7 9l4.5-1.5L13 3zM19 16l.8 2.4L22 19l-2.2.6L19 22l-.8-2.4L16 19l2.2-.6z"/></svg>
-          <span>Analyser comme croquis pièce</span>
-        </button>
-      </div>
+      <!-- Bouton Plein écran mis en avant pour la prise de note tablette/stylet -->
+      <button class="btn btn-primary" style="width:100%;margin-top:12px;padding:16px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px" onclick="openCanvasFull()">
+        <span style="font-size:20px;line-height:1">⛶</span>
+        <span>Ouvrir en grand pour écrire au stylet</span>
+      </button>
+      <button class="btn btn-secondary" style="width:100%;margin-top:8px;padding:11px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px" onclick="analyzeCroquis()">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l1.5 4.5L19 9l-4.5 1.5L13 15l-1.5-4.5L7 9l4.5-1.5L13 3zM19 16l.8 2.4L22 19l-2.2.6L19 22l-.8-2.4L16 19l2.2-.6z"/></svg>
+        <span>Analyser comme croquis géométrique de pièce</span>
+      </button>
     </div>
-    <!-- Bloc d'annotations libres (Simplification Session 5) -->
-    <div class="form-section">
+    <!-- Bloc d'annotations libres : caché via flag (Session 6). Le textarea reste pour préserver les données existantes. -->
+    <div class="form-section" id="p-croquis-annotations-section">
       <div class="form-section-title">Annotations libres</div>
       <textarea class="form-input" id="p-croquis-notes" style="min-height:90px" oninput="autosave()" placeholder="Légendes, cotes, remarques générales sur le croquis ou la pièce…"></textarea>
     </div>
@@ -4885,7 +4887,17 @@ window.FEATURES_ENABLED = Object.assign({
   helpFooter:    false,  /* Sidebar footer : carte "Besoin d'aide ?" statique */
   dashNextAction:false,  /* Dashboard : carte "Prochaine action sur le chantier" */
   pieceQuickActions: false, /* Fiche pièce : barre quick-actions (Peinture standard / Reno complète / Template / Sauver) */
-  pieceChecklist:false   /* Fiche pièce : checklist 0/5 sticky */
+  pieceChecklist:false,  /* Fiche pièce : checklist 0/5 sticky */
+  /* ─── Simplification fonctionnelle 2 (Session 6, 2026-04-30) ────
+     Recentrage encore plus poussé sur prise de note tablette/stylet. */
+  travauxNav:    false,  /* Sidebar : Travaux (item statique HTML) */
+  pdfButtons:    false,  /* Boutons PDF (Synthèse + fiche client) */
+  bonDeVisiteBtn:false,  /* Bouton "Bon de visite" sur fiche client + synthèse */
+  exportCompletBtn:false,/* Bouton "Export complet" sur fiche client */
+  floatingActionBar:false,/* Barre flottante basse (FAB photo/croquis/note/✓) */
+  micButtons:    false,  /* Tous les boutons 🎙 dictée vocale (injectMicButtons désactivé global) */
+  calculRapideMurs:false,/* Bloc "Calcul rapide — Surface des murs" (step-2 Mesures) */
+  croquisAnnotations:false /* Bloc "Annotations libres" sous le croquis (step-1) */
 }, window.FEATURES_ENABLED || {});
 
 /* Cache les entrées UI statiques selon les flags (code intact pour réactivation) */
@@ -4905,6 +4917,20 @@ window.FEATURES_ENABLED = Object.assign({
     /* Carte "Prochaine action sur le chantier" du dashboard (statique HTML) */
     if(FF.dashNextAction !== true){
       document.querySelectorAll('.dash-banner').forEach(function(el){ el.style.display = 'none'; });
+    }
+    /* Item "Travaux" sidebar (statique HTML) */
+    if(FF.travauxNav !== true){
+      var travauxItem = document.querySelector('.sidebar-nav .nav-item[data-section="travaux"]');
+      if(travauxItem) travauxItem.style.display = 'none';
+    }
+    /* Bloc "Calcul rapide — Surface des murs" (step-2 Mesures, statique HTML) */
+    if(FF.calculRapideMurs !== true){
+      document.querySelectorAll('.calc-rapide').forEach(function(el){ el.style.display = 'none'; });
+    }
+    /* Bloc "Annotations libres" sous le croquis (step-1, statique HTML, marqué via id wrapper) */
+    if(FF.croquisAnnotations !== true){
+      var ann = document.getElementById('p-croquis-annotations-section');
+      if(ann) ann.style.display = 'none';
     }
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideStaticEntries);
@@ -5625,6 +5651,12 @@ window.FEATURES_ENABLED = Object.assign({
      ACTIONS FLOTTANTES (mode rendez-vous)
      ════════════════════════════════════════════════════════════════════ */
   function ensureFloatingActions(){
+    /* Simplification (Session 6) : barre flottante basse cachée par défaut */
+    if((window.FEATURES_ENABLED || {}).floatingActionBar !== true){
+      var existing = document.getElementById('aj-fab');
+      if(existing) existing.style.display = 'none';
+      return;
+    }
     if(document.getElementById('aj-fab')) return;
     var fab = document.createElement('div');
     fab.id = 'aj-fab';
@@ -6720,6 +6752,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── Bouton "📄 Générer PDF" sur l'écran Synthèse ─── */
   function injectPDFButton(){
+    /* Simplification (Session 6) : bouton PDF caché par défaut */
+    if((window.FEATURES_ENABLED || {}).pdfButtons !== true) return;
     var screen = document.getElementById('screen-synthese');
     if(!screen) return;
     // Ajoute le bouton dans la barre d'actions de la synthèse
@@ -6737,6 +6771,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── Bouton "📄 PDF" sur la fiche client (à côté du bouton Récap) ─── */
   function injectClientPDFButton(){
+    /* Simplification (Session 6) : bouton PDF fiche client caché par défaut */
+    if((window.FEATURES_ENABLED || {}).pdfButtons !== true) return;
     var clientScreen = document.getElementById('screen-client');
     if(!clientScreen) return;
     if(clientScreen.querySelector('[data-aj-pdf-client]')) return;
@@ -7046,6 +7082,14 @@ window.FEATURES_ENABLED = Object.assign({
   }
 
   function injectMicButtons(){
+    /* Simplification (Session 6) : tous les boutons micro désactivés globalement.
+       Pour réactiver : window.FEATURES_ENABLED.micButtons = true; */
+    if((window.FEATURES_ENABLED || {}).micButtons !== true){
+      /* Nettoie d'anciens micros déjà injectés s'il y en avait */
+      document.querySelectorAll('[data-aj-mic-active]').forEach(function(b){ b.remove(); });
+      document.querySelectorAll('button[title="Dictée vocale (français)"]').forEach(function(b){ b.remove(); });
+      return;
+    }
     if(!SR) return; // Pas supporté → on n'ajoute rien
     var fields = document.querySelectorAll('textarea, input[type="text"]');
     fields.forEach(function(f){
@@ -8783,6 +8827,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 4) BOUTON "BON DE VISITE" SUR FICHE CLIENT + SYNTHÈSE ─── */
   function injectBonVisiteButton(){
+    /* Simplification (Session 6) : bouton Bon de visite caché par défaut */
+    if((window.FEATURES_ENABLED || {}).bonDeVisiteBtn !== true) return;
     // Sur écran client
     var clientScreen = document.getElementById('screen-client');
     if(clientScreen && !clientScreen.querySelector('[data-aj-bv]')){
@@ -12235,6 +12281,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── Bouton sur la fiche client ─── */
   function injectExportButton(){
+    /* Simplification (Session 6) : bouton Export complet caché par défaut */
+    if((window.FEATURES_ENABLED || {}).exportCompletBtn !== true) return;
     var clientScreen = document.getElementById('screen-client');
     if(!clientScreen) return;
     if(clientScreen.querySelector('[data-aj-export-complet]')) return;
