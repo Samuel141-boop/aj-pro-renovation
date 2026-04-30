@@ -953,7 +953,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
       <div class="nav-item" data-section="notes" onclick="navToSection('notes',this)">
         <span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
-        <span>Notes manuscrites</span>
+        <span>Notes</span>
       </div>
       <div class="nav-item" data-section="recap" onclick="navToSection('recap',this)">
         <span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg></span>
@@ -1260,7 +1260,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
         <div class="oui-non-btn" onclick="selOuiNon(this,'f-ascenseur-grp','Non')">✗ Non</div>
       </div>
     </div>
-    <div class="form-group"><label class="form-label">Observations générales</label><textarea class="form-input" id="f-obs" placeholder="Accès difficile, prévoir..."></textarea></div>
+    <div class="form-group"><label class="form-label">Observations générales</label><textarea class="form-input" id="f-obs" data-aj-no-mic="1" placeholder="Accès difficile, prévoir..."></textarea></div>
   </div>
   <button class="btn btn-primary" onclick="createClient()">Créer la fiche client →</button>
 </div>
@@ -1337,7 +1337,10 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
   <!-- STEP 1 : CROQUIS -->
   <div id="step-1" style="display:none">
     <div class="form-section">
-      <div class="form-section-title">Croquis de la pièce</div>
+      <div class="form-section-title">Croquis & bloc-notes visuel</div>
+      <div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:10px;line-height:1.5">
+        Trace ton croquis de pièce, écris au stylet, ajoute des cotes, des flèches, des annotations libres. Cette zone est polyvalente : croquis géométrique <i>ou</i> bloc-notes chantier visuel.
+      </div>
       <div class="canvas-zone" id="croquis-zone">
         <div class="canvas-toolbar">
           <button class="ctool active" onclick="setTool('pen',this)">✏️</button>
@@ -1350,19 +1353,20 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
           <div class="cdot" style="background:#c62828" onclick="setColor('#c62828',this)"></div>
           <button class="ctool" onclick="clearCanvas()" style="margin-left:4px">🗑️</button>
         </div>
-        <canvas id="main-canvas" style="width:100%;display:block;cursor:crosshair;touch-action:none;height:280px"></canvas>
+        <canvas id="main-canvas" style="width:100%;display:block;cursor:crosshair;touch-action:none;height:340px"></canvas>
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-secondary" style="flex:1;min-width:140px" onclick="openCanvasFull()">⛶ Plein écran</button>
         <button class="btn btn-accent" style="flex:1.4;min-width:200px" onclick="analyzeCroquis()">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l1.5 4.5L19 9l-4.5 1.5L13 15l-1.5-4.5L7 9l4.5-1.5L13 3zM19 16l.8 2.4L22 19l-2.2.6L19 22l-.8-2.4L16 19l2.2-.6z"/></svg>
-          <span>Analyser le croquis</span>
+          <span>Analyser comme croquis pièce</span>
         </button>
       </div>
-      <div class="ai-hint-box">
-        <div class="ai-hint-title">✨ Assistance intelligente</div>
-        <div class="ai-hint-text">Tracez le contour de votre pièce avec des traits droits (4 murs pour une pièce rectangulaire). L'application détecte la forme et propose les dimensions à partir d'un mur dont vous connaissez la longueur réelle.</div>
-      </div>
+    </div>
+    <!-- Bloc d'annotations libres (Simplification Session 5) -->
+    <div class="form-section">
+      <div class="form-section-title">Annotations libres</div>
+      <textarea class="form-input" id="p-croquis-notes" style="min-height:90px" oninput="autosave()" placeholder="Légendes, cotes, remarques générales sur le croquis ou la pièce…"></textarea>
     </div>
     <button class="btn btn-primary" onclick="switchStep(2,document.querySelectorAll('.step-btn')[2])">Saisir les mesures →</button>
   </div>
@@ -2069,32 +2073,22 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
 
   <!-- STEP 5 : NOTES -->
   <div id="step-5" style="display:none">
+    <!-- Simplification (Session 5) : fusion Notes texte + Notes manuscrites en une seule section.
+         Bloc-notes étendu retiré (le Croquis fait désormais office de bloc-notes visuel libre).
+         Le canvas #bloc-canvas reste défini en HTML masqué pour préserver les fonctions JS qui
+         le référencent (setBlocTool, setBlocColor, clearBlocCanvas, addBlocPage). -->
     <div class="form-section">
-      <div class="form-section-title">Notes texte</div>
-      <textarea class="form-input" id="p-notes" style="min-height:140px" oninput="autosave()" placeholder="Notes libres, demandes du client..."></textarea>
-    </div>
-    <div class="form-section">
-      <div class="form-section-title">Notes manuscrites</div>
-      <div id="ms-notes-list"></div>
-      <button class="btn-add" onclick="openCanvas('Nouvelle note manuscrite')">+ Note manuscrite</button>
-    </div>
-    <div class="form-section">
-      <div class="form-section-title">Bloc-notes étendu</div>
-      <div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:8px">Zone d'écriture extensible — ajoutez autant de pages que nécessaire. Sauvegarde automatique.</div>
-      <div class="canvas-zone" id="bloc-notes-zone" style="max-height:600px;overflow-y:auto">
-        <div class="canvas-toolbar" style="position:sticky;top:0;z-index:2;background:var(--c-bg)">
-          <button class="ctool active" onclick="setBlocTool('pen',this)">✏️</button>
-          <button class="ctool" onclick="setBlocTool('erase',this)">⌫</button>
-          <div style="flex:1"></div>
-          <div class="cdot active" style="background:#1a1a2e" onclick="setBlocColor('#1a1a2e',this)"></div>
-          <div class="cdot" style="background:#1565c0" onclick="setBlocColor('#1565c0',this)"></div>
-          <div class="cdot" style="background:#c62828" onclick="setBlocColor('#c62828',this)"></div>
-          <div class="cdot" style="background:#2d6a4f" onclick="setBlocColor('#2d6a4f',this)"></div>
-          <button class="ctool" onclick="clearBlocCanvas()" style="margin-left:4px">🗑️</button>
-        </div>
-        <canvas id="bloc-canvas" style="width:100%;display:block;cursor:crosshair;touch-action:none;background:#fff"></canvas>
+      <div class="form-section-title">Notes</div>
+      <textarea class="form-input" id="p-notes" style="min-height:160px" oninput="autosave()" placeholder="Notes libres, demandes du client, observations…"></textarea>
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <button class="btn-add" style="margin:0;flex:1;min-width:200px" onclick="openCanvas('Nouvelle note manuscrite')">+ Note manuscrite</button>
+        <span style="font-size:11px;color:var(--c-muted);font-family:-apple-system,sans-serif;font-style:italic;">(stylet — pour un croquis ou un schéma rapide)</span>
       </div>
-      <button class="btn btn-secondary" style="margin-top:8px;width:100%" onclick="addBlocPage()">+ Page (étendre la zone)</button>
+      <div id="ms-notes-list" style="margin-top:12px"></div>
+    </div>
+    <!-- Bloc-notes canvas étendu masqué pour rétro-compat des handlers (setBlocTool, addBlocPage…) -->
+    <div id="bloc-notes-zone" style="display:none">
+      <canvas id="bloc-canvas" width="1" height="1"></canvas>
     </div>
     <button class="btn btn-primary" onclick="savePieceFinal()">Enregistrer la pièce ✓</button>
   </div>
@@ -3052,7 +3046,10 @@ function createClient(){
   ['f-prenom','f-nom','f-adresse','f-tel','f-email','f-tel2','f-tel2-qui','f-etage','f-code','f-obs'].forEach(function(id){sv(id,'');});
   document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
   document.querySelectorAll('#f-ascenseur-grp .oui-non-btn').forEach(function(b){b.classList.remove('on-oui','on-non');});
-  renderClientHero(); renderPiecesList(); showScreen('screen-client'); showToast('Fiche créée ✓');
+  renderClientHero(); renderPiecesList();
+  /* Simplification (Session 5) : après création client, propose direct l'ajout de pièce */
+  showScreen('screen-add-piece');
+  showToast('Fiche créée ✓ — ajoute maintenant une pièce');
 }
 var currentClientId=null;
 function openClient(id){currentClientId=id;renderClientHero();renderPiecesList();showScreen('screen-client');}
@@ -3366,6 +3363,7 @@ function loadPieceUI(){
   sv('p-plomberie',t.plomberie||'');
   renderPhotos(p.photos||[]);
   sv('p-notes',p.notes||'');
+  sv('p-croquis-notes',p.croquisNotes||'');
   renderMsNotes(p.msNotes||[]);
   /* Reset des contextes canvas — seront ré-init quand on revient sur leur step */
   mainCtx=null; plombCtx=null; blocCtx=null;
@@ -3558,6 +3556,7 @@ function persistPiece(){
     biblio:biblio,corniche:corniche,solPaint:solPaint,
     cats:cats,plomberie:v('p-plomberie'),macDup:macDup};
   p.notes=v('p-notes');
+  p.croquisNotes=v('p-croquis-notes');
   dbSave(db);
 }
 
@@ -4869,23 +4868,47 @@ renderHome();
    Réactivation : window.FEATURES_ENABLED.X = true; location.reload();
    ════════════════════════════════════════════════════════════════════ */
 window.FEATURES_ENABLED = Object.assign({
-  suggestions: false,    /* Phase 10 — désactivé 2026-04-28 (Tâche 2) */
-  carte:       false,    /* Phase 19 — désactivé 2026-04-28 (Tâche 3) */
-  comparateur: false,    /* Phase 16 — désactivé 2026-04-28 (Tâche 3) */
-  planning:    false,    /* Phase 14 — désactivé 2026-04-28 (Tâche 3) */
-  recap:       false     /* Récapitulatif (HTML statique + FAB Phase 1) — désactivé 2026-04-28 (Tâche 3) */
+  suggestions:   false,  /* Phase 10 — désactivé 2026-04-28 (Tâche 2) */
+  carte:         false,  /* Phase 19 — désactivé 2026-04-28 (Tâche 3) */
+  comparateur:   false,  /* Phase 16 — désactivé 2026-04-28 (Tâche 3) */
+  planning:      false,  /* Phase 14 — désactivé 2026-04-28 (Tâche 3) */
+  recap:         false,  /* Récapitulatif (HTML statique + FAB Phase 1) — désactivé 2026-04-28 (Tâche 3) */
+  /* ─── Simplification fonctionnelle (Session 5, 2026-04-30) ──────
+     Recentrage UI sur prise de notes chantier. Code conservé. */
+  syntheseNav:   false,  /* Sidebar : Synthèse devis */
+  statsNav:      false,  /* Sidebar : Statistiques */
+  settingsNav:   false,  /* Sidebar : Paramètres devis */
+  documentsNav:  false,  /* Sidebar : Documents émis */
+  bathroomNav:   false,  /* Sidebar : Devis salle de bain */
+  analysisNav:   false,  /* Sidebar : Analyse rendez-vous */
+  tutorialBtn:   false,  /* Sidebar footer : Tutoriel guidé (?) */
+  helpFooter:    false,  /* Sidebar footer : carte "Besoin d'aide ?" statique */
+  dashNextAction:false,  /* Dashboard : carte "Prochaine action sur le chantier" */
+  pieceQuickActions: false, /* Fiche pièce : barre quick-actions (Peinture standard / Reno complète / Template / Sauver) */
+  pieceChecklist:false   /* Fiche pièce : checklist 0/5 sticky */
 }, window.FEATURES_ENABLED || {});
 
-/* Cache les entrées UI statiques du Récapitulatif si flag false (le code reste intact) */
+/* Cache les entrées UI statiques selon les flags (code intact pour réactivation) */
 (function(){
-  function hideRecapEntries(){
-    if(window.FEATURES_ENABLED.recap === true) return;
-    var navItem = document.querySelector('.sidebar-nav .nav-item[data-section="recap"]');
-    if(navItem) navItem.style.display = 'none';
-    document.querySelectorAll('button[onclick="showRecap()"]').forEach(function(b){ b.style.display = 'none'; });
+  function hideStaticEntries(){
+    var FF = window.FEATURES_ENABLED;
+    /* Récapitulatif (sidebar + boutons) */
+    if(FF.recap !== true){
+      var navItem = document.querySelector('.sidebar-nav .nav-item[data-section="recap"]');
+      if(navItem) navItem.style.display = 'none';
+      document.querySelectorAll('button[onclick="showRecap()"]').forEach(function(b){ b.style.display = 'none'; });
+    }
+    /* Carte "Besoin d'aide ?" du footer sidebar (statique HTML) */
+    if(FF.helpFooter !== true){
+      document.querySelectorAll('.sidebar-footer .sidebar-help').forEach(function(el){ el.style.display = 'none'; });
+    }
+    /* Carte "Prochaine action sur le chantier" du dashboard (statique HTML) */
+    if(FF.dashNextAction !== true){
+      document.querySelectorAll('.dash-banner').forEach(function(el){ el.style.display = 'none'; });
+    }
   }
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideRecapEntries);
-  else hideRecapEntries();
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', hideStaticEntries);
+  else hideStaticEntries();
 })();
 
 /* ════════════════════════════════════════════════════════════════════
@@ -5528,6 +5551,12 @@ window.FEATURES_ENABLED = Object.assign({
     return chip(c.croquis,'Croquis')+chip(c.mesures,'Mesures')+chip(c.travaux,'Travaux')+chip(c.photos,'Photos')+chip(c.notes,'Notes');
   }
   function refreshChecklist(){
+    /* Simplification (Session 5) : checklist 0/5 désactivée par défaut */
+    if((window.FEATURES_ENABLED || {}).pieceChecklist !== true){
+      var existing = document.getElementById('aj-checklist-bar');
+      if(existing) existing.style.display = 'none';
+      return;
+    }
     var bar = document.getElementById('aj-checklist-bar');
     var screen = document.getElementById('screen-piece');
     if(!screen || !screen.classList.contains('active')) return;
@@ -6110,6 +6139,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 8) AJOUT D'UN NAV-ITEM "SYNTHÈSE DEVIS" DANS LA SIDEBAR ─── */
   function injectSyntheseNav(){
+    /* Simplification (Session 5) : Synthèse devis cachée par défaut */
+    if((window.FEATURES_ENABLED || {}).syntheseNav !== true) return;
     var nav = document.querySelector('.sidebar-nav');
     if(!nav || document.getElementById('aj-nav-synthese')) return;
     var item = document.createElement('div');
@@ -6935,6 +6966,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 4) BARRE D'ACTIONS RAPIDE EN HAUT DE LA PIÈCE ─── */
   function injectQuickActionsBar(){
+    /* Simplification (Session 5) : barre quick-actions désactivée par défaut */
+    if((window.FEATURES_ENABLED || {}).pieceQuickActions !== true) return;
     var screen = document.getElementById('screen-piece');
     if(!screen || !screen.classList.contains('active')) return;
     if(screen.querySelector('[data-aj-qab]')) return;
@@ -7017,6 +7050,8 @@ window.FEATURES_ENABLED = Object.assign({
     var fields = document.querySelectorAll('textarea, input[type="text"]');
     fields.forEach(function(f){
       if(f._ajMicWired) return;
+      /* Simplification (Session 5) : permet d'exclure un champ via data-aj-no-mic */
+      if(f.getAttribute('data-aj-no-mic') === '1') return;
       // On ne fait que les champs significatifs (notes, observations, commentaires)
       var id = (f.id || '').toLowerCase();
       var ph = (f.placeholder || '').toLowerCase();
@@ -9215,6 +9250,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 2) NAV-ITEM DANS LA SIDEBAR ─── */
   function injectStatsNav(){
+    /* Simplification (Session 5) : Statistiques cachées par défaut */
+    if((window.FEATURES_ENABLED || {}).statsNav !== true) return;
     var nav = document.querySelector('.sidebar-nav');
     if(!nav || document.getElementById('aj-nav-stats')) return;
     var item = document.createElement('div');
@@ -9817,6 +9854,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 4) BOUTON "PARAMÈTRES DEVIS" DANS LA SIDEBAR ─── */
   function injectSettingsNav(){
+    /* Simplification (Session 5) : Paramètres devis cachés par défaut */
+    if((window.FEATURES_ENABLED || {}).settingsNav !== true) return;
     var nav = document.querySelector('.sidebar-nav');
     if(!nav || document.getElementById('aj-nav-settings')) return;
     var item = document.createElement('div');
@@ -10834,6 +10873,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 3) BOUTON D'AIDE DANS LA SIDEBAR FOOTER ─── */
   function injectHelpButton(){
+    /* Simplification (Session 5) : bouton Tutoriel guidé caché par défaut */
+    if((window.FEATURES_ENABLED || {}).tutorialBtn !== true) return;
     if(document.getElementById('aj-help-btn')) return;
     // Cherche le help existant ou ajoute après le toggle dark
     var darkBtn = document.getElementById('aj-dark-btn');
@@ -11895,6 +11936,8 @@ window.FEATURES_ENABLED = Object.assign({
 
   /* ─── 6) NAV + BOUTONS ─── */
   function injectDocsNav(){
+    /* Simplification (Session 5) : Documents émis cachés par défaut */
+    if((window.FEATURES_ENABLED || {}).documentsNav !== true) return;
     var nav = document.querySelector('.sidebar-nav');
     if(!nav || document.getElementById('aj-nav-docs')) return;
     var item = document.createElement('div');

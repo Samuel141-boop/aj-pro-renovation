@@ -37,11 +37,15 @@ Outil métier de relevé chantier sur tablette Samsung avec stylet, qui transfor
 | `vercel.json` | 41 | Headers no-cache pour HTML / SW / JS modules |
 | `_drafts/catalog-v0.json` | 2 731 | Brouillon S1 — extraction normalisée des 148 lignes du template SDB vers schéma unifié. **Non chargé par l'app**, prêt pour S1. |
 
-## Sidebar actuelle (après nettoyage Tâche 3)
+## Sidebar actuelle (après simplification Session 5, 2026-04-30)
 
-Visibles : Tableau de bord · Clients · Pièces · Mesures · Travaux · Photos · Notes manuscrites · **Documents émis** · **Devis salle de bain** · **Analyse rendez-vous** (← nouveau Commit 1) · Statistiques · Paramètres devis · Base de données · Mode sombre · Tutoriel guidé.
+Visibles : **Tableau de bord · Clients · Pièces · Mesures · Travaux · Photos · Notes** (recentrée sur la prise de notes chantier).
 
-**Désactivés via `window.FEATURES_ENABLED`** : Carte · Comparateur · Planning · Récapitulatif · Suggestions par type de pièce. Code conservé, réactivable par flag.
+**Désactivés via `window.FEATURES_ENABLED`** (code conservé, réactivable par flag) :
+- Anciens : Carte · Comparateur · Planning · Récapitulatif · Suggestions par type de pièce
+- Session 5 : Documents émis (`documentsNav`) · Devis salle de bain (`bathroomNav`) · Analyse rendez-vous (`analysisNav`) · Statistiques (`statsNav`) · Synthèse devis (`syntheseNav`) · Paramètres devis (`settingsNav`) · Tutoriel guidé (`tutorialBtn`) · Carte « Besoin d'aide ? » footer (`helpFooter`) · Carte « Prochaine action » dashboard (`dashNextAction`) · Barre quick-actions fiche pièce (`pieceQuickActions`) · Checklist 0/5 fiche pièce (`pieceChecklist`)
+
+Pour réactiver tout : `Object.assign(window.FEATURES_ENABLED, {syntheseNav:true, statsNav:true, settingsNav:true, documentsNav:true, bathroomNav:true, analysisNav:true, tutorialBtn:true, helpFooter:true, dashNextAction:true, pieceQuickActions:true, pieceChecklist:true}); location.reload();`
 
 ## Workflow utilisateur cible
 
@@ -67,6 +71,19 @@ Mot de passe d'accès : `Jérome0307`.
 - **Production** : https://aj-pro-renovation.vercel.app
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
+
+## État au 2026-04-30 (Session 5 — simplification fonctionnelle)
+
+Recentrage UI sur la prise de notes chantier, sans refonte design. Code des modules avancés (devis, statistiques, etc.) conservé intact.
+
+- ✅ **Sidebar** allégée à 7 items (Tableau de bord, Clients, Pièces, Mesures, Travaux, Photos, **Notes** — renommé). 9 modules masqués via `FEATURES_ENABLED`.
+- ✅ **Dashboard** — carte « Prochaine action sur le chantier » masquée (`.dash-banner` cachée via flag `dashNextAction`).
+- ✅ **Sidebar footer** — carte « Besoin d'aide ? » et bouton « Tutoriel guidé » masqués (flags `helpFooter`, `tutorialBtn`).
+- ✅ **Création client** — micro retiré du textarea Observations générales (`data-aj-no-mic="1"`). `createClient()` redirige maintenant vers `screen-add-piece` au lieu de `screen-client` → enchaînement client → pièce direct.
+- ✅ **Fiche pièce** — barre du haut (Peinture standard / Rénovation complète / Template / Sauver template) ET checklist 0/5 sticky **masquées** via flags `pieceQuickActions` et `pieceChecklist`. Les onglets métier `step-nav` (Infos / Croquis / Mesures / Travaux / Photos / Notes) **conservés intacts**.
+- ✅ **Onglet Notes** — fusion Notes texte + Notes manuscrites en une seule section « Notes ». Ancien bloc « Bloc-notes étendu » retiré (rôle absorbé par l'onglet Croquis). Canvas `#bloc-canvas` conservé masqué pour rétro-compat des handlers JS.
+- ✅ **Onglet Croquis** — devient un **bloc-notes visuel polyvalent** : titre changé en « Croquis & bloc-notes visuel », hauteur canvas augmentée 280→340px, ajout d'un textarea **Annotations libres** persisté via `p.croquisNotes` pour légendes/cotes/remarques générales.
+- 🔄 SW bumpé `v12-aibridge` → `v13-simplification`. Vide le cache Application → SW au reload.
 
 ## État au 2026-04-28
 

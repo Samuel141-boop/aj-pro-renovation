@@ -1212,6 +1212,8 @@
      NAV-ITEM SIDEBAR
      ───────────────────────────────────────────────────────────────── */
   function injectAnalysisNav(){
+    /* Simplification (Session 5) : Analyse rendez-vous cachée par défaut */
+    if((window.FEATURES_ENABLED || {}).analysisNav !== true) return;
     var nav = document.querySelector('.sidebar-nav');
     if(!nav || document.getElementById('aj-nav-analysis')) return;
     var item = document.createElement('div');
