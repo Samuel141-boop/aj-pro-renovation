@@ -73,6 +73,42 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 8 — Croquis devient un vrai carnet stylet)
+
+Refonte ciblée de l'onglet Croquis (step-2) pour qu'il soit utilisable comme une feuille papier en RDV. Aucun autre module touché.
+
+**Changements step-2 HTML :**
+- Titre : « Croquis & bloc-notes visuel » → **« Croquis & notes au stylet »**
+- Sous-texte raccourci : « Dessinez la pièce, notez les mesures, les travaux à prévoir et les détails importants. »
+- **Toolbar simplifiée** (palette 5 couleurs retirée) :
+  - ✏️ Stylo (mode par défaut, actif)
+  - 🧽 Gomme
+  - ↶ Annuler (id `aj-croquis-undo`)
+  - ↷ Rétablir (id `aj-croquis-redo`)
+  - 🗑 Effacer (rouge discret, demande confirmation)
+- **Bouton « Analyser comme croquis géométrique » retiré** (cohérent avec « ne pas ajouter de reconnaissance automatique »). La fonction `analyzeCroquis()` reste dans le code pour préservation, juste plus appelée depuis l'UI.
+- Bouton « ⛶ Ouvrir en grand pour écrire au stylet » : conservé en CTA principal plein largeur.
+
+**Changements JS :**
+- Nouvelles fonctions `mainCanvasUndo()` / `mainCanvasRedo()` qui délèguent à `canvas._ajUndo()` / `canvas._ajRedo()` (moteur Phase 1) + déclenchent `saveCroquis()` immédiat pour persister.
+- `setTool` patché : ne marque plus comme « actif » que les boutons Stylo/Gomme (les boutons Annuler/Rétablir/Effacer restent neutres en visuel).
+- `setColor` rendu défensif (`if(dot)`) puisque plus appelé depuis l'UI mais variable globale `curColor` toujours utilisée par le moteur de dessin (couleur unique noir bleuté `#1a1a2e`).
+- `clearCanvas` :
+  - Nouveau message confirm : « Effacer tout le croquis ? Cette action supprimera le dessin actuel. »
+  - Re-dessine fond blanc explicite après clear (évite exports transparents)
+  - Reset des stacks `undoStack`/`redoStack` du canvas pour repartir propre
+
+**Bénéfices Phase 1 réutilisés sans rien réécrire :**
+- Pointer events fluides + pression S Pen
+- Palm rejection 200ms + détection paume (e.width × e.height > 1500)
+- Snapshot automatique avant chaque trait (max 18 entrées dans la stack)
+- HiDPI (canvas résolution × DPR) + tabletAwareHeight(280, 600) sur ≥768px
+- Restauration du dessin depuis `p.croquis` (dataURL) + `p.croquisStrokes` (vectoriel)
+
+**Sauvegarde** : autosave debounced à chaque pointerup via `saveCroquis()` (Phase 1). Persistance via `p.croquis` (PNG dataURL) et `p.croquisStrokes` (vectoriel) — schéma localStorage **inchangé**, compatible avec données existantes.
+
+**SW v15-travaux-restored → v16-croquis-stylus** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 7 — restauration Travaux dans la fiche pièce + ajout Résumé)
 
 Suite logique : la sidebar reste à 6 items (Travaux toujours masqué via `travauxNav:false`) **mais** dans la fiche pièce on restaure l'onglet **Travaux** + on ajoute un **Résumé** final.

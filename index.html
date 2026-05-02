@@ -1338,32 +1338,25 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
   <!-- STEP 2 : CROQUIS -->
   <div id="step-2" style="display:none">
     <div class="form-section">
-      <div class="form-section-title">Croquis & bloc-notes visuel</div>
+      <div class="form-section-title">Croquis & notes au stylet</div>
       <div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:10px;line-height:1.5">
-        Trace ton croquis, écris au stylet, prends tes notes manuscrites. Pour plus de confort sur tablette, ouvre le mode <b>plein écran</b> ci-dessous.
+        Dessinez la pièce, notez les mesures, les travaux à prévoir et les détails importants.
       </div>
       <div class="canvas-zone" id="croquis-zone">
         <div class="canvas-toolbar">
-          <button class="ctool active" onclick="setTool('pen',this)">✏️</button>
-          <button class="ctool" onclick="setTool('erase',this)">⌫</button>
+          <button class="ctool active" onclick="setTool('pen',this)" title="Stylo — écrire / dessiner"><span style="margin-right:4px">✏️</span>Stylo</button>
+          <button class="ctool" onclick="setTool('erase',this)" title="Gomme — effacer localement"><span style="margin-right:4px">🧽</span>Gomme</button>
           <div style="flex:1"></div>
-          <div class="cdot active" style="background:#1a1a2e" onclick="setColor('#1a1a2e',this)"></div>
-          <div class="cdot" style="background:#e8621a" onclick="setColor('#e8621a',this)"></div>
-          <div class="cdot" style="background:#2d6a4f" onclick="setColor('#2d6a4f',this)"></div>
-          <div class="cdot" style="background:#1565c0" onclick="setColor('#1565c0',this)"></div>
-          <div class="cdot" style="background:#c62828" onclick="setColor('#c62828',this)"></div>
-          <button class="ctool" onclick="clearCanvas()" style="margin-left:4px">🗑️</button>
+          <button class="ctool" id="aj-croquis-undo" onclick="mainCanvasUndo()" title="Annuler la dernière action" style="font-size:18px;line-height:1">↶</button>
+          <button class="ctool" id="aj-croquis-redo" onclick="mainCanvasRedo()" title="Rétablir l'action annulée" style="font-size:18px;line-height:1">↷</button>
+          <button class="ctool" onclick="clearCanvas()" title="Effacer tout le croquis" style="margin-left:6px;color:#c62828"><span style="margin-right:4px">🗑</span>Effacer</button>
         </div>
         <canvas id="main-canvas" style="width:100%;display:block;cursor:crosshair;touch-action:none;height:600px;background:#fff"></canvas>
       </div>
-      <!-- Bouton Plein écran mis en avant pour la prise de note tablette/stylet -->
+      <!-- Bouton Plein écran : CTA principal pour la prise de note stylet Samsung -->
       <button class="btn btn-primary" style="width:100%;margin-top:12px;padding:16px;font-size:15px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px" onclick="openCanvasFull()">
         <span style="font-size:20px;line-height:1">⛶</span>
         <span>Ouvrir en grand pour écrire au stylet</span>
-      </button>
-      <button class="btn btn-secondary" style="width:100%;margin-top:8px;padding:11px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:8px" onclick="analyzeCroquis()">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0"><path d="M5 3v4M3 5h4M6 17v4M4 19h4M13 3l1.5 4.5L19 9l-4.5 1.5L13 15l-1.5-4.5L7 9l4.5-1.5L13 3zM19 16l.8 2.4L22 19l-2.2.6L19 22l-.8-2.4L16 19l2.2-.6z"/></svg>
-        <span>Analyser comme croquis géométrique de pièce</span>
       </button>
     </div>
     <!-- Bloc d'annotations libres : caché via flag (Session 6). Le textarea reste pour préserver les données existantes. -->
@@ -4238,17 +4231,49 @@ function saveCroquis(){
   var db=dbLoad();var p=db.pieces[currentPieceId];if(!p)return;
   p.croquis=canvas.toDataURL('image/png');dbSave(db);
 }
-function setTool(t,btn){curTool=t;document.querySelectorAll('#step-2 .ctool').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');}
-function setColor(c,dot){curColor=c;document.querySelectorAll('#step-2 .cdot').forEach(function(d){d.classList.remove('active');});dot.classList.add('active');}
+function setTool(t,btn){
+  curTool=t;
+  /* Marque le bouton actif uniquement parmi les outils Stylo/Gomme (pas Annuler/Rétablir/Effacer) */
+  document.querySelectorAll('#step-2 .ctool').forEach(function(b){
+    var oc = b.getAttribute('onclick') || '';
+    if(oc.indexOf("setTool(") >= 0) b.classList.remove('active');
+  });
+  if(btn) btn.classList.add('active');
+}
+function setColor(c,dot){curColor=c;document.querySelectorAll('#step-2 .cdot').forEach(function(d){d.classList.remove('active');});if(dot)dot.classList.add('active');}
+/* Session 8 : Annuler / Rétablir branchés sur le moteur Phase 1 (canvas._ajUndo/_ajRedo) */
+function mainCanvasUndo(){
+  var c = document.getElementById('main-canvas');
+  if(c && typeof c._ajUndo === 'function'){
+    c._ajUndo();
+    /* Sauvegarde immédiate après l'annulation pour persister l'état */
+    if(typeof saveCroquis === 'function') saveCroquis();
+  }
+}
+function mainCanvasRedo(){
+  var c = document.getElementById('main-canvas');
+  if(c && typeof c._ajRedo === 'function'){
+    c._ajRedo();
+    if(typeof saveCroquis === 'function') saveCroquis();
+  }
+}
 function clearCanvas(){
   if(!mainCtx)return;
-  customConfirm('Le croquis sera effacé. Cette action est irréversible.',
+  customConfirm('Effacer tout le croquis ? Cette action supprimera le dessin actuel.',
     function(){
       mainCtx.clearRect(0,0,mainCtx.canvas.width,mainCtx.canvas.height);
+      /* Re-dessine un fond blanc explicite (évite les exports avec transparence) */
+      mainCtx.save();
+      mainCtx.fillStyle = '#ffffff';
+      mainCtx.fillRect(0,0,mainCtx.canvas.width,mainCtx.canvas.height);
+      mainCtx.restore();
       croquisStrokes=[];
       var db=dbLoad();var p=db.pieces[currentPieceId];
       if(p){p.croquis=null;p.croquisStrokes=[];dbSave(db);}
       saveCroquis();
+      /* Reset des stacks undo/redo pour repartir propre */
+      var c = document.getElementById('main-canvas');
+      if(c && c._aj){ c._aj.undoStack = []; c._aj.redoStack = []; }
       showToast('Croquis effacé');
     },{title:'Effacer le croquis ?',danger:true,okLabel:'Effacer'});
 }
