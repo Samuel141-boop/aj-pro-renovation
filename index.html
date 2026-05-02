@@ -2102,11 +2102,11 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
   </div>
 </div><!-- end screen-piece -->
 
-<!-- RECAP -->
+<!-- RECAP — Fiche chantier interne complète (Session 9, 2026-05-02) -->
 <div class="screen" id="screen-recap">
   <div id="recap-header-block" style="background:var(--c-primary);border-radius:16px;padding:20px;margin-bottom:20px;color:#fff"></div>
+  <div id="recap-completion-bar"></div>
   <div id="recap-content"></div>
-  <button class="btn btn-primary" onclick="showToast('Fiche finalisée ✓')">Finaliser la fiche →</button>
 </div>
 
 <!-- BASE DE DONNÉES -->
@@ -4138,65 +4138,445 @@ function renderPieceResume(){
 }
 function savePieceFinal(){persistPiece();renderPiecesList();goBack();showToast('Pièce enregistrée ✓');}
 
-/* ═══════════════ RÉCAP ═══════════════ */
+/* ════════════════════════════════════════════════════════════════════
+   RÉCAPITULATIF CHANTIER (Session 9, 2026-05-02)
+   Fiche chantier interne complète — base future pour génération devis IA.
+   PAS un export PDF, PAS un document client. Outil de revue/préparation.
+
+   Structures de données (créées à la volée si absentes, rétro-compat) :
+     client.contexte = { typeChantier, complexite, contraintesAcces,
+                         contraintesTechniques, urgence, attentesClient }
+     client.notesTerrain = string global (notes au-dessus du niveau pièce)
+     client.technicalPoints[] = [{id, roomId?, text, importance, category, createdAt}]
+     client.pointsToCheck[]   = [{id, roomId?, text, status:'open'|'resolved', createdAt}]
+     client.workOptions[]     = [{id, title, description, roomIds[], badge, notes, createdAt}]
+     piece.etatActuel    = string libre
+     piece.objectifTravaux = string libre
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Helpers de structures de données (rétro-compat) */
+function recapEnsureClient(c){
+  if(!c) return null;
+  if(!c.contexte) c.contexte = { typeChantier:'', complexite:'', contraintesAcces:'', contraintesTechniques:'', urgence:'', attentesClient:'' };
+  if(typeof c.notesTerrain !== 'string') c.notesTerrain = '';
+  if(!Array.isArray(c.technicalPoints)) c.technicalPoints = [];
+  if(!Array.isArray(c.pointsToCheck))   c.pointsToCheck   = [];
+  if(!Array.isArray(c.workOptions))     c.workOptions     = [];
+  return c;
+}
+function recapEnsurePiece(p){
+  if(!p) return null;
+  if(typeof p.etatActuel !== 'string')      p.etatActuel = '';
+  if(typeof p.objectifTravaux !== 'string') p.objectifTravaux = '';
+  return p;
+}
+function recapNewId(prefix){ return (prefix||'rcp_') + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+/* Sauvegarde directe d'un client après modification */
+function recapSaveClient(c){ var db=dbLoad(); db.clients[c.id]=c; dbSave(db); }
+function recapSavePiece(p){ var db=dbLoad(); db.pieces[p.id]=p; dbSave(db); }
+
+/* ─── HANDLERS d'édition (appelés depuis le HTML) ─── */
+function recapEditClientField(field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.contexte[field] = value;
+  recapSaveClient(c);
+}
+function recapEditNotesTerrain(value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.notesTerrain = value;
+  recapSaveClient(c);
+}
+function recapEditPieceField(pieceId, field, value){
+  var db=dbLoad(); var p=db.pieces[pieceId]; if(!p) return;
+  recapEnsurePiece(p);
+  p[field] = value;
+  recapSavePiece(p);
+}
+function recapAddTechnicalPoint(){
+  var text = prompt('Décrire le point technique important :\n\nExemples :\n- étanchéité à vérifier\n- évacuation à reprendre\n- plomberie ancienne\n- accès technique limité');
+  if(!text || !text.trim()) return;
+  var importance = prompt('Niveau d\'importance ? (haute / moyenne / faible)', 'haute');
+  importance = (importance||'haute').toLowerCase();
+  if(['haute','moyenne','faible'].indexOf(importance) < 0) importance = 'haute';
+  var roomIdInput = prompt('Lié à une pièce en particulier ? Entrer le nom de la pièce, ou laisser vide pour un point global :');
+  var roomId = null;
+  if(roomIdInput && roomIdInput.trim()){
+    var pieces = dbGetClientPieces(currentClientId);
+    var found = pieces.find(function(p){ return p.nom && p.nom.toLowerCase().indexOf(roomIdInput.trim().toLowerCase()) >= 0; });
+    if(found) roomId = found.id;
+  }
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.technicalPoints.push({
+    id: recapNewId('tp_'),
+    roomId: roomId,
+    text: text.trim(),
+    importance: importance,
+    category: '',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapRemoveTechnicalPoint(id){
+  customConfirm('Supprimer ce point technique ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.technicalPoints = c.technicalPoints.filter(function(t){ return t.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer le point ?', danger:true, okLabel:'Supprimer'});
+}
+function recapAddPointToCheck(){
+  var text = prompt('Décrire le point à vérifier avant devis :\n\nExemples :\n- vérifier état du siphon\n- confirmer dimensions finales\n- vérifier pente d\'évacuation\n- confirmer modèle de paroi');
+  if(!text || !text.trim()) return;
+  var roomIdInput = prompt('Lié à une pièce en particulier ? Entrer le nom de la pièce, ou laisser vide :');
+  var roomId = null;
+  if(roomIdInput && roomIdInput.trim()){
+    var pieces = dbGetClientPieces(currentClientId);
+    var found = pieces.find(function(p){ return p.nom && p.nom.toLowerCase().indexOf(roomIdInput.trim().toLowerCase()) >= 0; });
+    if(found) roomId = found.id;
+  }
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.pointsToCheck.push({
+    id: recapNewId('ptc_'),
+    roomId: roomId,
+    text: text.trim(),
+    status: 'open',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapTogglePointToCheck(id){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var pt = c.pointsToCheck.find(function(p){ return p.id === id; });
+  if(pt){ pt.status = pt.status === 'resolved' ? 'open' : 'resolved'; pt.updatedAt = Date.now(); }
+  recapSaveClient(c);
+  showRecap();
+}
+function recapRemovePointToCheck(id){
+  customConfirm('Supprimer ce point à vérifier ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.pointsToCheck = c.pointsToCheck.filter(function(p){ return p.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer le point ?', danger:true, okLabel:'Supprimer'});
+}
+function recapAddWorkOption(){
+  var title = prompt('Titre de l\'option (ex: "Option 1 — Intervention simple") :');
+  if(!title || !title.trim()) return;
+  var description = prompt('Description / objectif (optionnel) :') || '';
+  var badge = prompt('Badge ? (économique / recommandée / complète / à valider)', 'à valider');
+  badge = (badge||'à valider').toLowerCase();
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.workOptions.push({
+    id: recapNewId('wo_'),
+    title: title.trim(),
+    description: description.trim(),
+    roomIds: [],
+    badge: badge,
+    notes: '',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapEditWorkOption(id, field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var opt = c.workOptions.find(function(o){ return o.id === id; });
+  if(opt){ opt[field] = value; opt.updatedAt = Date.now(); }
+  recapSaveClient(c);
+}
+function recapRemoveWorkOption(id){
+  customConfirm('Supprimer cette option ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.workOptions = c.workOptions.filter(function(o){ return o.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer l\'option ?', danger:true, okLabel:'Supprimer'});
+}
+
+/* ─── HELPERS de rendu ─── */
+function recapBadgeStyle(badge){
+  var b = (badge||'').toLowerCase();
+  if(b.indexOf('économ') >= 0 || b.indexOf('econom') >= 0) return 'background:rgba(45,106,79,0.15);color:#1d4d33';
+  if(b.indexOf('recommand') >= 0)                          return 'background:rgba(201,169,110,0.18);color:#7a5a30';
+  if(b.indexOf('complète') >= 0 || b.indexOf('complete') >= 0) return 'background:rgba(13,70,144,0.12);color:#0d4690';
+  if(b.indexOf('valider') >= 0)                            return 'background:rgba(232,98,26,0.15);color:#9a4514';
+  return 'background:rgba(122,136,150,0.15);color:#3a4a5c';
+}
+function recapImportanceStyle(imp){
+  if(imp === 'haute')   return { color:'#c62828', icon:'⚠', bg:'rgba(198,40,40,0.06)', border:'rgba(198,40,40,0.25)' };
+  if(imp === 'moyenne') return { color:'#9a4514', icon:'!',  bg:'rgba(232,98,26,0.06)', border:'rgba(232,98,26,0.25)' };
+  return { color:'#3a4a5c', icon:'·', bg:'rgba(122,136,150,0.06)', border:'rgba(122,136,150,0.25)' };
+}
+function recapPieceNameById(pieceId){
+  if(!pieceId) return null;
+  var p = dbLoad().pieces[pieceId]; return p ? p.nom : null;
+}
+function recapMissBadge(label){
+  return '<span style="background:rgba(232,98,26,0.10);color:#9a4514;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600;margin-left:6px">⚠ ' + label + '</span>';
+}
+
+/* ─── RENDU PRINCIPAL ─── */
 function showRecap(){
-  var c=dbLoad().clients[currentClientId];var pieces=dbGetClientPieces(currentClientId);if(!c)return;
-  document.getElementById('recap-header-block').innerHTML=
-    '<div style="font-size:20px;font-weight:700;font-family:-apple-system,sans-serif">Récapitulatif</div>'
-    +'<div style="font-size:13px;opacity:.65;font-family:-apple-system,sans-serif;margin-top:4px">'+esc(c.prenom)+' '+esc(c.nom)+(c.date?' — '+c.date:'')+'</div>';
-  if(!pieces.length){document.getElementById('recap-content').innerHTML='<div style="text-align:center;padding:30px;color:var(--c-muted);font-family:-apple-system,sans-serif">Aucune pièce</div>';showScreen('screen-recap');return;}
-  document.getElementById('recap-content').innerHTML=pieces.map(function(p){
-    var m=p.mesures||{},t=p.travaux||{},rows=[];
-    if(m.long&&m.larg)rows.push(['Sol',(pf(m.long)*pf(m.larg)).toFixed(1)+' m²']);
-    if(m.long&&m.larg&&m.haut)rows.push(['Murs bruts',(2*(pf(m.long)+pf(m.larg))*pf(m.haut)).toFixed(1)+' m²']);
-    if(t.murs&&t.murs.length)t.murs.forEach(function(mur,i){
-      var tys=(mur.types&&mur.types.length?mur.types.join(' + '):(mur.type||''));
-      if(tys)rows.push(['Mur '+(i+1),tys+(mur.surface?' — '+mur.surface+' m²':'')]);
-    });
-    if(t.plafond){
-      var pt=(t.plafond.types&&t.plafond.types.length?t.plafond.types.join(' + '):(t.plafond.type||''));
-      if(pt)rows.push(['Plafond',pt+(t.plafond.surface?' — '+t.plafond.surface+' m²':'')]);
-    }
-    if(t.plinthe){
-      var plt=(t.plinthe.types&&t.plinthe.types.length?t.plinthe.types.join(' + '):(t.plinthe.type||''));
-      if(plt||t.plinthe.ml)rows.push(['Plinthe',(plt||'—')+(t.plinthe.ml?' — '+t.plinthe.ml+' ml':'')]);
-    }
-    if(t.portes&&t.portes.length)t.portes.forEach(function(po,i){
-      if(po.type)rows.push(['Porte '+(i+1),po.type+(po.couleur?' — '+po.couleur:'')+(po.qte?' — ×'+po.qte:'')]);
-    });
-    if(t.fenetre&&t.fenetre.types&&t.fenetre.types.length)rows.push(['Fenêtres',t.fenetre.types.join(', ')]);
-    if(t.placards&&t.placards.length)t.placards.forEach(function(pc,i){
-      var parts=[];
-      if(pc.types&&pc.types.length)parts.push(pc.types.join(' + '));
-      if(pc.taille)parts.push(pc.taille);
-      if(pc.matiere)parts.push(pc.matiere);
-      if(parts.length)rows.push(['Porte placard '+(i+1),parts.join(' — ')+(pc.qte?' ×'+pc.qte:'')]);
-    });
-    if(t.radiateur&&(t.radiateur.peint||t.radiateur.qte))rows.push(['Radiateur',(t.radiateur.peint||'')+(t.radiateur.couleur?' — '+t.radiateur.couleur:'')+(t.radiateur.qte?' — ×'+t.radiateur.qte:'')]);
-    if(t.intplacards&&t.intplacards.length)t.intplacards.forEach(function(ip,i){
-      var parts=[];if(ip.peint==='Oui')parts.push('Peint');if(ip.etageres==='Oui')parts.push('Étagères');
-      if(ip.types&&ip.types.length)parts.push(ip.types.join('+'));
-      if(parts.length)rows.push(['Int. placard '+(i+1),parts.join(' — ')+(ip.surface?' — '+ip.surface+' m²':'')]);
-    });
-    if(t.biblio&&t.biblio.types&&t.biblio.types.length)rows.push(['Bibliothèque',t.biblio.types.join(' + ')+(t.biblio.surface?' — '+t.biblio.surface+' m²':'')]);
-    if(t.corniche&&(t.corniche.peint||t.corniche.ml))rows.push(['Corniche',(t.corniche.peint||'')+(t.corniche.couleur?' — '+t.corniche.couleur:'')+(t.corniche.ml?' — '+t.corniche.ml+' ml':'')]);
-    if(t.solPaint&&t.solPaint.choice)rows.push(['Sol (peinture)',t.solPaint.choice+(t.solPaint.surface?' — '+t.solPaint.surface+' m²':'')]);
-    var catCount=Object.values(t.cats||{}).filter(function(v){return v===true;}).length;
-    if(catCount)rows.push(['Travaux',catCount+' intervention'+(catCount>1?'s':'')]);
-    /* Blocs maçonnerie dupliqués */
-    var macDup=t.macDup||{};
-    ['depose-cloison','crea-cloison'].forEach(function(kind){
-      (macDup[kind]||[]).forEach(function(bl,i){
-        if(bl.__sel)rows.push([(kind==='depose-cloison'?'Dépose cloison #':'Création cloison #')+(i+2),(bl.qte?bl.qte+' ml':'—')+(bl.p1?' ('+bl.p1+(bl.p2?'/'+bl.p2:'')+')':'')]);
-      });
-    });
-    if(p.photos&&p.photos.length)rows.push(['Photos',p.photos.length+' photo'+(p.photos.length>1?'s':'')]);
-    if(p.croquis)rows.push(['Croquis','✓']);
-    if(p.notes)rows.push(['Notes','✓']);
-    return '<div class="recap-section"><div class="recap-header"><span style="font-size:15px;font-weight:600;font-family:-apple-system,sans-serif">'+roomIcon(p.nom,p.icon)+' '+esc(p.nom)+'</span>'
-      +(m.long?'<span style="font-size:12px;opacity:.7">'+m.long+'×'+m.larg+' m</span>':'')+'</div>'
-      +'<div class="recap-body">'+rows.map(function(r){return '<div class="recap-row"><span class="recap-key">'+esc(r[0])+'</span><span class="recap-val">'+esc(r[1])+'</span></div>';}).join('')+'</div></div>';
-  }).join('');
+  var db = dbLoad();
+  var c  = db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var pieces = dbGetClientPieces(currentClientId);
+  pieces.forEach(recapEnsurePiece);
+
+  /* ─── Header ─── */
+  document.getElementById('recap-header-block').innerHTML =
+    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:13px;color:#c9a96e;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:4px">Fiche chantier interne</div>' +
+    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:24px;font-weight:600">' + esc(c.prenom||'') + ' ' + esc(c.nom||'') + '</div>' +
+    '<div style="font-size:13px;opacity:.75;margin-top:4px">' + (c.date ? new Date(c.date).toLocaleDateString('fr-FR') : '—') + ' · ' + (pieces.length) + ' pièce' + (pieces.length>1?'s':'') + ' · base future pour génération devis IA</div>';
+
+  /* ─── Indicateurs de complétude ─── */
+  var missing = [];
+  if(!c.tel)               missing.push('téléphone client');
+  if(!c.adresse)           missing.push('adresse chantier');
+  if(!c.contexte.typeChantier) missing.push('type de chantier');
+  pieces.forEach(function(p){
+    if(!(p.photos||[]).length) missing.push('photos pour ' + p.nom);
+    if(!(p.mesures && p.mesures.long)) missing.push('mesures pour ' + p.nom);
+    if(!p.croquis)             missing.push('croquis pour ' + p.nom);
+  });
+  document.getElementById('recap-completion-bar').innerHTML = missing.length === 0
+    ? '<div style="background:rgba(45,106,79,0.08);border:1px solid rgba(45,106,79,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif;font-size:12px;color:#1d4d33;font-weight:600">✓ Fiche complète — toutes les infos essentielles sont présentes</div>'
+    : '<div style="background:rgba(232,98,26,0.06);border:1px solid rgba(232,98,26,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif">' +
+        '<div style="font-size:12px;color:#9a4514;font-weight:700;margin-bottom:4px">⚠ ' + missing.length + ' élément' + (missing.length>1?'s':'') + ' manquant' + (missing.length>1?'s':'') + '</div>' +
+        '<div style="font-size:11px;color:#3a4a5c;line-height:1.55">' + missing.slice(0, 8).map(esc).join(' · ') + (missing.length > 8 ? ' · …' : '') + '</div>' +
+      '</div>';
+
+  /* ─── Section helpers ─── */
+  function section(title, icon, count, body){
+    var countBadge = (typeof count === 'number') ? '<span style="background:rgba(15,32,48,0.08);color:#3a4a5c;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;margin-left:6px">' + count + '</span>' : '';
+    return '<details open class="recap-card" style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:12px;margin-bottom:12px;font-family:Inter,system-ui,sans-serif">' +
+      '<summary style="cursor:pointer;padding:14px 16px;font-weight:700;color:#0f2030;font-size:14px;display:flex;align-items:center;gap:8px;list-style:none">' +
+        '<span style="font-size:16px">' + icon + '</span>' + esc(title) + countBadge +
+      '</summary>' +
+      '<div style="padding:0 16px 16px 16px;border-top:1px solid rgba(15,32,48,0.05)">' + body + '</div>' +
+    '</details>';
+  }
+  function fieldRow(label, value){
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid rgba(15,32,48,0.05);font-size:13px"><span style="color:#7a8896">' + label + '</span><span style="font-weight:600;color:#0f2030;text-align:right">' + value + '</span></div>';
+  }
+  function ta(value, onChangeJs, placeholder, minH){
+    return '<textarea oninput="' + onChangeJs + '(this.value)" placeholder="' + esc(placeholder||'') + '" style="width:100%;min-height:' + (minH||60) + 'px;padding:8px 10px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-family:Inter,system-ui,sans-serif;font-size:13px;background:#fff;color:#0f2030;resize:vertical;outline:none;margin-top:6px">' + esc(value||'') + '</textarea>';
+  }
+  function inp(value, onChangeJs, placeholder){
+    return '<input type="text" oninput="' + onChangeJs + '(this.value)" placeholder="' + esc(placeholder||'') + '" value="' + esc(value||'').replace(/"/g,'&quot;') + '" style="width:100%;padding:8px 10px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-family:Inter,system-ui,sans-serif;font-size:13px;background:#fff;color:#0f2030;outline:none;margin-top:6px" />';
+  }
+
+  /* ─── 1. Informations client + logistique ─── */
+  var sectionClient = section('Informations client & logistique', '👤', null,
+    fieldRow('Nom', esc((c.prenom||'') + ' ' + (c.nom||'')) || '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Téléphone', c.tel ? esc(c.tel) : '<span style="color:var(--c-muted);font-style:italic">—</span>' + recapMissBadge('manquant')) +
+    fieldRow('Email', c.email ? esc(c.email) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Adresse chantier', c.adresse ? esc(c.adresse) : '<span style="color:var(--c-muted);font-style:italic">—</span>' + recapMissBadge('manquant')) +
+    fieldRow('Date RDV', c.date ? esc(c.date) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Type de bien', c.type ? esc(c.type) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Étage', c.etage ? esc(c.etage) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Ascenseur', c.ascenseur ? esc(c.ascenseur) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Code accès', c.code ? esc(c.code) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Contact 2 (gardien/tiers)', c.tel2 ? esc(c.tel2) + (c.tel2qui?' (' + esc(c.tel2qui) + ')':'') : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    (c.obs ? '<div style="margin-top:10px;padding:10px 12px;background:#fbf8f2;border-radius:8px;font-size:12.5px;color:#3a4a5c;line-height:1.55"><b style="color:#0f2030">Observations générales :</b><br>' + esc(c.obs) + '</div>' : '')
+  );
+
+  /* ─── 2. Contexte chantier (éditable inline) ─── */
+  var sectionContexte = section('Contexte chantier', '🏗️', null,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Saisie libre — sera analysée par l\'IA pour préparer le devis.</div>' +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Type de chantier</label>' +
+    inp(c.contexte.typeChantier, "function(v){recapEditClientField('typeChantier',v)}", 'Ex: rénovation partielle salle de bain') +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Niveau de complexité</label>' +
+    inp(c.contexte.complexite, "function(v){recapEditClientField('complexite',v)}", 'Ex: simple / moyen / complexe / très complexe') +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Contraintes d\'accès</label>' +
+    ta(c.contexte.contraintesAcces, 'function(v){recapEditClientField(\'contraintesAcces\',v)}', 'Ex: 2e étage sans ascenseur, gardien jusqu\'à 19h, parking limité…') +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Contraintes techniques</label>' +
+    ta(c.contexte.contraintesTechniques, 'function(v){recapEditClientField(\'contraintesTechniques\',v)}', 'Ex: évacuation ancienne, plomberie cachée, support mural inconnu…') +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Urgence</label>' +
+    inp(c.contexte.urgence, "function(v){recapEditClientField('urgence',v)}", 'Ex: pas urgent / sous 1 mois / asap') +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Attentes du client</label>' +
+    ta(c.contexte.attentesClient, 'function(v){recapEditClientField(\'attentesClient\',v)}', 'Ex: solution économique, deux options, garder existant si possible…')
+  );
+
+  /* ─── 3. Récap par pièce ─── */
+  var sectionPieces = '';
+  if(pieces.length){
+    sectionPieces = pieces.map(function(p){
+      var m = p.mesures || {};
+      var t = p.travaux || {};
+      var nbPhotos = (p.photos||[]).length;
+      var nbMs    = (p.msNotes||[]).length;
+      var hasCro  = !!p.croquis;
+      var travauxCount = 0;
+      var travauxLabels = [];
+      var cats = t.cats || {};
+      Object.keys(cats).forEach(function(k){ if(cats[k]===true){ travauxCount++; travauxLabels.push(k); } });
+      var paint = t.paintElems || [];
+      paint.forEach(function(pe){ travauxLabels.push('peinture-'+pe); });
+      travauxCount += paint.length;
+
+      /* Mesures dérivées */
+      var surfaceSol = '', surfaceMurs = '';
+      if(m.long && m.larg){
+        var l=pf(m.long), w=pf(m.larg);
+        if(l>0 && w>0){ surfaceSol = (l*w).toFixed(2)+' m²'; }
+        if(m.haut){ var h=pf(m.haut); if(h>0) surfaceMurs = (2*(l+w)*h).toFixed(2)+' m²'; }
+      }
+
+      /* Photos miniatures */
+      var photosHtml = '';
+      if(nbPhotos){
+        photosHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+          (p.photos||[]).slice(0, 12).map(function(ph, i){
+            var src = ph.dataUrl || ph.src || '';
+            var meta = (ph.tags && ph.tags.length ? '🏷 '+ph.tags.join(', ')+' · ' : '') + (ph.comment || '');
+            return '<div style="position:relative;width:64px;height:64px;border-radius:6px;overflow:hidden;border:1px solid var(--c-border,#e3dccc)" title="' + esc(meta||('Photo '+(i+1))) + '">' +
+              (src ? '<img src="'+src+'" style="width:100%;height:100%;object-fit:cover" />' : '<div style="width:100%;height:100%;background:#fbf8f2;display:flex;align-items:center;justify-content:center;font-size:18px">📷</div>') +
+            '</div>';
+          }).join('') +
+          (nbPhotos > 12 ? '<div style="width:64px;height:64px;border-radius:6px;background:#fbf8f2;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#7a8896;border:1px solid var(--c-border,#e3dccc)">+'+(nbPhotos-12)+'</div>' : '') +
+        '</div>';
+      }
+
+      /* Croquis miniature */
+      var croquisHtml = hasCro
+        ? '<div style="margin-top:6px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;overflow:hidden;background:#fff;max-width:280px"><img src="'+esc(p.croquis)+'" style="width:100%;display:block" /></div>'
+        : '<div style="color:var(--c-muted);font-style:italic;font-size:12px;margin-top:6px">Aucun croquis renseigné</div>';
+
+      /* Points liés à la pièce */
+      var ptsTechPiece = (c.technicalPoints||[]).filter(function(pt){ return pt.roomId === p.id; });
+      var ptsCheckPiece = (c.pointsToCheck||[]).filter(function(pc){ return pc.roomId === p.id; });
+
+      var pieceBody =
+        '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;display:block">État actuel constaté</label>' +
+        ta(p.etatActuel, "function(v){recapEditPieceField('"+p.id+"','etatActuel',v)}", 'Ex: ancienne cabine de douche, sol mosaïque, joints vieillissants, évacuation au sol…', 70) +
+        '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Objectif des travaux</label>' +
+        ta(p.objectifTravaux, "function(v){recapEditPieceField('"+p.id+"','objectifTravaux',v)}", 'Ex: remplacer la zone douche, reprendre étanchéité, poser nouvelle paroi…', 70) +
+        '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:14px;padding:10px;background:#fbf8f2;border-radius:8px">' +
+          '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Longueur</div><div style="font-weight:700;color:#0f2030">' + (m.long ? esc(m.long)+' m' : '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
+          '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Largeur</div><div style="font-weight:700;color:#0f2030">' + (m.larg ? esc(m.larg)+' m' : '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
+          '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">HSP</div><div style="font-weight:700;color:#0f2030">' + (m.haut ? esc(m.haut)+' m' : '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
+          '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Surface sol</div><div style="font-weight:700;color:#0f2030">' + (surfaceSol || '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
+          '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Surface murs</div><div style="font-weight:700;color:#0f2030">' + (surfaceMurs || '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
+        '</div>' +
+        '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Travaux sélectionnés</div>' +
+          (travauxCount === 0
+            ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px">Aucun travail coché' + recapMissBadge('à compléter') + '</div>'
+            : '<div style="font-size:12.5px;color:#3a4a5c;line-height:1.6"><b>' + travauxCount + '</b> élément' + (travauxCount>1?'s':'') + ' · ' + travauxLabels.slice(0, 12).map(esc).join(', ') + (travauxLabels.length > 12 ? ', …' : '') + '</div>') +
+        '</div>' +
+        '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Photos (' + nbPhotos + ')' + (nbPhotos === 0 ? recapMissBadge('aucune') : '') + '</div>' + (photosHtml || '<div style="color:var(--c-muted);font-style:italic;font-size:12px">Aucune photo</div>') + '</div>' +
+        '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Croquis' + (hasCro ? '' : recapMissBadge('manquant')) + '</div>' + croquisHtml + '</div>' +
+        (p.notes ? '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Notes pièce</div><div style="background:#fbf8f2;padding:10px 12px;border-radius:8px;font-size:12.5px;color:#3a4a5c;line-height:1.55;white-space:pre-wrap">' + esc(p.notes) + '</div></div>' : '') +
+        (nbMs ? '<div style="margin-top:14px;font-size:11.5px;color:#7a8896">📝 ' + nbMs + ' note' + (nbMs>1?'s':'') + ' manuscrite' + (nbMs>1?'s':'') + '</div>' : '') +
+        (ptsTechPiece.length || ptsCheckPiece.length ?
+          '<div style="margin-top:14px;padding:10px 12px;background:rgba(232,98,26,0.05);border-left:3px solid #e8621a;border-radius:6px">' +
+            (ptsTechPiece.length ? '<div style="font-size:11px;color:#9a4514;font-weight:700;margin-bottom:4px">⚠ ' + ptsTechPiece.length + ' point' + (ptsTechPiece.length>1?'s':'') + ' technique' + (ptsTechPiece.length>1?'s':'') + ' lié' + (ptsTechPiece.length>1?'s':'') + '</div>' : '') +
+            (ptsCheckPiece.length ? '<div style="font-size:11px;color:#9a4514;font-weight:700">❓ ' + ptsCheckPiece.length + ' point' + (ptsCheckPiece.length>1?'s':'') + ' à vérifier lié' + (ptsCheckPiece.length>1?'s':'') + '</div>' : '') +
+          '</div>' : '');
+
+      return section(p.nom || 'Pièce sans nom', p.icon || '🏠', null, pieceBody);
+    }).join('');
+  } else {
+    sectionPieces = '<div style="background:#fbf8f2;border-radius:10px;padding:30px;text-align:center;color:var(--c-muted);font-family:Inter,system-ui,sans-serif;margin-bottom:12px">Aucune pièce relevée pour ce chantier.</div>';
+  }
+
+  /* ─── 4. Notes terrain globales ─── */
+  var sectionNotes = section('Notes terrain globales', '📝', null,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:6px;line-height:1.5">Notes au-dessus du niveau pièce — contexte général, demandes client, etc.</div>' +
+    ta(c.notesTerrain, 'function(v){recapEditNotesTerrain(v)}', 'Ex: client souhaite solution économique, prévoir protection sol parties communes, accès au 2e étage…', 100)
+  );
+
+  /* ─── 5. Points techniques importants ─── */
+  var ptsTech = (c.technicalPoints||[]);
+  var sectionTech = section('Points techniques importants', '⚠️', ptsTech.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Éléments critiques pour éviter les oublis. Saisie manuelle.</div>' +
+    (ptsTech.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucun point technique pour l\'instant.</div>'
+      : ptsTech.map(function(pt){
+          var s = recapImportanceStyle(pt.importance);
+          var roomLabel = pt.roomId ? recapPieceNameById(pt.roomId) : null;
+          return '<div style="background:' + s.bg + ';border:1px solid ' + s.border + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px">' +
+            '<span style="font-size:14px;color:' + s.color + ';flex-shrink:0">' + s.icon + '</span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:12.5px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(pt.text) + '</div>' +
+              '<div style="font-size:10px;color:' + s.color + ';margin-top:3px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Importance ' + esc(pt.importance) + (roomLabel ? ' · ' + esc(roomLabel) : ' · global') + '</div>' +
+            '</div>' +
+            '<button onclick="recapRemoveTechnicalPoint(\'' + pt.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddTechnicalPoint()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un point technique</button>'
+  );
+
+  /* ─── 6. Points à vérifier avant devis ─── */
+  var ptsCheck = (c.pointsToCheck||[]);
+  var nbOpen = ptsCheck.filter(function(p){ return p.status !== 'resolved'; }).length;
+  var sectionCheck = section('Points à vérifier avant devis', '❓', ptsCheck.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Incertitudes à résoudre. ' + (nbOpen ? '<b style="color:#9a4514">' + nbOpen + ' encore ouvert' + (nbOpen>1?'s':'') + '.</b>' : '<b style="color:#1d4d33">Tout résolu ✓</b>') + '</div>' +
+    (ptsCheck.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucun point à vérifier pour l\'instant.</div>'
+      : ptsCheck.map(function(pt){
+          var done = pt.status === 'resolved';
+          var roomLabel = pt.roomId ? recapPieceNameById(pt.roomId) : null;
+          return '<div style="background:' + (done ? 'rgba(45,106,79,0.05)' : '#fff') + ';border:1px solid ' + (done ? 'rgba(45,106,79,0.25)' : 'var(--c-border,#e3dccc)') + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px">' +
+            '<button onclick="recapTogglePointToCheck(\'' + pt.id + '\')" title="Marquer ' + (done?'à résoudre':'résolu') + '" style="background:transparent;border:1.5px solid ' + (done ? '#1d4d33' : '#7a8896') + ';color:' + (done ? '#1d4d33' : 'transparent') + ';width:20px;height:20px;border-radius:4px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;font-weight:700">' + (done ? '✓' : '') + '</button>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:12.5px;color:#0f2030;line-height:1.4;' + (done ? 'text-decoration:line-through;color:#7a8896' : '') + '">' + esc(pt.text) + '</div>' +
+              (roomLabel ? '<div style="font-size:10px;color:#7a8896;margin-top:3px">' + esc(roomLabel) + '</div>' : '') +
+            '</div>' +
+            '<button onclick="recapRemovePointToCheck(\'' + pt.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddPointToCheck()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un point à vérifier</button>'
+  );
+
+  /* ─── 7. Options de travaux ─── */
+  var opts = (c.workOptions||[]);
+  var sectionOpts = section('Options de travaux', '⚖️', opts.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Plusieurs scénarios à proposer (ex: simple vs complète). Chaque option sera analysée par l\'IA pour générer un devis.</div>' +
+    (opts.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune option pour l\'instant.</div>'
+      : opts.map(function(o){
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:12px 14px;margin-bottom:10px">' +
+            '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
+              '<span style="font-weight:700;color:#0f2030;font-size:14px">' + esc(o.title) + '</span>' +
+              '<span style="' + recapBadgeStyle(o.badge) + ';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase">' + esc(o.badge) + '</span>' +
+              '<button onclick="recapRemoveWorkOption(\'' + o.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#c62828;cursor:pointer;font-size:13px;padding:2px 4px;margin-left:auto">✕</button>' +
+            '</div>' +
+            (o.description ? '<div style="font-size:12.5px;color:#3a4a5c;line-height:1.55;margin-bottom:8px">' + esc(o.description) + '</div>' : '') +
+            '<label style="font-size:10px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Notes / contenu détaillé</label>' +
+            ta(o.notes, "function(v){recapEditWorkOption('"+o.id+"','notes',v)}", 'Ex:\n- dépose ancienne paroi\n- pose nouvelle paroi\n- reprise joints silicone\n- vérification évacuation', 80) +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddWorkOption()" style="margin-top:8px;padding:10px 14px;background:#1d4d33;border:none;color:#fff;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:700;width:100%">+ Ajouter une option de travaux</button>'
+  );
+
+  /* ─── Assemblage ─── */
+  document.getElementById('recap-content').innerHTML =
+    sectionClient +
+    sectionContexte +
+    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#7a8896;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin:18px 0 8px 4px">Pièces — ' + pieces.length + '</div>' +
+    sectionPieces +
+    sectionNotes +
+    sectionTech +
+    sectionCheck +
+    sectionOpts;
+
   showScreen('screen-recap');
 }
 
@@ -5010,7 +5390,7 @@ window.FEATURES_ENABLED = Object.assign({
   carte:         false,  /* Phase 19 — désactivé 2026-04-28 (Tâche 3) */
   comparateur:   false,  /* Phase 16 — désactivé 2026-04-28 (Tâche 3) */
   planning:      false,  /* Phase 14 — désactivé 2026-04-28 (Tâche 3) */
-  recap:         false,  /* Récapitulatif (HTML statique + FAB Phase 1) — désactivé 2026-04-28 (Tâche 3) */
+  recap:         true,   /* Récapitulatif chantier — réactivé Session 9 (2026-05-02) comme fiche chantier interne complète, base future pour génération devis IA */
   /* ─── Simplification fonctionnelle (Session 5, 2026-04-30) ──────
      Recentrage UI sur prise de notes chantier. Code conservé. */
   syntheseNav:   false,  /* Sidebar : Synthèse devis */

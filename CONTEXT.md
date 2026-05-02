@@ -73,6 +73,60 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 9 — Récapitulatif chantier réactivé comme fiche interne complète)
+
+Le module **Récapitulatif** est réactivé (`recap:true`) et **complètement refondu** comme **fiche chantier interne** — base de travail humain + future entrée pour génération de devis par IA. Pas un export PDF, pas un document client.
+
+**Réactivation :**
+- `FEATURES_ENABLED.recap: false → true` → l'item « Récapitulatif » revient dans la sidebar + le bouton « Voir le récapitulatif → » revient sur la fiche client.
+
+**Refonte HTML `screen-recap` :**
+- Ajout `#recap-completion-bar` (indicateur de complétude au-dessus du contenu)
+- Bouton « Finaliser la fiche → » retiré (le récap est itératif, pas final)
+
+**Refonte `showRecap()` (~80 → ~280 lignes) :**
+
+Sections ordonnées :
+1. **Bandeau header** : nom client + date + nb pièces + mention « base future pour génération devis IA »
+2. **Indicateurs de complétude** : bandeau vert si tout est ok, sinon liste des éléments manquants (téléphone, adresse, type chantier, photos par pièce, mesures par pièce, croquis par pièce)
+3. **Informations client & logistique** : nom, tél, email, adresse, date, type bien, étage, ascenseur, code accès, contact tiers, observations — chaque champ avec badge ⚠ si manquant
+4. **Contexte chantier** (NEW, éditable inline) : type chantier, complexité, contraintes accès, contraintes techniques, urgence, attentes client
+5. **Récapitulatif par pièce** (accordéon `<details open>`) — pour chaque pièce :
+   - **État actuel constaté** (textarea éditable, persistée dans `piece.etatActuel`)
+   - **Objectif des travaux** (textarea éditable, persistée dans `piece.objectifTravaux`)
+   - Mesures (longueur/largeur/HSP/surface sol/surface murs)
+   - Travaux sélectionnés (compte + 12 premiers libellés)
+   - Photos en miniatures 64×64 (12 max + indicateur +N)
+   - Croquis en miniature image
+   - Notes pièce
+   - Compteur notes manuscrites
+   - Encart « Points liés à cette pièce » (technique + à vérifier filtrés par roomId)
+6. **Notes terrain globales** (NEW, textarea éditable, persistée dans `client.notesTerrain`)
+7. **Points techniques importants** (NEW, éditable + Ajouter via prompt) : code couleur par importance (haute=rouge / moyenne=orange / faible=gris), affichage rattachement pièce ou « global »
+8. **Points à vérifier avant devis** (NEW, éditable + Ajouter, toggle ✓ résolu, statut compté en haut)
+9. **Options de travaux** (NEW, éditable + Ajouter) : titre + badge (économique / recommandée / complète / à valider) + description + notes détaillées (textarea)
+
+**Nouvelles structures de données (créées à la volée si absentes — rétro-compat totale) :**
+
+```
+client.contexte = {typeChantier, complexite, contraintesAcces,
+                   contraintesTechniques, urgence, attentesClient}
+client.notesTerrain = string global
+client.technicalPoints[] = [{id, roomId?, text, importance, category, createdAt, updatedAt}]
+client.pointsToCheck[]   = [{id, roomId?, text, status:'open'|'resolved', createdAt, updatedAt}]
+client.workOptions[]     = [{id, title, description, roomIds[], badge, notes, createdAt, updatedAt}]
+piece.etatActuel    = string libre
+piece.objectifTravaux = string libre
+```
+
+**Helpers + handlers ajoutés (~150 lignes) :** `recapEnsureClient`, `recapEnsurePiece`, `recapNewId`, `recapSaveClient`, `recapSavePiece`, `recapEditClientField`, `recapEditNotesTerrain`, `recapEditPieceField`, `recapAddTechnicalPoint`, `recapRemoveTechnicalPoint`, `recapAddPointToCheck`, `recapTogglePointToCheck`, `recapRemovePointToCheck`, `recapAddWorkOption`, `recapEditWorkOption`, `recapRemoveWorkOption`, `recapBadgeStyle`, `recapImportanceStyle`, `recapPieceNameById`, `recapMissBadge`.
+
+**Compatibilité localStorage : ✅ totale.** Tous les nouveaux champs sont créés à la volée via `recapEnsureClient` / `recapEnsurePiece` au moment de la lecture, jamais imposés. Les pièces et clients existants s'ouvrent sans souci.
+
+**Régressions vérifiées** : les 8 flags Session 6 restent à `false` (travauxNav, pdfButtons, bonDeVisiteBtn, exportCompletBtn, floatingActionBar, micButtons, calculRapideMurs, croquisAnnotations). Pas d'IA / Analyse RDV / Synthèse devis / Devis SDB / Documents émis / Statistiques réactivés.
+
+**SW v16-croquis-stylus → v17-recap-fiche-chantier** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 8 — Croquis devient un vrai carnet stylet)
 
 Refonte ciblée de l'onglet Croquis (step-2) pour qu'il soit utilisable comme une feuille papier en RDV. Aucun autre module touché.
