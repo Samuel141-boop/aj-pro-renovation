@@ -73,6 +73,36 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 10 — Récap enrichi : Demande client, Contraintes, Matériel, Main-d'œuvre, Score %)
+
+Suite directe de la Session 9. Le module Récap devient une **vraie fiche chantier interne complète** avec **10 blocs structurés** + **score de complétude 0-100%**. Pas de PDF, pas d'IA, pas de chiffrage — outil de revue/préparation.
+
+**Nouveaux blocs ajoutés :**
+- 🗣️ **Demande du client** (`client.clientRequest`) : texte principal + sub-fields budgetLevel, priorities, deadlineConstraints, aestheticPreferences
+- 🚧 **Contraintes chantier** (`client.siteConstraints[]`) : liste structurée avec catégorie optionnelle (accès / horaires / copro / logistique…)
+- 📦 **Matériel envisagé** (`client.plannedMaterials[]`) : nom + détails + statut (envisagé / à confirmer / validé) — sans chiffrage
+- 🔧 **Main-d'œuvre à prévoir** (`client.plannedLabor[]`) : intervention + difficulté (facile/moyenne/difficile) + durée estimée — sans chiffrage
+
+**Blocs enrichis :**
+- 📌 **État existant par pièce** : ajout des sub-fields `elementsToKeep`, `elementsToRemove`, `damagedElements`, `hasHumidity`, `technicalAccess` (textareas dans une grille)
+- 🎯 **Objectif des travaux par pièce** : ajout des sub-fields `expectedResult`, `finishLevel`
+- ⚖️ **Options proposées** (renommé de « Options de travaux ») : ajout des champs `objective` (input) + `content` (textarea détaillé) en plus du title/badge/description/notes
+- ⚠️ **Points sensibles** (renommé de « Points techniques importants » pour cohérence brief) : structure inchangée
+
+**Score de complétude (NEW) :**
+- Calcul sur 100 pondéré : infos client (15) + demande client (10) + pièces avec mesures/photos/croquis/état/objectif (5+8×5) + contraintes/sensibles/à vérifier/options/matériel/main-d'œuvre (5×6) + au moins 1 pièce (5)
+- Affiché en gros (32px) dans le header avec code couleur : ≥80% vert · ≥50% orange · <50% rouge
+- Bandeau de complétude détaille les éléments manquants (12 max)
+
+**Nouveaux handlers JS (~10 fonctions) :**
+`recapEditClientRequest`, `recapEditPieceExistField`, `recapAddSiteConstraint`, `recapRemoveSiteConstraint`, `recapAddPlannedMaterial`, `recapEditPlannedMaterial`, `recapRemovePlannedMaterial`, `recapAddPlannedLabor`, `recapEditPlannedLabor`, `recapRemovePlannedLabor`, `recapComputeScore`.
+
+**Compatibilité localStorage : ✅ totale.** Tous les nouveaux champs créés à la volée via `recapEnsureClient` / `recapEnsurePiece` à la lecture. Aucun champ existant supprimé ou renommé.
+
+**Régressions vérifiées** : 8 flags Session 6 toujours `false`. Pas d'IA / PDF / Devis SDB / etc. réactivés. Croquis stylet (Session 8) intact. Ordre onglets fiche pièce (Session 7) intact. Récap accessible via sidebar « Récapitulatif » + bouton « Voir le récapitulatif → » sur fiche client.
+
+**SW v17-recap-fiche-chantier → v18-recap-complete** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 9 — Récapitulatif chantier réactivé comme fiche interne complète)
 
 Le module **Récapitulatif** est réactivé (`recap:true`) et **complètement refondu** comme **fiche chantier interne** — base de travail humain + future entrée pour génération de devis par IA. Pas un export PDF, pas un document client.

@@ -4154,20 +4154,35 @@ function savePieceFinal(){persistPiece();renderPiecesList();goBack();showToast('
      piece.objectifTravaux = string libre
    ════════════════════════════════════════════════════════════════════ */
 
-/* Helpers de structures de données (rétro-compat) */
+/* Helpers de structures de données (rétro-compat) — Session 9 + 10 */
 function recapEnsureClient(c){
   if(!c) return null;
+  /* Session 9 */
   if(!c.contexte) c.contexte = { typeChantier:'', complexite:'', contraintesAcces:'', contraintesTechniques:'', urgence:'', attentesClient:'' };
   if(typeof c.notesTerrain !== 'string') c.notesTerrain = '';
   if(!Array.isArray(c.technicalPoints)) c.technicalPoints = [];
   if(!Array.isArray(c.pointsToCheck))   c.pointsToCheck   = [];
   if(!Array.isArray(c.workOptions))     c.workOptions     = [];
+  /* Session 10 — nouvelles structures fiche chantier complète */
+  if(!c.clientRequest) c.clientRequest = { text:'', budgetLevel:'', priorities:'', deadlineConstraints:'', aestheticPreferences:'' };
+  if(!Array.isArray(c.siteConstraints))  c.siteConstraints  = [];
+  if(!Array.isArray(c.plannedMaterials)) c.plannedMaterials = [];
+  if(!Array.isArray(c.plannedLabor))     c.plannedLabor     = [];
   return c;
 }
 function recapEnsurePiece(p){
   if(!p) return null;
+  /* Session 9 */
   if(typeof p.etatActuel !== 'string')      p.etatActuel = '';
   if(typeof p.objectifTravaux !== 'string') p.objectifTravaux = '';
+  /* Session 10 — sub-fields État existant + Objectif (textareas optionnels) */
+  if(typeof p.elementsToKeep   !== 'string') p.elementsToKeep   = '';
+  if(typeof p.elementsToRemove !== 'string') p.elementsToRemove = '';
+  if(typeof p.damagedElements  !== 'string') p.damagedElements  = '';
+  if(typeof p.hasHumidity      !== 'string') p.hasHumidity      = '';
+  if(typeof p.technicalAccess  !== 'string') p.technicalAccess  = '';
+  if(typeof p.expectedResult   !== 'string') p.expectedResult   = '';
+  if(typeof p.finishLevel      !== 'string') p.finishLevel      = '';
   return p;
 }
 function recapNewId(prefix){ return (prefix||'rcp_') + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
@@ -4309,6 +4324,181 @@ function recapRemoveWorkOption(id){
   }, {title:'Supprimer l\'option ?', danger:true, okLabel:'Supprimer'});
 }
 
+/* ─── HANDLERS Session 10 (Demande client + Contraintes + Matériel + Main-d'œuvre) ─── */
+
+/* Demande du client (champ structuré unique) */
+function recapEditClientRequest(field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.clientRequest[field] = value;
+  recapSaveClient(c);
+}
+
+/* Sub-fields pièce (elements à conserver/déposer/etc.) */
+function recapEditPieceExistField(pieceId, field, value){
+  var db=dbLoad(); var p=db.pieces[pieceId]; if(!p) return;
+  recapEnsurePiece(p);
+  p[field] = value;
+  recapSavePiece(p);
+}
+
+/* Contraintes chantier */
+function recapAddSiteConstraint(){
+  var text = prompt('Décrire la contrainte chantier :\n\nExemples :\n- 2e étage sans ascenseur\n- horaires copro 8h-19h\n- évacuation gravats par escalier\n- protection parties communes obligatoire');
+  if(!text || !text.trim()) return;
+  var category = prompt('Catégorie (optionnelle, ex: accès / horaires / copro / logistique) :', 'accès') || '';
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.siteConstraints.push({
+    id: recapNewId('sc_'),
+    text: text.trim(),
+    category: category.trim(),
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapRemoveSiteConstraint(id){
+  customConfirm('Supprimer cette contrainte ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.siteConstraints = c.siteConstraints.filter(function(s){ return s.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer la contrainte ?', danger:true, okLabel:'Supprimer'});
+}
+
+/* Matériel envisagé */
+function recapAddPlannedMaterial(){
+  var name = prompt('Nom du matériel / fourniture / équipement :\n\nExemples :\n- paroi de douche\n- receveur extra-plat\n- robinetterie thermostatique\n- colle carrelage hydrofuge');
+  if(!name || !name.trim()) return;
+  var details = prompt('Détails (marque, modèle, dimensions — optionnel) :') || '';
+  var status = prompt('Statut ? (envisagé / à confirmer / validé)', 'envisagé');
+  status = (status||'envisagé').toLowerCase();
+  if(['envisagé','envisage','à confirmer','a confirmer','validé','valide'].indexOf(status) < 0) status = 'envisagé';
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.plannedMaterials.push({
+    id: recapNewId('pm_'),
+    roomId: null,
+    name: name.trim(),
+    details: details.trim(),
+    status: status,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapEditPlannedMaterial(id, field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var m = c.plannedMaterials.find(function(x){ return x.id === id; });
+  if(m){ m[field] = value; m.updatedAt = Date.now(); }
+  recapSaveClient(c);
+}
+function recapRemovePlannedMaterial(id){
+  customConfirm('Supprimer ce matériel ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.plannedMaterials = c.plannedMaterials.filter(function(m){ return m.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer le matériel ?', danger:true, okLabel:'Supprimer'});
+}
+
+/* Main-d'œuvre à prévoir */
+function recapAddPlannedLabor(){
+  var text = prompt('Décrire l\'intervention à prévoir :\n\nExemples :\n- dépose ancienne cabine\n- préparation support\n- reprise étanchéité\n- pose nouvelle paroi\n- finitions joints silicone');
+  if(!text || !text.trim()) return;
+  var difficulty = prompt('Difficulté (optionnelle : facile / moyenne / difficile) :', 'moyenne') || '';
+  var estimatedDuration = prompt('Durée estimée si connue (optionnelle, ex: 2h, 1 jour) :') || '';
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.plannedLabor.push({
+    id: recapNewId('pl_'),
+    roomId: null,
+    text: text.trim(),
+    difficulty: difficulty.trim().toLowerCase(),
+    estimatedDuration: estimatedDuration.trim(),
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapEditPlannedLabor(id, field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var l = c.plannedLabor.find(function(x){ return x.id === id; });
+  if(l){ l[field] = value; l.updatedAt = Date.now(); }
+  recapSaveClient(c);
+}
+function recapRemovePlannedLabor(id){
+  customConfirm('Supprimer cette intervention ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.plannedLabor = c.plannedLabor.filter(function(l){ return l.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer l\'intervention ?', danger:true, okLabel:'Supprimer'});
+}
+
+/* ─── SCORE DE COMPLÉTUDE (Session 10) ───
+   Score sur 100 pondéré selon présence des informations clés. */
+function recapComputeScore(c, pieces){
+  var pts = 0, max = 0, missing = [];
+  function ck(label, ok, weight){ max += weight; if(ok) pts += weight; else missing.push(label); }
+
+  /* Infos client (15) */
+  ck('téléphone client', !!c.tel, 3);
+  ck('adresse chantier', !!c.adresse, 4);
+  ck('date RDV',         !!c.date, 2);
+  ck('type de bien',     !!c.type, 3);
+  ck('observations client', !!c.obs, 3);
+
+  /* Demande client (10) */
+  ck('demande du client (texte)', c.clientRequest && c.clientRequest.text && c.clientRequest.text.trim().length >= 10, 10);
+
+  /* Pièces (45 répartis) */
+  ck('au moins une pièce', pieces.length > 0, 5);
+  var hasMes=false, hasPhotos=false, hasCroquis=false, hasEtat=false, hasObj=false;
+  pieces.forEach(function(p){
+    if(p.mesures && p.mesures.long && p.mesures.larg) hasMes = true;
+    if((p.photos||[]).length > 0) hasPhotos = true;
+    if(p.croquis) hasCroquis = true;
+    if(p.etatActuel && p.etatActuel.trim().length >= 10) hasEtat = true;
+    if(p.objectifTravaux && p.objectifTravaux.trim().length >= 10) hasObj = true;
+  });
+  ck('mesures (au moins une pièce)',  hasMes, 8);
+  ck('photos (au moins une pièce)',   hasPhotos, 8);
+  ck('croquis (au moins une pièce)',  hasCroquis, 8);
+  ck('état existant (au moins une pièce)', hasEtat, 8);
+  ck('objectif travaux (au moins une pièce)', hasObj, 8);
+
+  /* Contraintes chantier (5) */
+  ck('au moins une contrainte chantier', (c.siteConstraints||[]).length > 0, 5);
+
+  /* Points sensibles (5) */
+  ck('au moins un point sensible', (c.technicalPoints||[]).length > 0, 5);
+
+  /* À vérifier (5) */
+  ck('au moins un point à vérifier', (c.pointsToCheck||[]).length > 0, 5);
+
+  /* Options (5) */
+  ck('au moins une option de travaux', (c.workOptions||[]).length > 0, 5);
+
+  /* Matériel (5) */
+  ck('au moins un matériel envisagé', (c.plannedMaterials||[]).length > 0, 5);
+
+  /* Main-d'œuvre (5) */
+  ck('au moins une intervention prévue', (c.plannedLabor||[]).length > 0, 5);
+
+  var pct = max > 0 ? Math.round((pts / max) * 100) : 0;
+  return { pct: pct, points: pts, max: max, missing: missing };
+}
+
 /* ─── HELPERS de rendu ─── */
 function recapBadgeStyle(badge){
   var b = (badge||'').toLowerCase();
@@ -4339,27 +4529,32 @@ function showRecap(){
   var pieces = dbGetClientPieces(currentClientId);
   pieces.forEach(recapEnsurePiece);
 
+  /* ─── Score de complétude (Session 10) ─── */
+  var score = recapComputeScore(c, pieces);
+  var scoreColor = score.pct >= 80 ? '#1d4d33' : (score.pct >= 50 ? '#9a4514' : '#c62828');
+  var scoreBg    = score.pct >= 80 ? 'rgba(45,106,79,0.18)' : (score.pct >= 50 ? 'rgba(232,98,26,0.18)' : 'rgba(198,40,40,0.18)');
+
   /* ─── Header ─── */
   document.getElementById('recap-header-block').innerHTML =
-    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:13px;color:#c9a96e;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:4px">Fiche chantier interne</div>' +
-    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:24px;font-weight:600">' + esc(c.prenom||'') + ' ' + esc(c.nom||'') + '</div>' +
-    '<div style="font-size:13px;opacity:.75;margin-top:4px">' + (c.date ? new Date(c.date).toLocaleDateString('fr-FR') : '—') + ' · ' + (pieces.length) + ' pièce' + (pieces.length>1?'s':'') + ' · base future pour génération devis IA</div>';
+    '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">' +
+      '<div style="flex:1;min-width:200px">' +
+        '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:13px;color:#c9a96e;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin-bottom:4px">Fiche chantier interne</div>' +
+        '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:24px;font-weight:600">' + esc(c.prenom||'') + ' ' + esc(c.nom||'') + '</div>' +
+        '<div style="font-size:13px;opacity:.75;margin-top:4px">' + (c.date ? new Date(c.date).toLocaleDateString('fr-FR') : '—') + ' · ' + (pieces.length) + ' pièce' + (pieces.length>1?'s':'') + ' · outil de revue interne</div>' +
+      '</div>' +
+      '<div style="text-align:right;background:' + scoreBg + ';border-radius:12px;padding:12px 18px;min-width:130px">' +
+        '<div style="font-size:10px;color:rgba(255,255,255,0.7);text-transform:uppercase;letter-spacing:0.6px;font-weight:600">Complétude</div>' +
+        '<div style="font-size:32px;font-weight:700;color:' + scoreColor + ';line-height:1;margin-top:4px">' + score.pct + '%</div>' +
+        '<div style="font-size:10px;color:rgba(255,255,255,0.6);margin-top:3px">' + score.points + ' / ' + score.max + ' pts</div>' +
+      '</div>' +
+    '</div>';
 
-  /* ─── Indicateurs de complétude ─── */
-  var missing = [];
-  if(!c.tel)               missing.push('téléphone client');
-  if(!c.adresse)           missing.push('adresse chantier');
-  if(!c.contexte.typeChantier) missing.push('type de chantier');
-  pieces.forEach(function(p){
-    if(!(p.photos||[]).length) missing.push('photos pour ' + p.nom);
-    if(!(p.mesures && p.mesures.long)) missing.push('mesures pour ' + p.nom);
-    if(!p.croquis)             missing.push('croquis pour ' + p.nom);
-  });
-  document.getElementById('recap-completion-bar').innerHTML = missing.length === 0
-    ? '<div style="background:rgba(45,106,79,0.08);border:1px solid rgba(45,106,79,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif;font-size:12px;color:#1d4d33;font-weight:600">✓ Fiche complète — toutes les infos essentielles sont présentes</div>'
+  /* ─── Bandeau de complétude ─── */
+  document.getElementById('recap-completion-bar').innerHTML = score.missing.length === 0
+    ? '<div style="background:rgba(45,106,79,0.08);border:1px solid rgba(45,106,79,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif;font-size:12px;color:#1d4d33;font-weight:600">✓ Fiche chantier complète — toutes les informations essentielles sont présentes</div>'
     : '<div style="background:rgba(232,98,26,0.06);border:1px solid rgba(232,98,26,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif">' +
-        '<div style="font-size:12px;color:#9a4514;font-weight:700;margin-bottom:4px">⚠ ' + missing.length + ' élément' + (missing.length>1?'s':'') + ' manquant' + (missing.length>1?'s':'') + '</div>' +
-        '<div style="font-size:11px;color:#3a4a5c;line-height:1.55">' + missing.slice(0, 8).map(esc).join(' · ') + (missing.length > 8 ? ' · …' : '') + '</div>' +
+        '<div style="font-size:12px;color:#9a4514;font-weight:700;margin-bottom:4px">⚠ ' + score.missing.length + ' élément' + (score.missing.length>1?'s':'') + ' à compléter pour finaliser la fiche</div>' +
+        '<div style="font-size:11px;color:#3a4a5c;line-height:1.6">' + score.missing.slice(0, 12).map(function(m){ return '• ' + esc(m); }).join(' &nbsp; ') + (score.missing.length > 12 ? ' &nbsp; • …' : '') + '</div>' +
       '</div>';
 
   /* ─── Section helpers ─── */
@@ -4399,19 +4594,51 @@ function showRecap(){
 
   /* ─── 2. Contexte chantier (éditable inline) ─── */
   var sectionContexte = section('Contexte chantier', '🏗️', null,
-    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Saisie libre — sera analysée par l\'IA pour préparer le devis.</div>' +
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Saisie libre — informations générales sur le contexte du chantier.</div>' +
     '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Type de chantier</label>' +
     inp(c.contexte.typeChantier, "function(v){recapEditClientField('typeChantier',v)}", 'Ex: rénovation partielle salle de bain') +
     '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Niveau de complexité</label>' +
     inp(c.contexte.complexite, "function(v){recapEditClientField('complexite',v)}", 'Ex: simple / moyen / complexe / très complexe') +
-    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Contraintes d\'accès</label>' +
-    ta(c.contexte.contraintesAcces, 'function(v){recapEditClientField(\'contraintesAcces\',v)}', 'Ex: 2e étage sans ascenseur, gardien jusqu\'à 19h, parking limité…') +
-    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Contraintes techniques</label>' +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Contraintes techniques générales</label>' +
     ta(c.contexte.contraintesTechniques, 'function(v){recapEditClientField(\'contraintesTechniques\',v)}', 'Ex: évacuation ancienne, plomberie cachée, support mural inconnu…') +
     '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Urgence</label>' +
-    inp(c.contexte.urgence, "function(v){recapEditClientField('urgence',v)}", 'Ex: pas urgent / sous 1 mois / asap') +
-    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Attentes du client</label>' +
-    ta(c.contexte.attentesClient, 'function(v){recapEditClientField(\'attentesClient\',v)}', 'Ex: solution économique, deux options, garder existant si possible…')
+    inp(c.contexte.urgence, "function(v){recapEditClientField('urgence',v)}", 'Ex: pas urgent / sous 1 mois / asap')
+  );
+
+  /* ─── 2.b. Demande du client (Session 10) ─── */
+  var sectionRequest = section('Demande du client', '🗣️', null,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Ce que le client demande exactement, ses priorités et préférences.</div>' +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Demande exacte</label>' +
+    ta(c.clientRequest.text, "function(v){recapEditClientRequest('text',v)}", 'Ex: Le client souhaite remplacer l\'ancienne cabine de douche par une solution plus moderne, sans refaire toute la salle de bain si possible. Il souhaite une solution propre, durable, mais pas trop coûteuse.', 90) +
+    '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-top:12px">' +
+      '<div><label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Niveau de budget</label>' +
+        inp(c.clientRequest.budgetLevel, "function(v){recapEditClientRequest('budgetLevel',v)}", 'économique / standard / premium / inconnu') + '</div>' +
+      '<div><label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px">Contraintes de délai</label>' +
+        inp(c.clientRequest.deadlineConstraints, "function(v){recapEditClientRequest('deadlineConstraints',v)}", 'Ex: avant fin avril') + '</div>' +
+    '</div>' +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Priorités</label>' +
+    ta(c.clientRequest.priorities, "function(v){recapEditClientRequest('priorities',v)}", 'Ex: durabilité, esthétique moderne, faible nuisance pour les voisins…', 60) +
+    '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Préférences esthétiques</label>' +
+    ta(c.clientRequest.aestheticPreferences, "function(v){recapEditClientRequest('aestheticPreferences',v)}", 'Ex: style épuré, couleurs claires, robinetterie chromée…', 60)
+  );
+
+  /* ─── 2.c. Contraintes chantier (Session 10 — liste structurée) ─── */
+  var siteCons = (c.siteConstraints||[]);
+  var sectionConstraints = section('Contraintes chantier', '🚧', siteCons.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Étage, ascenseur, accès, horaires, copro, livraison, protection — toutes les contraintes logistiques du site.</div>' +
+    (siteCons.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune contrainte chantier renseignée pour l\'instant.</div>'
+      : siteCons.map(function(s){
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
+            '<span style="font-size:14px;color:#9a4514;flex-shrink:0">⚠</span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:12.5px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(s.text) + '</div>' +
+              (s.category ? '<div style="font-size:10px;color:#7a8896;margin-top:3px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600">' + esc(s.category) + '</div>' : '') +
+            '</div>' +
+            '<button onclick="recapRemoveSiteConstraint(\'' + s.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddSiteConstraint()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une contrainte chantier</button>'
   );
 
   /* ─── 3. Récap par pièce ─── */
@@ -4464,10 +4691,36 @@ function showRecap(){
       var ptsCheckPiece = (c.pointsToCheck||[]).filter(function(pc){ return pc.roomId === p.id; });
 
       var pieceBody =
-        '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:4px;display:block">État actuel constaté</label>' +
-        ta(p.etatActuel, "function(v){recapEditPieceField('"+p.id+"','etatActuel',v)}", 'Ex: ancienne cabine de douche, sol mosaïque, joints vieillissants, évacuation au sol…', 70) +
-        '<label style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-top:12px;display:block">Objectif des travaux</label>' +
-        ta(p.objectifTravaux, "function(v){recapEditPieceField('"+p.id+"','objectifTravaux',v)}", 'Ex: remplacer la zone douche, reprendre étanchéité, poser nouvelle paroi…', 70) +
+        /* État existant — texte principal + sub-fields Session 10 */
+        '<div style="background:#fbf8f2;border-radius:8px;padding:12px;margin-bottom:14px">' +
+          '<div style="font-size:12px;color:#0f2030;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">📌 État existant</div>' +
+          '<label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Description générale</label>' +
+          ta(p.etatActuel, "function(v){recapEditPieceField('"+p.id+"','etatActuel',v)}", 'Ex: ancienne cabine de douche, sol mosaïque, joints vieillissants, évacuation au sol…', 60) +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px">' +
+            '<div><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Éléments à conserver</label>' +
+              ta(p.elementsToKeep, "function(v){recapEditPieceExistField('"+p.id+"','elementsToKeep',v)}", 'Ex: faïence murale, WC suspendu…', 50) + '</div>' +
+            '<div><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Éléments à déposer</label>' +
+              ta(p.elementsToRemove, "function(v){recapEditPieceExistField('"+p.id+"','elementsToRemove',v)}", 'Ex: cabine, mosaïque, robinetterie…', 50) + '</div>' +
+            '<div><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Éléments abîmés</label>' +
+              ta(p.damagedElements, "function(v){recapEditPieceExistField('"+p.id+"','damagedElements',v)}", 'Ex: joints silicone, bonde…', 50) + '</div>' +
+            '<div><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Humidité / infiltrations</label>' +
+              ta(p.hasHumidity, "function(v){recapEditPieceExistField('"+p.id+"','hasHumidity',v)}", 'Ex: trace d\'humidité bas mur, suspicion infiltration…', 50) + '</div>' +
+            '<div style="grid-column:1/-1"><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Accès technique</label>' +
+              ta(p.technicalAccess, "function(v){recapEditPieceExistField('"+p.id+"','technicalAccess',v)}", 'Ex: trappe d\'accès plomberie visible derrière, colonne d\'évacuation cachée…', 50) + '</div>' +
+          '</div>' +
+        '</div>' +
+        /* Objectif travaux — texte principal + sub-fields Session 10 */
+        '<div style="background:#fbf8f2;border-radius:8px;padding:12px;margin-bottom:14px">' +
+          '<div style="font-size:12px;color:#0f2030;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">🎯 Objectif des travaux</div>' +
+          '<label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Objectif général</label>' +
+          ta(p.objectifTravaux, "function(v){recapEditPieceField('"+p.id+"','objectifTravaux',v)}", 'Ex: créer une douche plus moderne, sécuriser l\'étanchéité, poser une nouvelle paroi…', 60) +
+          '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:10px">' +
+            '<div><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Résultat attendu</label>' +
+              ta(p.expectedResult, "function(v){recapEditPieceExistField('"+p.id+"','expectedResult',v)}", 'Ex: douche italienne fonctionnelle, étanchéité refaite…', 50) + '</div>' +
+            '<div><label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Niveau de finition</label>' +
+              inp(p.finishLevel, "function(v){recapEditPieceExistField('"+p.id+"','finishLevel',v)}", 'Ex: standard / soigné / haut de gamme') + '</div>' +
+          '</div>' +
+        '</div>' +
         '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-top:14px;padding:10px;background:#fbf8f2;border-radius:8px">' +
           '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Longueur</div><div style="font-weight:700;color:#0f2030">' + (m.long ? esc(m.long)+' m' : '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
           '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Largeur</div><div style="font-weight:700;color:#0f2030">' + (m.larg ? esc(m.larg)+' m' : '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
@@ -4504,8 +4757,8 @@ function showRecap(){
 
   /* ─── 5. Points techniques importants ─── */
   var ptsTech = (c.technicalPoints||[]);
-  var sectionTech = section('Points techniques importants', '⚠️', ptsTech.length,
-    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Éléments critiques pour éviter les oublis. Saisie manuelle.</div>' +
+  var sectionTech = section('Points sensibles', '⚠️', ptsTech.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Éléments critiques pouvant compliquer le chantier ou nécessiter une attention particulière (étanchéité, support ancien, accès limité, etc.).</div>' +
     (ptsTech.length === 0
       ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucun point technique pour l\'instant.</div>'
       : ptsTech.map(function(pt){
@@ -4547,11 +4800,14 @@ function showRecap(){
 
   /* ─── 7. Options de travaux ─── */
   var opts = (c.workOptions||[]);
-  var sectionOpts = section('Options de travaux', '⚖️', opts.length,
-    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Plusieurs scénarios à proposer (ex: simple vs complète). Chaque option sera analysée par l\'IA pour générer un devis.</div>' +
+  var sectionOpts = section('Options proposées', '⚖️', opts.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Plusieurs scénarios possibles pour le même chantier (ex: simple vs complète). Chaque option pourra être présentée au client.</div>' +
     (opts.length === 0
       ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune option pour l\'instant.</div>'
       : opts.map(function(o){
+          /* Initialise sub-fields Session 10 si absent (rétro-compat) */
+          if(typeof o.objective !== 'string') o.objective = '';
+          if(typeof o.content   !== 'string') o.content   = '';
           return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:12px 14px;margin-bottom:10px">' +
             '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">' +
               '<span style="font-weight:700;color:#0f2030;font-size:14px">' + esc(o.title) + '</span>' +
@@ -4559,23 +4815,78 @@ function showRecap(){
               '<button onclick="recapRemoveWorkOption(\'' + o.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#c62828;cursor:pointer;font-size:13px;padding:2px 4px;margin-left:auto">✕</button>' +
             '</div>' +
             (o.description ? '<div style="font-size:12.5px;color:#3a4a5c;line-height:1.55;margin-bottom:8px">' + esc(o.description) + '</div>' : '') +
-            '<label style="font-size:10px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Notes / contenu détaillé</label>' +
-            ta(o.notes, "function(v){recapEditWorkOption('"+o.id+"','notes',v)}", 'Ex:\n- dépose ancienne paroi\n- pose nouvelle paroi\n- reprise joints silicone\n- vérification évacuation', 80) +
+            '<label style="font-size:10.5px;color:#3a4a5c;font-weight:600">Objectif de l\'option</label>' +
+            inp(o.objective, "function(v){recapEditWorkOption('"+o.id+"','objective',v)}", 'Ex: solution économique / solution durable…') +
+            '<label style="font-size:10.5px;color:#3a4a5c;font-weight:600;margin-top:10px;display:block">Contenu détaillé de l\'option</label>' +
+            ta(o.content, "function(v){recapEditWorkOption('"+o.id+"','content',v)}", 'Ex:\n- dépose ancienne paroi\n- reprise joints silicone\n- vérification évacuation\n- pose nouvelle paroi', 90) +
+            '<label style="font-size:10.5px;color:#3a4a5c;font-weight:600;margin-top:10px;display:block">Remarques (optionnel)</label>' +
+            ta(o.notes, "function(v){recapEditWorkOption('"+o.id+"','notes',v)}", 'Ex: validation client à confirmer, livraison sous 2 semaines…', 50) +
           '</div>';
         }).join('')) +
-    '<button onclick="recapAddWorkOption()" style="margin-top:8px;padding:10px 14px;background:#1d4d33;border:none;color:#fff;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:700;width:100%">+ Ajouter une option de travaux</button>'
+    '<button onclick="recapAddWorkOption()" style="margin-top:8px;padding:10px 14px;background:#1d4d33;border:none;color:#fff;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:700;width:100%">+ Ajouter une option proposée</button>'
   );
 
-  /* ─── Assemblage ─── */
+  /* ─── 8. Matériel envisagé (Session 10) ─── */
+  var mats = (c.plannedMaterials||[]);
+  var sectionMaterials = section('Matériel envisagé', '📦', mats.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Matériaux, équipements et fournitures envisagés. Pas de chiffrage — juste pour mémoire.</div>' +
+    (mats.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucun matériel pour l\'instant.</div>'
+      : mats.map(function(mat){
+          var statusColor = mat.status === 'validé' ? '#1d4d33' : (mat.status === 'à confirmer' ? '#9a4514' : '#3a4a5c');
+          var statusBg    = mat.status === 'validé' ? 'rgba(45,106,79,0.12)' : (mat.status === 'à confirmer' ? 'rgba(232,98,26,0.12)' : 'rgba(122,136,150,0.12)');
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
+            '<span style="font-size:14px;flex-shrink:0">📦</span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
+                '<span style="font-weight:600;color:#0f2030;font-size:13px">' + esc(mat.name) + '</span>' +
+                '<span style="background:' + statusBg + ';color:' + statusColor + ';padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase">' + esc(mat.status||'envisagé') + '</span>' +
+              '</div>' +
+              (mat.details ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:3px;line-height:1.5">' + esc(mat.details) + '</div>' : '') +
+            '</div>' +
+            '<button onclick="recapRemovePlannedMaterial(\'' + mat.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddPlannedMaterial()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un matériel envisagé</button>'
+  );
+
+  /* ─── 9. Main-d'œuvre à prévoir (Session 10) ─── */
+  var labors = (c.plannedLabor||[]);
+  var sectionLabor = section('Main-d\'œuvre à prévoir', '🔧', labors.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Grandes interventions humaines à prévoir. Pas de chiffrage — juste pour mémoire.</div>' +
+    (labors.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune intervention pour l\'instant.</div>'
+      : labors.map(function(l){
+          var diffColor = l.difficulty === 'difficile' ? '#c62828' : (l.difficulty === 'moyenne' ? '#9a4514' : (l.difficulty === 'facile' ? '#1d4d33' : '#7a8896'));
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
+            '<span style="font-size:14px;flex-shrink:0">🔧</span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-size:13px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(l.text) + '</div>' +
+              ((l.difficulty || l.estimatedDuration) ? '<div style="font-size:10.5px;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">' +
+                (l.difficulty ? '<span style="color:' + diffColor + ';font-weight:600;text-transform:uppercase;letter-spacing:0.3px">⚙ ' + esc(l.difficulty) + '</span>' : '') +
+                (l.estimatedDuration ? '<span style="color:#7a8896">⏱ ' + esc(l.estimatedDuration) + '</span>' : '') +
+              '</div>' : '') +
+            '</div>' +
+            '<button onclick="recapRemovePlannedLabor(\'' + l.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddPlannedLabor()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une intervention</button>'
+  );
+
+  /* ─── Assemblage Session 10 ─── */
   document.getElementById('recap-content').innerHTML =
     sectionClient +
+    sectionRequest +
     sectionContexte +
+    sectionConstraints +
     '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#7a8896;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin:18px 0 8px 4px">Pièces — ' + pieces.length + '</div>' +
     sectionPieces +
     sectionNotes +
     sectionTech +
     sectionCheck +
-    sectionOpts;
+    sectionOpts +
+    sectionMaterials +
+    sectionLabor;
 
   showScreen('screen-recap');
 }
