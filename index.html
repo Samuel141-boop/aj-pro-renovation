@@ -1308,11 +1308,12 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
   </div>
   <div class="step-nav">
     <button class="step-btn active" onclick="switchStep(0,this)"><span class="si">📋</span>Infos</button>
-    <button class="step-btn" onclick="switchStep(1,this)"><span class="si">✏️</span>Croquis</button>
-    <button class="step-btn" onclick="switchStep(2,this)"><span class="si">📏</span>Mesures</button>
+    <button class="step-btn" onclick="switchStep(1,this)"><span class="si">📸</span>Photos</button>
+    <button class="step-btn" onclick="switchStep(2,this)"><span class="si">✏️</span>Croquis</button>
     <button class="step-btn" onclick="switchStep(3,this)"><span class="si">🎨</span>Travaux</button>
-    <button class="step-btn" onclick="switchStep(4,this)"><span class="si">📸</span>Photos</button>
+    <button class="step-btn" onclick="switchStep(4,this)"><span class="si">📏</span>Mesures</button>
     <button class="step-btn" onclick="switchStep(5,this)"><span class="si">📝</span>Notes</button>
+    <button class="step-btn" onclick="switchStep(6,this)"><span class="si">✓</span>Résumé</button>
   </div>
 
   <!-- STEP 0 : INFOS -->
@@ -1331,11 +1332,11 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
       <div class="form-group"><label class="form-label">Observations</label><textarea class="form-input" id="p-obs" oninput="autosave()" placeholder="Humidité, fissures, particularités..."></textarea></div>
     </div>
-    <button class="btn btn-primary" onclick="switchStep(1,document.querySelectorAll('.step-btn')[1])">Dessiner le croquis →</button>
+    <button class="btn btn-primary" onclick="switchStep(1,document.querySelectorAll('.step-btn')[1])">Voir les photos →</button>
   </div>
 
-  <!-- STEP 1 : CROQUIS -->
-  <div id="step-1" style="display:none">
+  <!-- STEP 2 : CROQUIS -->
+  <div id="step-2" style="display:none">
     <div class="form-section">
       <div class="form-section-title">Croquis & bloc-notes visuel</div>
       <div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:10px;line-height:1.5">
@@ -1370,11 +1371,11 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       <div class="form-section-title">Annotations libres</div>
       <textarea class="form-input" id="p-croquis-notes" style="min-height:90px" oninput="autosave()" placeholder="Légendes, cotes, remarques générales sur le croquis ou la pièce…"></textarea>
     </div>
-    <button class="btn btn-primary" onclick="switchStep(2,document.querySelectorAll('.step-btn')[2])">Saisir les mesures →</button>
+    <button class="btn btn-primary" onclick="switchStep(3,document.querySelectorAll('.step-btn')[3])">Choisir les travaux →</button>
   </div>
 
-  <!-- STEP 2 : MESURES -->
-  <div id="step-2" style="display:none">
+  <!-- STEP 4 : MESURES -->
+  <div id="step-4" style="display:none">
 
     <!-- MODE RECTANGULAIRE (seul mode supporté) -->
     <div id="mesure-rect">
@@ -1510,7 +1511,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
     </div>
 
-    <button class="btn btn-primary" style="margin-top:16px" onclick="switchStep(3,document.querySelectorAll('.step-btn')[3])">Choisir les travaux →</button>
+    <button class="btn btn-primary" style="margin-top:16px" onclick="switchStep(5,document.querySelectorAll('.step-btn')[5])">Aller aux notes →</button>
   </div>
 
   <!-- STEP 3 : TRAVAUX (accordéons repliés) -->
@@ -2058,11 +2059,11 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
     </div>
 
-    <button class="btn btn-primary" style="margin-top:8px" onclick="switchStep(4,document.querySelectorAll('.step-btn')[4])">Ajouter des photos →</button>
+    <button class="btn btn-primary" style="margin-top:8px" onclick="switchStep(4,document.querySelectorAll('.step-btn')[4])">Saisir les mesures →</button>
   </div>
 
-  <!-- STEP 4 : PHOTOS -->
-  <div id="step-4" style="display:none">
+  <!-- STEP 1 : PHOTOS -->
+  <div id="step-1" style="display:none">
     <div class="form-section">
       <div class="form-section-title">Photos du chantier</div>
       <div class="photo-grid" id="photo-grid">
@@ -2070,7 +2071,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
       <input type="file" id="photo-input" accept="image/*" capture="environment" style="display:none" onchange="handlePhoto(this)">
     </div>
-    <button class="btn btn-primary" onclick="switchStep(5,document.querySelectorAll('.step-btn')[5])">Notes →</button>
+    <button class="btn btn-primary" onclick="switchStep(2,document.querySelectorAll('.step-btn')[2])">Dessiner le croquis →</button>
   </div>
 
   <!-- STEP 5 : NOTES -->
@@ -2091,6 +2092,18 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     <!-- Bloc-notes canvas étendu masqué pour rétro-compat des handlers (setBlocTool, addBlocPage…) -->
     <div id="bloc-notes-zone" style="display:none">
       <canvas id="bloc-canvas" width="1" height="1"></canvas>
+    </div>
+    <button class="btn btn-primary" onclick="switchStep(6,document.querySelectorAll('.step-btn')[6])">Voir le résumé →</button>
+  </div>
+
+  <!-- STEP 6 : RÉSUMÉ (Session 7 — vue de fin de saisie pièce) -->
+  <div id="step-6" style="display:none">
+    <div class="form-section">
+      <div class="form-section-title">Résumé de la pièce</div>
+      <div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:14px;line-height:1.5">
+        Vérifie les informations ci-dessous avant d'enregistrer la pièce. Tu peux revenir à n'importe quel onglet pour ajuster.
+      </div>
+      <div id="piece-resume-content" style="font-family:-apple-system,sans-serif"></div>
     </div>
     <button class="btn btn-primary" onclick="savePieceFinal()">Enregistrer la pièce ✓</button>
   </div>
@@ -4026,11 +4039,109 @@ function deletePhoto(phId){
 
 /* ═══════════════ STEP NAV ═══════════════ */
 function switchStep(n,btn){
-  for(var i=0;i<6;i++){var s=document.getElementById('step-'+i);if(s)s.style.display=i===n?'block':'none';}
+  for(var i=0;i<7;i++){var s=document.getElementById("step-"+i);if(s)s.style.display=i===n?"block":"none";}
   document.querySelectorAll('.step-btn').forEach(function(b){b.classList.remove('active');});
   if(btn)btn.classList.add('active');
-  if(n===1)setTimeout(initMainCanvas,50);
+  if(n===2)setTimeout(initMainCanvas,50);
   if(n===5)setTimeout(initBlocCanvas,50);
+  if(n===6){ try { if(typeof persistPiece === 'function') persistPiece(); } catch(e){} setTimeout(renderPieceResume,30); }
+}
+/* Génère le contenu dynamique de l'onglet Résumé (step-6).
+   Lit les données de la pièce courante depuis le DOM (champs en cours
+   d'édition, pas encore persistés) et la base, et affiche un récap
+   simple : infos / mesures / travaux / photos / notes. */
+function renderPieceResume(){
+  var host = document.getElementById('piece-resume-content');
+  if(!host || !currentPieceId) return;
+  var db = dbLoad();
+  var p  = db.pieces[currentPieceId];
+  if(!p){ host.innerHTML = '<div style="padding:20px;color:var(--c-muted);font-style:italic">Pièce introuvable.</div>'; return; }
+
+  /* Champs en cours d'édition (potentiellement plus à jour que p.* en mémoire) */
+  function vv(id, fb){ var el = document.getElementById(id); return (el ? el.value : '') || fb || ''; }
+  var nom    = vv('p-nom', p.nom || '—');
+  var notes  = vv('p-notes', p.notes || '');
+  var mLong  = vv('m-long', p.mesures && p.mesures.long);
+  var mLarg  = vv('m-larg', p.mesures && p.mesures.larg);
+  var mHaut  = vv('m-haut', p.mesures && p.mesures.haut);
+
+  /* État (chip "on") */
+  var etat = '—';
+  var etatChip = document.querySelector('#p-etat-chips .type-chip.on');
+  if(etatChip) etat = etatChip.textContent.trim();
+
+  /* Surface au sol + murs (si mesures) */
+  var surfaceSol = '—';
+  var surfaceMurs = '—';
+  if(mLong && mLarg){
+    var l = parseFloat(String(mLong).replace(',','.')) || 0;
+    var w = parseFloat(String(mLarg).replace(',','.')) || 0;
+    if(l > 0 && w > 0){ surfaceSol = (l*w).toFixed(2) + ' m²'; }
+    if(l > 0 && w > 0 && mHaut){
+      var h = parseFloat(String(mHaut).replace(',','.')) || 0;
+      if(h > 0) surfaceMurs = (2 * (l + w) * h).toFixed(2) + ' m²';
+    }
+  }
+
+  /* Travaux cochés (compte + liste compacte) */
+  var travauxCount = 0;
+  var travauxLabels = [];
+  if(p.travaux){
+    var cats = p.travaux.cats || {};
+    Object.keys(cats).forEach(function(k){ if(cats[k] === true){ travauxCount++; travauxLabels.push(k); } });
+    var paint = p.travaux.paintElems || [];
+    if(paint.length){ travauxCount += paint.length; paint.forEach(function(pe){ travauxLabels.push('peinture-' + pe); }); }
+  }
+  var travauxResume = travauxCount === 0
+    ? '<span style="color:var(--c-muted);font-style:italic">aucun</span>'
+    : '<b>' + travauxCount + '</b> élément' + (travauxCount>1?'s':'') + ' · <span style="color:var(--c-muted);font-size:11px">' + travauxLabels.slice(0, 8).map(esc).join(', ') + (travauxLabels.length > 8 ? ', …' : '') + '</span>';
+
+  /* Photos / notes manuscrites */
+  var nbPhotos = (p.photos || []).length;
+  var nbMsNotes = (p.msNotes || []).length;
+  var hasCroquis = !!p.croquis;
+  var notesPreview = notes ? esc(notes.slice(0, 220)) + (notes.length > 220 ? '…' : '') : '<span style="color:var(--c-muted);font-style:italic">aucune note texte</span>';
+
+  function row(label, value){
+    return '<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(15,32,48,0.06);font-size:13px"><span style="color:var(--c-muted)">' + label + '</span><span style="font-weight:600;color:var(--c-text);text-align:right">' + value + '</span></div>';
+  }
+  function jumpBtn(idx, label){
+    return '<button type="button" onclick="switchStep(' + idx + ',document.querySelectorAll(\'.step-btn\')[' + idx + '])" style="background:transparent;border:none;color:#c9a96e;cursor:pointer;font-size:11px;font-weight:600;padding:0;margin-left:8px;text-decoration:underline">↺ Modifier</button>';
+  }
+
+  host.innerHTML =
+    /* Infos */
+    '<div style="background:#fbf8f2;border-radius:10px;padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px">Infos' + jumpBtn(0, 'Infos') + '</div>' +
+      row('Nom', esc(nom)) +
+      row('État général', esc(etat)) +
+    '</div>' +
+    /* Mesures */
+    '<div style="background:#fbf8f2;border-radius:10px;padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px">Mesures' + jumpBtn(4, 'Mesures') + '</div>' +
+      row('Longueur', mLong ? esc(mLong) + ' m' : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+      row('Largeur', mLarg ? esc(mLarg) + ' m' : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+      row('HSP', mHaut ? esc(mHaut) + ' m' : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+      row('Surface au sol', surfaceSol) +
+      row('Surface murs (brut)', surfaceMurs) +
+    '</div>' +
+    /* Travaux */
+    '<div style="background:#fbf8f2;border-radius:10px;padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px">Travaux cochés' + jumpBtn(3, 'Travaux') + '</div>' +
+      '<div style="font-size:13px;color:var(--c-text);line-height:1.6">' + travauxResume + '</div>' +
+    '</div>' +
+    /* Photos / Croquis */
+    '<div style="background:#fbf8f2;border-radius:10px;padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px">Médias</div>' +
+      row('📸 Photos' + jumpBtn(1, 'Photos'), nbPhotos === 0 ? '<span style="color:var(--c-muted);font-style:italic">aucune</span>' : '<b>' + nbPhotos + '</b>') +
+      row('✏️ Croquis' + jumpBtn(2, 'Croquis'), hasCroquis ? '<b>renseigné</b>' : '<span style="color:var(--c-muted);font-style:italic">vide</span>') +
+      row('📝 Notes manuscrites' + jumpBtn(5, 'Notes'), nbMsNotes === 0 ? '<span style="color:var(--c-muted);font-style:italic">aucune</span>' : '<b>' + nbMsNotes + '</b>') +
+    '</div>' +
+    /* Notes texte */
+    '<div style="background:#fbf8f2;border-radius:10px;padding:14px 16px;margin-bottom:12px">' +
+      '<div style="font-size:11px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;margin-bottom:8px">Notes texte' + jumpBtn(5, 'Notes') + '</div>' +
+      '<div style="font-size:13px;color:var(--c-text);line-height:1.55;white-space:pre-wrap">' + notesPreview + '</div>' +
+    '</div>';
 }
 function savePieceFinal(){persistPiece();renderPiecesList();goBack();showToast('Pièce enregistrée ✓');}
 
@@ -4127,8 +4238,8 @@ function saveCroquis(){
   var db=dbLoad();var p=db.pieces[currentPieceId];if(!p)return;
   p.croquis=canvas.toDataURL('image/png');dbSave(db);
 }
-function setTool(t,btn){curTool=t;document.querySelectorAll('#step-1 .ctool').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');}
-function setColor(c,dot){curColor=c;document.querySelectorAll('#step-1 .cdot').forEach(function(d){d.classList.remove('active');});dot.classList.add('active');}
+function setTool(t,btn){curTool=t;document.querySelectorAll('#step-2 .ctool').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');}
+function setColor(c,dot){curColor=c;document.querySelectorAll('#step-2 .cdot').forEach(function(d){d.classList.remove('active');});dot.classList.add('active');}
 function clearCanvas(){
   if(!mainCtx)return;
   customConfirm('Le croquis sera effacé. Cette action est irréversible.',
@@ -5677,15 +5788,15 @@ window.FEATURES_ENABLED = Object.assign({
     document.getElementById('aj-fab-photo').onclick = function(){
       // Si pas sur step photos, on switch ; sinon ouvre directement
       if(currentScreen === 'screen-piece'){
-        var b = document.querySelectorAll('.step-btn')[4];
-        if(b) switchStep(4, b);
+        var b = document.querySelectorAll('.step-btn')[1];
+        if(b) switchStep(1, b);
         setTimeout(function(){ if(typeof addPhoto==='function') addPhoto(); }, 250);
       }
     };
     document.getElementById('aj-fab-sketch').onclick = function(){
       if(currentScreen === 'screen-piece'){
-        var b = document.querySelectorAll('.step-btn')[1];
-        if(b) switchStep(1, b);
+        var b = document.querySelectorAll('.step-btn')[2];
+        if(b) switchStep(2, b);
       }
     };
     document.getElementById('aj-fab-note').onclick = function(){

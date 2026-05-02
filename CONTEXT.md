@@ -73,6 +73,36 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 7 — restauration Travaux dans la fiche pièce + ajout Résumé)
+
+Suite logique : la sidebar reste à 6 items (Travaux toujours masqué via `travauxNav:false`) **mais** dans la fiche pièce on restaure l'onglet **Travaux** + on ajoute un **Résumé** final.
+
+**Nouvel ordre des onglets dans `screen-piece` :**
+1. **Infos** (`step-0`)
+2. **Photos** (`step-1`) ← anciennement step-4
+3. **Croquis** (`step-2`) ← anciennement step-1
+4. **Travaux** (`step-3`) ← inchangé, contenu intact (toutes les sous-options du module Travaux préservées : maçonnerie, électricité, plomberie, sol, peinture, etc.)
+5. **Mesures** (`step-4`) ← anciennement step-2
+6. **Notes** (`step-5`) ← inchangé
+7. **Résumé** (`step-6`) ← **NOUVEAU**
+
+Logique du parcours : on identifie la pièce → photos → croquis stylet → travaux à prévoir → mesures → notes → résumé final → Enregistrer.
+
+**Ce qui a changé techniquement :**
+- Renommage atomique des `<div id="step-N">` (dual-pass sed avec marqueurs temporaires pour éviter collision step-1↔step-2↔step-4) — DOM physique inchangé, juste les ids alignés sur l'ordre visuel
+- `step-nav` HTML : 6 → **7 boutons**, ordre Infos/Photos/Croquis/Travaux/Mesures/Notes/Résumé
+- `switchStep(n)` : loop `i<6` → `i<7`, init canvas Croquis remappé `n===1` → `n===2`, hook `n===6` → render dynamique du résumé
+- `setTool` / `setColor` selectors : `#step-1` → `#step-2` (Croquis a changé d'id)
+- 2 références FAB (`step-btn[1/4]`) corrigées vers les nouveaux indices (FAB toujours désactivé mais le code est cohérent)
+- 5 boutons « Suivant → » mis à jour pour suivre le nouveau workflow
+- Nouvelle fonction `renderPieceResume()` : génère un récap dynamique de la pièce avec **boutons « ↺ Modifier »** qui sautent à l'onglet correspondant. Affiche : nom + état + mesures (longueur/largeur/HSP + surface au sol + surface murs brut) + travaux cochés (compte + liste compacte) + photos + croquis + notes manuscrites + extrait notes texte. Persiste les données via `persistPiece()` avant render pour avoir les dernières valeurs
+
+**Compatibilité localStorage** : aucun champ de données renommé ni structure changée. Les pièces déjà sauvegardées (`db.pieces[X]` avec `nom`, `etat`, `mesures`, `travaux`, `photos`, `msNotes`, `notes`, `croquis`, `croquisNotes`) restent **100 % compatibles**.
+
+**Régressions vérifiées** : tous les 8 flags Session 6 conservés à `false` (sidebar Travaux + boutons PDF/Bon visite/Export + FAB + micros + calcul rapide murs + annotations libres). Aucune réactivation IA / Analyse RDV / Synthèse devis / Devis SDB / Documents émis / Statistiques.
+
+**SW bumpé `v14-simplification2` → `v15-travaux-restored`** — vide le cache SW au reload.
+
 ## État au 2026-04-30 (Session 6 — recentrage prise de note tablette/stylet)
 
 Suite logique de la Session 5 : on continue d'enlever tout ce qui parasite la prise de note chantier. Code conservé via `FEATURES_ENABLED`.
