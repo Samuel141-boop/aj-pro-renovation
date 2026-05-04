@@ -73,6 +73,53 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 12 — 4 champs IA-ready sur tous les éléments importants)
+
+Session de **structuration** pour préparer une future génération de devis par IA. **Pas d'IA active**, juste de la donnée bien typée. Chaque élément important du chantier porte désormais 4 méta-champs qui permettront à une IA future de distinguer ce qui est **vu / coché / mesuré / supposé / à confirmer**.
+
+**4 champs ajoutés sur chaque item :**
+- `informationSource` : d'où vient l'info (`note` / `photo` / `sketch` / `checkbox` / `measurement` / `client_statement` / `manual` / `other`)
+- `certaintyLevel` : niveau de fiabilité (`confirmed` / `probable` / `to_check` / `not_planned`)
+- `concernedElement` : élément concerné (24 valeurs : `shower` / `bathtub` / `toilet` / `basin` / `furniture` / `floor` / `wall` / `ceiling` / `door` / `window` / `radiator` / `ventilation` / `drain` / `water_inlet` / `outlet` / `lighting` / `boxing` / `pipes` / `tiling` / `painting` / `parquet` / `skirting` / `accessories` / `other`)
+- `plannedAction` : action prévue (15 valeurs : `remove` / `keep` / `replace` / `create` / `install` / `repair_or_rework` / `move` / `check` / `connect` / `paint` / `tile` / `evacuate` / `clean` / `not_concerned` / `other`)
+
+**Constantes centralisées** : `RECAP_INFO_SOURCES`, `RECAP_CERTAINTY_LEVELS`, `RECAP_CONCERNED_ELEMENTS`, `RECAP_PLANNED_ACTIONS`.
+
+**8 collections enrichies (rétro-compat)** via `recapEnsureClient` + helper `recapEnsureItemMeta(item, defaults)` :
+| Collection | Defaults source | Defaults certitude |
+|---|---|---|
+| `technicalPoints` (Points sensibles) | `manual` | `to_check` |
+| `pointsToCheck` (À vérifier) | `manual` | `to_check` (action: `check`) |
+| `workOptions` (Options) | `manual` | `probable` |
+| `siteConstraints` (Contraintes) | `manual` | `confirmed` |
+| `plannedMaterials` (Fournitures) | `manual` | `to_check` |
+| `plannedLabor` (Main-d'œuvre) | `manual` | `probable` |
+| `devisReserves` (Réserves devis) | `checkbox`/existant | `confirmed` |
+| `removalItems` (Dépose) | `manual` | dérivé de `action` |
+
+**3 collections enrichies au niveau pièce** via `recapEnsurePiece` :
+| Collection | Defaults |
+|---|---|
+| `piece.photos[]` | `informationSource:'photo'`, `certaintyLevel:'to_check'` |
+| `piece.msNotes[]` | `informationSource:'note'`, `certaintyLevel:'to_check'` |
+| `piece.croquisMeta` | `informationSource:'sketch'`, `certaintyLevel:'to_check'` (objet, 1 par pièce) |
+| `piece.workItemsMeta` | objet `{[catKey]: {...}}` pour méta par poste |
+
+**4 nouveaux helpers de rendu** + helper compact :
+- `recapSourceLabel(id)` / `recapCertaintyLabel` / `recapElementLabel` / `recapActionLabel`
+- `recapBadgeMeta(item)` : ligne de 4 badges (lecture seule)
+- `recapMetaRow(collectionName, item)` : ligne de 4 selects compacts inline pour édition rapide
+
+**Handler générique** : `recapEditItemMeta(collectionName, itemId, field, value)` — édite n'importe quel champ d'un item de n'importe quelle collection client. Variantes : `recapEditPieceItemMeta`, `recapEditPieceCroquisMeta`, `recapEditWorkItemMeta`.
+
+**8 collections branchées dans le rendu** : chaque item de `technicalPoints`, `pointsToCheck`, `workOptions`, `siteConstraints`, `plannedMaterials`, `plannedLabor`, `removalItems`, `devisReserves` (custom) affiche désormais sous son contenu une ligne de 4 selects compacts (Source / Certitude / Élément / Action) — édition immédiate sans modal.
+
+**Compatibilité localStorage : ✅ totale.** Tous les nouveaux champs créés à la volée par les `ensure*` à la lecture. Aucune structure existante supprimée ou renommée. Les pièces et clients sauvegardés avant Session 12 s'ouvrent normalement et reçoivent automatiquement les valeurs par défaut.
+
+**Régressions vérifiées** : 8 flags Session 6 toujours `false`. Pas d'IA / Devis SDB / etc. réactivés. Croquis stylet (Session 8) intact. Ordre onglets fiche pièce (Session 7) intact.
+
+**SW v19-recap-devis-ready → v20-ai-ready-meta** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 11 — Récap « devis-ready » : Réserves, Statut postes, Dépose, Fournitures enrichies)
 
 Le récap devient une vraie **fiche pré-devis interne**. 5 nouveaux blocs préparent l'arrivée future d'une IA pour générer un devis depuis ces données structurées. Pas d'IA active maintenant, pas de chiffrage, pas de PDF.

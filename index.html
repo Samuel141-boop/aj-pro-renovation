@@ -4154,7 +4154,85 @@ function savePieceFinal(){persistPiece();renderPiecesList();goBack();showToast('
      piece.objectifTravaux = string libre
    ════════════════════════════════════════════════════════════════════ */
 
-/* Helpers de structures de données (rétro-compat) — Sessions 9 / 10 / 11 */
+/* ─── Constantes IA-ready (Session 12) ──────────────────────────
+   4 champs pour structurer chaque info importante du chantier :
+   source / certitude / élément concerné / action prévue.
+   Une IA future pourra lire ces données pour générer un devis fiable
+   sans confondre une hypothèse avec une info confirmée. */
+var RECAP_INFO_SOURCES = [
+  { id:'manual',           label:'Ajout manuel',     icon:'✍️' },
+  { id:'note',             label:'Note',             icon:'📝' },
+  { id:'photo',            label:'Photo',            icon:'📸' },
+  { id:'sketch',           label:'Croquis',          icon:'✏️' },
+  { id:'checkbox',         label:'Case cochée',      icon:'☑' },
+  { id:'measurement',      label:'Mesure',           icon:'📏' },
+  { id:'client_statement', label:'Dit par client',   icon:'🗣️' },
+  { id:'other',            label:'Autre',            icon:'·' }
+];
+var RECAP_CERTAINTY_LEVELS = [
+  { id:'confirmed',   label:'Confirmé',   color:'#1d4d33', bg:'rgba(45,106,79,0.15)' },
+  { id:'probable',    label:'Probable',   color:'#3a4a5c', bg:'rgba(122,136,150,0.15)' },
+  { id:'to_check',    label:'À vérifier', color:'#9a4514', bg:'rgba(232,98,26,0.15)' },
+  { id:'not_planned', label:'Non prévu',  color:'#7a8896', bg:'rgba(122,136,150,0.10)' }
+];
+var RECAP_CONCERNED_ELEMENTS = [
+  { id:'',             label:'—' },
+  { id:'shower',       label:'Douche' },
+  { id:'bathtub',      label:'Baignoire' },
+  { id:'toilet',       label:'WC' },
+  { id:'basin',        label:'Vasque' },
+  { id:'furniture',    label:'Meuble' },
+  { id:'floor',        label:'Sol' },
+  { id:'wall',         label:'Mur' },
+  { id:'ceiling',      label:'Plafond' },
+  { id:'door',         label:'Porte' },
+  { id:'window',       label:'Fenêtre' },
+  { id:'radiator',     label:'Radiateur' },
+  { id:'ventilation',  label:'Ventilation' },
+  { id:'drain',        label:'Évacuation' },
+  { id:'water_inlet',  label:'Arrivée d\'eau' },
+  { id:'outlet',       label:'Prise' },
+  { id:'lighting',     label:'Éclairage' },
+  { id:'boxing',       label:'Coffrage' },
+  { id:'pipes',        label:'Tuyaux' },
+  { id:'tiling',       label:'Carrelage' },
+  { id:'painting',     label:'Peinture' },
+  { id:'parquet',      label:'Parquet' },
+  { id:'skirting',     label:'Plinthes' },
+  { id:'accessories',  label:'Accessoires' },
+  { id:'other',        label:'Autre' }
+];
+var RECAP_PLANNED_ACTIONS = [
+  { id:'',                label:'—' },
+  { id:'remove',          label:'Déposer' },
+  { id:'keep',            label:'Conserver' },
+  { id:'replace',         label:'Remplacer' },
+  { id:'create',          label:'Créer' },
+  { id:'install',         label:'Poser' },
+  { id:'repair_or_rework',label:'Reprendre' },
+  { id:'move',            label:'Déplacer' },
+  { id:'check',           label:'Vérifier' },
+  { id:'connect',         label:'Raccorder' },
+  { id:'paint',           label:'Peindre' },
+  { id:'tile',            label:'Carreler' },
+  { id:'evacuate',        label:'Évacuer' },
+  { id:'clean',           label:'Nettoyer' },
+  { id:'not_concerned',   label:'Non concerné' },
+  { id:'other',           label:'Autre' }
+];
+
+/* Applique les 4 champs IA-ready sur un item d'une collection (rétro-compat).
+   defaults = { source, certainty, element, action } selon le contexte d'origine. */
+function recapEnsureItemMeta(item, defaults){
+  if(!item || typeof item !== 'object') return;
+  defaults = defaults || {};
+  if(typeof item.informationSource === 'undefined') item.informationSource = defaults.source || (item.source || 'manual');
+  if(typeof item.certaintyLevel    === 'undefined') item.certaintyLevel    = defaults.certainty || 'to_check';
+  if(typeof item.concernedElement  === 'undefined') item.concernedElement  = defaults.element || '';
+  if(typeof item.plannedAction     === 'undefined') item.plannedAction     = defaults.action || '';
+}
+
+/* Helpers de structures de données (rétro-compat) — Sessions 9 / 10 / 11 / 12 */
 function recapEnsureClient(c){
   if(!c) return null;
   /* Session 9 */
@@ -4182,8 +4260,23 @@ function recapEnsureClient(c){
     if(typeof m.relatedWorkItemId === 'undefined') m.relatedWorkItemId = null;
     if(typeof m.comment === 'undefined')         m.comment = '';
     if(typeof m.source === 'undefined')          m.source = 'manual';
-    /* status existant gardé tel quel; sinon défaut 'to_confirm' */
     if(typeof m.status === 'undefined')          m.status = 'to_confirm';
+  });
+  /* Session 12 — enrichir TOUTES les collections avec les 4 champs IA-ready */
+  c.technicalPoints.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'to_check' }); });
+  c.pointsToCheck.forEach(function(it){   recapEnsureItemMeta(it, { source:'manual', certainty:'to_check', action:'check' }); });
+  c.workOptions.forEach(function(it){     recapEnsureItemMeta(it, { source:'manual', certainty:'probable' }); });
+  c.siteConstraints.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'confirmed' }); });
+  c.plannedMaterials.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'to_check' }); });
+  c.plannedLabor.forEach(function(it){     recapEnsureItemMeta(it, { source:'manual', certainty:'probable' }); });
+  c.devisReserves.forEach(function(it){    recapEnsureItemMeta(it, { source:(it.source || 'checkbox'), certainty:'confirmed' }); });
+  c.removalItems.forEach(function(it){
+    /* removalItems a déjà 'action'='remove'/'keep'/'to_confirm' (Session 11). On le mappe vers plannedAction si pas encore fait. */
+    if(typeof it.plannedAction === 'undefined' || it.plannedAction === ''){
+      var actMap = { 'remove':'remove', 'keep':'keep', 'to_confirm':'check' };
+      it.plannedAction = actMap[it.action] || 'remove';
+    }
+    recapEnsureItemMeta(it, { source:'manual', certainty:(it.action === 'to_confirm' ? 'to_check' : 'confirmed'), action: it.plannedAction });
   });
   return c;
 }
@@ -4202,6 +4295,16 @@ function recapEnsurePiece(p){
   if(typeof p.finishLevel      !== 'string') p.finishLevel      = '';
   /* Session 11 — statut par poste de travaux (clé = catKey ou paintElem) */
   if(!p.workItemsStatus || typeof p.workItemsStatus !== 'object') p.workItemsStatus = {};
+  /* Session 12 — métadonnées IA-ready par poste de travaux (clé = catKey)
+     Stocke source/certainty/element/action séparément du status pour ne pas casser la rétro-compat. */
+  if(!p.workItemsMeta || typeof p.workItemsMeta !== 'object') p.workItemsMeta = {};
+  /* Session 12 — métadonnées IA-ready au niveau du croquis pièce (un seul croquis par pièce) */
+  if(!p.croquisMeta || typeof p.croquisMeta !== 'object'){
+    p.croquisMeta = { informationSource:'sketch', certaintyLevel:'to_check', concernedElement:'', plannedAction:'' };
+  }
+  /* Session 12 — métadonnées IA-ready sur les photos et notes manuscrites de la pièce */
+  (p.photos || []).forEach(function(ph){ recapEnsureItemMeta(ph, { source:'photo', certainty:'to_check' }); });
+  (p.msNotes || []).forEach(function(n){ recapEnsureItemMeta(n,  { source:'note',  certainty:'to_check' }); });
   return p;
 }
 
@@ -4742,6 +4845,86 @@ function recapCycleMaterialStatus(id){
   showRecap();
 }
 
+/* ─── HELPERS BADGES IA-ready Session 12 ─────────────────────────── */
+function recapSourceLabel(id){ var f = RECAP_INFO_SOURCES.find(function(s){ return s.id === id; }); return f || RECAP_INFO_SOURCES[0]; }
+function recapCertaintyLabel(id){ var f = RECAP_CERTAINTY_LEVELS.find(function(s){ return s.id === id; }); return f || RECAP_CERTAINTY_LEVELS[2]; }
+function recapElementLabel(id){ var f = RECAP_CONCERNED_ELEMENTS.find(function(s){ return s.id === id; }); return f || RECAP_CONCERNED_ELEMENTS[0]; }
+function recapActionLabel(id){ var f = RECAP_PLANNED_ACTIONS.find(function(s){ return s.id === id; }); return f || RECAP_PLANNED_ACTIONS[0]; }
+
+function recapBadgeMeta(item){
+  /* Renvoie la ligne de 4 badges (lecture seule) — utile pour l'affichage compact */
+  if(!item) return '';
+  var s = recapSourceLabel(item.informationSource);
+  var c = recapCertaintyLabel(item.certaintyLevel);
+  var el = recapElementLabel(item.concernedElement);
+  var ac = recapActionLabel(item.plannedAction);
+  return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;font-family:Inter,system-ui,sans-serif">' +
+    '<span title="Source : ' + esc(s.label) + '" style="background:rgba(122,136,150,0.10);color:#3a4a5c;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600">' + s.icon + ' ' + esc(s.label) + '</span>' +
+    '<span title="Certitude" style="background:' + c.bg + ';color:' + c.color + ';padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.3px">' + esc(c.label) + '</span>' +
+    (item.concernedElement ? '<span title="Élément concerné" style="background:rgba(13,70,144,0.10);color:#0d4690;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600">📍 ' + esc(el.label) + '</span>' : '') +
+    (item.plannedAction ? '<span title="Action prévue" style="background:rgba(106,74,142,0.12);color:#4a3565;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600">▶ ' + esc(ac.label) + '</span>' : '') +
+  '</div>';
+}
+
+/* Renvoie une rangée de 4 selects compacts pour ÉDITER les 4 champs IA-ready */
+function recapMetaRow(collectionName, item){
+  if(!item) return '';
+  var st = 'padding:3px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:10.5px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;min-width:0;flex:1;min-width:88px';
+  function opts(arr, sel){
+    return arr.map(function(o){ return '<option value="' + esc(o.id) + '"' + (sel === o.id ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('');
+  }
+  return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;font-family:Inter,system-ui,sans-serif">' +
+    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'informationSource\',this.value)" title="Source de l\'information" style="' + st + '">' + opts(RECAP_INFO_SOURCES, item.informationSource) + '</select>' +
+    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'certaintyLevel\',this.value)" title="Niveau de certitude" style="' + st + '">' + opts(RECAP_CERTAINTY_LEVELS, item.certaintyLevel) + '</select>' +
+    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'concernedElement\',this.value)" title="Élément concerné" style="' + st + '">' + opts(RECAP_CONCERNED_ELEMENTS, item.concernedElement) + '</select>' +
+    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'plannedAction\',this.value)" title="Action prévue" style="' + st + '">' + opts(RECAP_PLANNED_ACTIONS, item.plannedAction) + '</select>' +
+  '</div>';
+}
+
+/* Handler générique : édite un champ d'un item de n'importe quelle collection client */
+function recapEditItemMeta(collectionName, itemId, field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var coll = c[collectionName];
+  if(!Array.isArray(coll)) return;
+  var item = coll.find(function(x){ return x.id === itemId; });
+  if(!item) return;
+  item[field] = value;
+  item.updatedAt = Date.now();
+  recapSaveClient(c);
+}
+
+/* Idem au niveau pièce (pour photos/msNotes) */
+function recapEditPieceItemMeta(pieceId, collectionName, itemId, field, value){
+  var db=dbLoad(); var p=db.pieces[pieceId]; if(!p) return;
+  recapEnsurePiece(p);
+  var coll = p[collectionName];
+  if(!Array.isArray(coll)) return;
+  var item = coll.find(function(x){ return x.id === itemId; });
+  if(!item) return;
+  item[field] = value;
+  recapSavePiece(p);
+}
+
+/* Idem pour les méta du croquis (un seul croquis par pièce — pas un array) */
+function recapEditPieceCroquisMeta(pieceId, field, value){
+  var db=dbLoad(); var p=db.pieces[pieceId]; if(!p) return;
+  recapEnsurePiece(p);
+  p.croquisMeta[field] = value;
+  recapSavePiece(p);
+}
+
+/* Idem pour les méta des postes de travaux (par catKey) */
+function recapEditWorkItemMeta(pieceId, workKey, field, value){
+  var db=dbLoad(); var p=db.pieces[pieceId]; if(!p) return;
+  recapEnsurePiece(p);
+  if(!p.workItemsMeta[workKey]){
+    p.workItemsMeta[workKey] = { informationSource:'checkbox', certaintyLevel:'confirmed', concernedElement:'', plannedAction:'' };
+  }
+  p.workItemsMeta[workKey][field] = value;
+  recapSavePiece(p);
+}
+
 /* HELPERS de rendu pour les statuts/badges Session 11 */
 function recapWorkStatusBadge(status){
   var s = (status||'included');
@@ -4911,13 +5094,16 @@ function showRecap(){
     (siteCons.length === 0
       ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune contrainte chantier renseignée pour l\'instant.</div>'
       : siteCons.map(function(s){
-          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
-            '<span style="font-size:14px;color:#9a4514;flex-shrink:0">⚠</span>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:12.5px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(s.text) + '</div>' +
-              (s.category ? '<div style="font-size:10px;color:#7a8896;margin-top:3px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600">' + esc(s.category) + '</div>' : '') +
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px">' +
+            '<div style="display:flex;align-items:flex-start;gap:10px">' +
+              '<span style="font-size:14px;color:#9a4514;flex-shrink:0">⚠</span>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="font-size:12.5px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(s.text) + '</div>' +
+                (s.category ? '<div style="font-size:10px;color:#7a8896;margin-top:3px;text-transform:uppercase;letter-spacing:0.4px;font-weight:600">' + esc(s.category) + '</div>' : '') +
+              '</div>' +
+              '<button onclick="recapRemoveSiteConstraint(\'' + s.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
             '</div>' +
-            '<button onclick="recapRemoveSiteConstraint(\'' + s.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+            recapMetaRow('siteConstraints', s) +
           '</div>';
         }).join('')) +
     '<button onclick="recapAddSiteConstraint()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une contrainte chantier</button>'
@@ -5062,13 +5248,16 @@ function showRecap(){
       : ptsTech.map(function(pt){
           var s = recapImportanceStyle(pt.importance);
           var roomLabel = pt.roomId ? recapPieceNameById(pt.roomId) : null;
-          return '<div style="background:' + s.bg + ';border:1px solid ' + s.border + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px">' +
-            '<span style="font-size:14px;color:' + s.color + ';flex-shrink:0">' + s.icon + '</span>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:12.5px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(pt.text) + '</div>' +
-              '<div style="font-size:10px;color:' + s.color + ';margin-top:3px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Importance ' + esc(pt.importance) + (roomLabel ? ' · ' + esc(roomLabel) : ' · global') + '</div>' +
+          return '<div style="background:' + s.bg + ';border:1px solid ' + s.border + ';border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+            '<div style="display:flex;align-items:flex-start;gap:10px">' +
+              '<span style="font-size:14px;color:' + s.color + ';flex-shrink:0">' + s.icon + '</span>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="font-size:12.5px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(pt.text) + '</div>' +
+                '<div style="font-size:10px;color:' + s.color + ';margin-top:3px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Importance ' + esc(pt.importance) + (roomLabel ? ' · ' + esc(roomLabel) : ' · global') + '</div>' +
+              '</div>' +
+              '<button onclick="recapRemoveTechnicalPoint(\'' + pt.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
             '</div>' +
-            '<button onclick="recapRemoveTechnicalPoint(\'' + pt.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+            recapMetaRow('technicalPoints', pt) +
           '</div>';
         }).join('')) +
     '<button onclick="recapAddTechnicalPoint()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un point technique</button>'
@@ -5084,13 +5273,16 @@ function showRecap(){
       : ptsCheck.map(function(pt){
           var done = pt.status === 'resolved';
           var roomLabel = pt.roomId ? recapPieceNameById(pt.roomId) : null;
-          return '<div style="background:' + (done ? 'rgba(45,106,79,0.05)' : '#fff') + ';border:1px solid ' + (done ? 'rgba(45,106,79,0.25)' : 'var(--c-border,#e3dccc)') + ';border-radius:8px;padding:10px 12px;margin-bottom:8px;display:flex;align-items:flex-start;gap:10px">' +
-            '<button onclick="recapTogglePointToCheck(\'' + pt.id + '\')" title="Marquer ' + (done?'à résoudre':'résolu') + '" style="background:transparent;border:1.5px solid ' + (done ? '#1d4d33' : '#7a8896') + ';color:' + (done ? '#1d4d33' : 'transparent') + ';width:20px;height:20px;border-radius:4px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;font-weight:700">' + (done ? '✓' : '') + '</button>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:12.5px;color:#0f2030;line-height:1.4;' + (done ? 'text-decoration:line-through;color:#7a8896' : '') + '">' + esc(pt.text) + '</div>' +
-              (roomLabel ? '<div style="font-size:10px;color:#7a8896;margin-top:3px">' + esc(roomLabel) + '</div>' : '') +
+          return '<div style="background:' + (done ? 'rgba(45,106,79,0.05)' : '#fff') + ';border:1px solid ' + (done ? 'rgba(45,106,79,0.25)' : 'var(--c-border,#e3dccc)') + ';border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+            '<div style="display:flex;align-items:flex-start;gap:10px">' +
+              '<button onclick="recapTogglePointToCheck(\'' + pt.id + '\')" title="Marquer ' + (done?'à résoudre':'résolu') + '" style="background:transparent;border:1.5px solid ' + (done ? '#1d4d33' : '#7a8896') + ';color:' + (done ? '#1d4d33' : 'transparent') + ';width:20px;height:20px;border-radius:4px;cursor:pointer;font-size:13px;line-height:1;flex-shrink:0;font-weight:700">' + (done ? '✓' : '') + '</button>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="font-size:12.5px;color:#0f2030;line-height:1.4;' + (done ? 'text-decoration:line-through;color:#7a8896' : '') + '">' + esc(pt.text) + '</div>' +
+                (roomLabel ? '<div style="font-size:10px;color:#7a8896;margin-top:3px">' + esc(roomLabel) + '</div>' : '') +
+              '</div>' +
+              '<button onclick="recapRemovePointToCheck(\'' + pt.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
             '</div>' +
-            '<button onclick="recapRemovePointToCheck(\'' + pt.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+            recapMetaRow('pointsToCheck', pt) +
           '</div>';
         }).join('')) +
     '<button onclick="recapAddPointToCheck()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un point à vérifier</button>'
@@ -5119,6 +5311,7 @@ function showRecap(){
             ta(o.content, "function(v){recapEditWorkOption('"+o.id+"','content',v)}", 'Ex:\n- dépose ancienne paroi\n- reprise joints silicone\n- vérification évacuation\n- pose nouvelle paroi', 90) +
             '<label style="font-size:10.5px;color:#3a4a5c;font-weight:600;margin-top:10px;display:block">Remarques (optionnel)</label>' +
             ta(o.notes, "function(v){recapEditWorkOption('"+o.id+"','notes',v)}", 'Ex: validation client à confirmer, livraison sous 2 semaines…', 50) +
+            recapMetaRow('workOptions', o) +
           '</div>';
         }).join('')) +
     '<button onclick="recapAddWorkOption()" style="margin-top:8px;padding:10px 14px;background:#1d4d33;border:none;color:#fff;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:700;width:100%">+ Ajouter une option proposée</button>'
@@ -5157,6 +5350,7 @@ function showRecap(){
                 (mat.details ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:6px;line-height:1.5"><b>Notes :</b> ' + esc(mat.details) + '</div>' : '') +
                 '<label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;margin-top:6px;display:block">Commentaire</label>' +
                 '<input type="text" value="' + esc(mat.comment||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'comment\',this.value)" placeholder="Précision, validation client en attente…" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" />' +
+                recapMetaRow('plannedMaterials', mat) +
               '</div>' +
               '<button onclick="recapRemovePlannedMaterial(\'' + mat.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
             '</div>' +
@@ -5185,21 +5379,24 @@ function showRecap(){
             items.map(function(r){
               var ab = recapRemovalActionBadge(r.action);
               var diffMap = { easy:'simple', medium:'moyenne', hard:'complexe', unknown:'inconnue' };
-              return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
-                '<span style="font-size:14px;flex-shrink:0">🪚</span>' +
-                '<div style="flex:1;min-width:0">' +
-                  '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
-                    '<span style="font-weight:600;color:#0f2030;font-size:13px">' + esc(r.elementName) + '</span>' +
-                    '<button onclick="recapCycleRemovalAction(\'' + r.id + '\')" title="Cycler l\'action" style="background:' + ab.bg + ';color:' + ab.color + ';border:none;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer">' + ab.label + '</button>' +
+              return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px">' +
+                '<div style="display:flex;align-items:flex-start;gap:10px">' +
+                  '<span style="font-size:14px;flex-shrink:0">🪚</span>' +
+                  '<div style="flex:1;min-width:0">' +
+                    '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                      '<span style="font-weight:600;color:#0f2030;font-size:13px">' + esc(r.elementName) + '</span>' +
+                      '<button onclick="recapCycleRemovalAction(\'' + r.id + '\')" title="Cycler l\'action" style="background:' + ab.bg + ';color:' + ab.color + ';border:none;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer">' + ab.label + '</button>' +
+                    '</div>' +
+                    '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:#7a8896">' +
+                      (r.action === 'remove' ? '<span>🗑 Évacuation gravats : <b>' + (r.debrisRemoval==='yes'?'oui':r.debrisRemoval==='no'?'non':'à confirmer') + '</b></span>' : '') +
+                      '<span>⚙ Difficulté : <b>' + esc(diffMap[r.difficulty] || r.difficulty || 'inconnue') + '</b></span>' +
+                    '</div>' +
+                    (r.comment ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:5px;line-height:1.5">' + esc(r.comment) + '</div>' :
+                      '<input type="text" value="" oninput="recapEditRemovalItem(\'' + r.id + '\',\'comment\',this.value)" placeholder="Commentaire (optionnel)…" style="width:100%;padding:4px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11px;background:#fff;margin-top:5px" />') +
                   '</div>' +
-                  '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:#7a8896">' +
-                    (r.action === 'remove' ? '<span>🗑 Évacuation gravats : <b>' + (r.debrisRemoval==='yes'?'oui':r.debrisRemoval==='no'?'non':'à confirmer') + '</b></span>' : '') +
-                    '<span>⚙ Difficulté : <b>' + esc(diffMap[r.difficulty] || r.difficulty || 'inconnue') + '</b></span>' +
-                  '</div>' +
-                  (r.comment ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:5px;line-height:1.5">' + esc(r.comment) + '</div>' :
-                    '<input type="text" value="" oninput="recapEditRemovalItem(\'' + r.id + '\',\'comment\',this.value)" placeholder="Commentaire (optionnel)…" style="width:100%;padding:4px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11px;background:#fff;margin-top:5px" />') +
+                  '<button onclick="recapRemoveRemovalItem(\'' + r.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
                 '</div>' +
-                '<button onclick="recapRemoveRemovalItem(\'' + r.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+                recapMetaRow('removalItems', r) +
               '</div>';
             }).join('') +
           '</div>';
@@ -5228,11 +5425,14 @@ function showRecap(){
   var customReserves = reserves.filter(function(r){ return !RECAP_RESERVE_TYPES.find(function(t){ return t.id === r.id; }); });
   var customHtml = customReserves.map(function(r){
     var b = recapReserveStatusBadge(r.status);
-    return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:8px 10px;margin-bottom:5px;display:flex;align-items:flex-start;gap:8px">' +
-      '<button onclick="recapCycleReserveStatus(\'' + r.id + '\')" title="Cycler le statut" style="background:' + b.bg + ';color:' + b.color + ';border:none;padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;flex-shrink:0;min-width:84px">' + b.label + '</button>' +
-      '<span style="font-size:12px;color:#0f2030;line-height:1.4;flex:1">' + esc(r.text) + '</span>' +
-      '<span style="font-size:9.5px;color:#7a8896;text-transform:uppercase;letter-spacing:0.3px;font-weight:600;flex-shrink:0">' + esc(r.type) + '</span>' +
-      '<button onclick="recapRemoveReserve(\'' + r.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0">✕</button>' +
+    return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:8px 10px;margin-bottom:5px">' +
+      '<div style="display:flex;align-items:flex-start;gap:8px">' +
+        '<button onclick="recapCycleReserveStatus(\'' + r.id + '\')" title="Cycler le statut" style="background:' + b.bg + ';color:' + b.color + ';border:none;padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;flex-shrink:0;min-width:84px">' + b.label + '</button>' +
+        '<span style="font-size:12px;color:#0f2030;line-height:1.4;flex:1">' + esc(r.text) + '</span>' +
+        '<span style="font-size:9.5px;color:#7a8896;text-transform:uppercase;letter-spacing:0.3px;font-weight:600;flex-shrink:0">' + esc(r.type) + '</span>' +
+        '<button onclick="recapRemoveReserve(\'' + r.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0">✕</button>' +
+      '</div>' +
+      recapMetaRow('devisReserves', r) +
     '</div>';
   }).join('');
   var sectionReserves = section('Commentaires / réserves devis', '📋', nbIncluded + nbToConf,
@@ -5251,16 +5451,19 @@ function showRecap(){
       ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune intervention pour l\'instant.</div>'
       : labors.map(function(l){
           var diffColor = l.difficulty === 'difficile' ? '#c62828' : (l.difficulty === 'moyenne' ? '#9a4514' : (l.difficulty === 'facile' ? '#1d4d33' : '#7a8896'));
-          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
-            '<span style="font-size:14px;flex-shrink:0">🔧</span>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="font-size:13px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(l.text) + '</div>' +
-              ((l.difficulty || l.estimatedDuration) ? '<div style="font-size:10.5px;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">' +
-                (l.difficulty ? '<span style="color:' + diffColor + ';font-weight:600;text-transform:uppercase;letter-spacing:0.3px">⚙ ' + esc(l.difficulty) + '</span>' : '') +
-                (l.estimatedDuration ? '<span style="color:#7a8896">⏱ ' + esc(l.estimatedDuration) + '</span>' : '') +
-              '</div>' : '') +
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px">' +
+            '<div style="display:flex;align-items:flex-start;gap:10px">' +
+              '<span style="font-size:14px;flex-shrink:0">🔧</span>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="font-size:13px;color:#0f2030;font-weight:600;line-height:1.4">' + esc(l.text) + '</div>' +
+                ((l.difficulty || l.estimatedDuration) ? '<div style="font-size:10.5px;margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">' +
+                  (l.difficulty ? '<span style="color:' + diffColor + ';font-weight:600;text-transform:uppercase;letter-spacing:0.3px">⚙ ' + esc(l.difficulty) + '</span>' : '') +
+                  (l.estimatedDuration ? '<span style="color:#7a8896">⏱ ' + esc(l.estimatedDuration) + '</span>' : '') +
+                '</div>' : '') +
+              '</div>' +
+              '<button onclick="recapRemovePlannedLabor(\'' + l.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
             '</div>' +
-            '<button onclick="recapRemovePlannedLabor(\'' + l.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+            recapMetaRow('plannedLabor', l) +
           '</div>';
         }).join('')) +
     '<button onclick="recapAddPlannedLabor()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une intervention</button>'
