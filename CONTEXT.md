@@ -73,6 +73,38 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 11 — Récap « devis-ready » : Réserves, Statut postes, Dépose, Fournitures enrichies)
+
+Le récap devient une vraie **fiche pré-devis interne**. 5 nouveaux blocs préparent l'arrivée future d'une IA pour générer un devis depuis ces données structurées. Pas d'IA active maintenant, pas de chiffrage, pas de PDF.
+
+**Nouveaux blocs Session 11 :**
+- 📋 **Commentaires / réserves devis** (`client.devisReserves[]`) : **13 commentaires types pré-définis** cochables (vannes, dégâts dépose, copro, gravats, livraison, etc.) avec cycle de statut (à inclure → à confirmer → ignoré → retirer) + ajout de réserves personnalisées via prompt
+- 🪚 **Dépose existante** (`client.removalItems[]`) : éléments à déposer/conserver/à confirmer **groupés par pièce**, avec difficulté (simple/moyenne/complexe/inconnue), évacuation gravats, action cyclable
+- 📦 **Fournitures à prévoir** (anciennement « Matériel envisagé », `client.plannedMaterials[]` enrichi) : ajout des sub-fields `quantity`, `unit`, `dimensions`, `brandModel`, `finishColor`, `suppliedBy` (AJ Pro / Client / À confirmer), `status` (Inclus / Option / À confirmer / Non inclus), `comment`. Badges cyclables au clic.
+- 🎯 **Statut par poste de travaux** (`piece.workItemsStatus`) : pour chaque travaux coché par pièce, dropdown de statut (Inclus / Option / À confirmer / Non inclus) avec badges colorés
+- 📊 **Score « Devis prêt » étendu** : algo passe de 100 → ~125 max points, ajout des critères Réserves (5) + Dépose (5) + Statut postes (5) + Fournitures qualifiées (3)
+
+**Préparation pour IA future (sans la coder) :**
+Toutes les nouvelles structures incluent un champ `source` :
+- `'manual'` : saisie manuelle artisan
+- `'checkbox'` : coché depuis un type pré-défini (ex: réserves types)
+- `'photo'` / `'sketch'` / `'note'` / `'future_ai'` : prêts pour quand l'IA déduira ces éléments depuis les médias
+
+Ça permettra plus tard à l'IA de distinguer ce qui est **vu / coché / mesuré / supposé / à confirmer** sans changer la structure de données.
+
+**Nouvelles fonctions JS (~10) :**
+`recapToggleReserveType`, `recapAddCustomReserve`, `recapCycleReserveStatus`, `recapRemoveReserve`, `recapSetWorkItemStatus`, `recapAddRemovalItem`, `recapEditRemovalItem`, `recapCycleRemovalAction`, `recapRemoveRemovalItem`, `recapEditMaterialField`, `recapCycleMaterialSuppliedBy`, `recapCycleMaterialStatus`, `recapWorkStatusBadge`, `recapSuppliedByBadge`, `recapReserveStatusBadge`, `recapRemovalActionBadge`.
+
+**Constantes :** `RECAP_RESERVE_TYPES` (13 entrées catégorisées : technique / client / accès / général).
+
+**Compatibilité localStorage : ✅ totale.** Tous les nouveaux champs créés à la volée par `recapEnsureClient` / `recapEnsurePiece`. Migration douce des `plannedMaterials` existants (ajout des sub-fields manquants à la lecture). Aucun champ supprimé ou renommé.
+
+**Régressions vérifiées** : 8 flags Session 6 toujours `false`. Pas d'IA / Devis SDB / Documents / etc. réactivés. Croquis stylet (Session 8) intact. Ordre onglets fiche pièce (Session 7) intact.
+
+**Récap final = 12 sections + 1 score** : Client · Demande · Contexte · Contraintes · Pièces (avec statut postes) · Dépose · Fournitures · Main-d'œuvre · Points sensibles · À vérifier · Options · Réserves devis · Notes terrain.
+
+**SW v18-recap-complete → v19-recap-devis-ready** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 10 — Récap enrichi : Demande client, Contraintes, Matériel, Main-d'œuvre, Score %)
 
 Suite directe de la Session 9. Le module Récap devient une **vraie fiche chantier interne complète** avec **10 blocs structurés** + **score de complétude 0-100%**. Pas de PDF, pas d'IA, pas de chiffrage — outil de revue/préparation.

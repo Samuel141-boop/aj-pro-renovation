@@ -4154,7 +4154,7 @@ function savePieceFinal(){persistPiece();renderPiecesList();goBack();showToast('
      piece.objectifTravaux = string libre
    ════════════════════════════════════════════════════════════════════ */
 
-/* Helpers de structures de données (rétro-compat) — Session 9 + 10 */
+/* Helpers de structures de données (rétro-compat) — Sessions 9 / 10 / 11 */
 function recapEnsureClient(c){
   if(!c) return null;
   /* Session 9 */
@@ -4163,11 +4163,28 @@ function recapEnsureClient(c){
   if(!Array.isArray(c.technicalPoints)) c.technicalPoints = [];
   if(!Array.isArray(c.pointsToCheck))   c.pointsToCheck   = [];
   if(!Array.isArray(c.workOptions))     c.workOptions     = [];
-  /* Session 10 — nouvelles structures fiche chantier complète */
+  /* Session 10 */
   if(!c.clientRequest) c.clientRequest = { text:'', budgetLevel:'', priorities:'', deadlineConstraints:'', aestheticPreferences:'' };
   if(!Array.isArray(c.siteConstraints))  c.siteConstraints  = [];
   if(!Array.isArray(c.plannedMaterials)) c.plannedMaterials = [];
   if(!Array.isArray(c.plannedLabor))     c.plannedLabor     = [];
+  /* Session 11 — préparation devis IA */
+  if(!Array.isArray(c.devisReserves))    c.devisReserves    = [];
+  if(!Array.isArray(c.removalItems))     c.removalItems     = [];
+  /* Migration douce : enrichir les plannedMaterials existants avec les nouveaux champs */
+  c.plannedMaterials.forEach(function(m){
+    if(typeof m.quantity === 'undefined')        m.quantity = '';
+    if(typeof m.unit === 'undefined')            m.unit = '';
+    if(typeof m.dimensions === 'undefined')      m.dimensions = '';
+    if(typeof m.brandModel === 'undefined')      m.brandModel = '';
+    if(typeof m.finishColor === 'undefined')     m.finishColor = '';
+    if(typeof m.suppliedBy === 'undefined')      m.suppliedBy = 'aj_pro';
+    if(typeof m.relatedWorkItemId === 'undefined') m.relatedWorkItemId = null;
+    if(typeof m.comment === 'undefined')         m.comment = '';
+    if(typeof m.source === 'undefined')          m.source = 'manual';
+    /* status existant gardé tel quel; sinon défaut 'to_confirm' */
+    if(typeof m.status === 'undefined')          m.status = 'to_confirm';
+  });
   return c;
 }
 function recapEnsurePiece(p){
@@ -4175,7 +4192,7 @@ function recapEnsurePiece(p){
   /* Session 9 */
   if(typeof p.etatActuel !== 'string')      p.etatActuel = '';
   if(typeof p.objectifTravaux !== 'string') p.objectifTravaux = '';
-  /* Session 10 — sub-fields État existant + Objectif (textareas optionnels) */
+  /* Session 10 */
   if(typeof p.elementsToKeep   !== 'string') p.elementsToKeep   = '';
   if(typeof p.elementsToRemove !== 'string') p.elementsToRemove = '';
   if(typeof p.damagedElements  !== 'string') p.damagedElements  = '';
@@ -4183,8 +4200,27 @@ function recapEnsurePiece(p){
   if(typeof p.technicalAccess  !== 'string') p.technicalAccess  = '';
   if(typeof p.expectedResult   !== 'string') p.expectedResult   = '';
   if(typeof p.finishLevel      !== 'string') p.finishLevel      = '';
+  /* Session 11 — statut par poste de travaux (clé = catKey ou paintElem) */
+  if(!p.workItemsStatus || typeof p.workItemsStatus !== 'object') p.workItemsStatus = {};
   return p;
 }
+
+/* Session 11 — Commentaires types pré-définis pour les réserves devis */
+var RECAP_RESERVE_TYPES = [
+  { id:'reserve-vannes',       text:'Vérifier le bon fonctionnement des vannes d\'arrêt du logement avant intervention.', type:'technique' },
+  { id:'reserve-degats',       text:'Risque de dégâts sur les enduits ou peintures attenantes lors de la dépose de carrelage.', type:'technique' },
+  { id:'reserve-supp-depose',  text:'Travaux supplémentaires possibles après dépose si le support est abîmé.', type:'technique' },
+  { id:'reserve-fournitures',  text:'Fournitures à confirmer selon choix client.', type:'client' },
+  { id:'reserve-acces-tech',   text:'Intervention sous réserve d\'accès technique suffisant.', type:'accès' },
+  { id:'reserve-copro',        text:'Accord copropriété / gardien nécessaire si intervention sur colonnes ou parties communes.', type:'accès' },
+  { id:'reserve-vannes-immeuble', text:'Accès aux vannes immeuble à confirmer.', type:'accès' },
+  { id:'reserve-support',      text:'Support à vérifier après dépose.', type:'technique' },
+  { id:'reserve-dim',          text:'Dimensions à confirmer avant commande.', type:'technique' },
+  { id:'reserve-mat-client',   text:'Matériel fourni par le client non inclus dans le devis.', type:'client' },
+  { id:'reserve-livraison',    text:'Livraison et acheminement dans le logement à prévoir.', type:'général' },
+  { id:'reserve-protection',   text:'Protection des sols et parties communes à prévoir.', type:'général' },
+  { id:'reserve-gravats',      text:'Évacuation des gravats à prévoir.', type:'général' }
+];
 function recapNewId(prefix){ return (prefix||'rcp_') + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 /* Sauvegarde directe d'un client après modification */
@@ -4495,8 +4531,254 @@ function recapComputeScore(c, pieces){
   /* Main-d'œuvre (5) */
   ck('au moins une intervention prévue', (c.plannedLabor||[]).length > 0, 5);
 
+  /* Session 11 — préparation devis */
+  /* Réserves devis (5) */
+  var hasReserveActive = (c.devisReserves||[]).some(function(r){ return r.status === 'included' || r.status === 'to_confirm'; });
+  ck('au moins une réserve devis', hasReserveActive, 5);
+  /* Dépose existante (5) */
+  ck('au moins un élément de dépose renseigné', (c.removalItems||[]).length > 0, 5);
+  /* Statut des postes (5) — au moins une pièce avec un statut autre que défaut */
+  var hasStatusedWork = pieces.some(function(p){
+    if(!p.workItemsStatus) return false;
+    var keys = Object.keys(p.workItemsStatus);
+    return keys.length > 0;
+  });
+  ck('au moins un poste avec statut renseigné', hasStatusedWork, 5);
+  /* Fourniture qualifiée (suppliedBy ≠ défaut, ou statut ≠ to_confirm) (3) */
+  var hasQualifiedSupply = (c.plannedMaterials||[]).some(function(m){
+    return m.suppliedBy && m.suppliedBy !== 'to_confirm' && m.status && m.status !== 'to_confirm';
+  });
+  ck('au moins une fourniture qualifiée (qui fournit + statut)', hasQualifiedSupply, 3);
+
   var pct = max > 0 ? Math.round((pts / max) * 100) : 0;
   return { pct: pct, points: pts, max: max, missing: missing };
+}
+
+/* ─── HANDLERS Session 11 (Réserves / Statut postes / Dépose / Fournitures enrichies) ─── */
+
+/* COMMENTAIRES / RÉSERVES À METTRE DANS LE DEVIS */
+function recapToggleReserveType(typeId){
+  /* Bascule l'inclusion d'un commentaire pré-défini */
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var existing = c.devisReserves.find(function(r){ return r.id === typeId; });
+  if(existing){
+    /* Cycle status : à inclure → à confirmer → ignoré → retiré */
+    if(existing.status === 'included')      existing.status = 'to_confirm';
+    else if(existing.status === 'to_confirm') existing.status = 'ignored';
+    else { c.devisReserves = c.devisReserves.filter(function(r){ return r.id !== typeId; }); }
+    if(existing) existing.updatedAt = Date.now();
+  } else {
+    var t = RECAP_RESERVE_TYPES.find(function(r){ return r.id === typeId; });
+    if(t){
+      c.devisReserves.push({
+        id: typeId,
+        text: t.text,
+        type: t.type,
+        roomId: null,
+        status: 'included',
+        note: '',
+        source: 'checkbox',
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+      });
+    }
+  }
+  recapSaveClient(c);
+  showRecap();
+}
+function recapAddCustomReserve(){
+  var text = prompt('Texte de la réserve / commentaire devis :\n\nExemple :\n- accès parking limité, prévoir véhicule utilitaire compact\n- chantier en zone classée, autorisation préalable nécessaire');
+  if(!text || !text.trim()) return;
+  var type = prompt('Type ? (général / pièce / technique / client / accès)', 'général');
+  type = (type||'général').toLowerCase();
+  var status = prompt('Statut ? (à inclure / à confirmer / ignoré)', 'à inclure');
+  var statusMap = { 'à inclure':'included', 'a inclure':'included', 'à confirmer':'to_confirm', 'a confirmer':'to_confirm', 'ignoré':'ignored', 'ignore':'ignored' };
+  status = statusMap[(status||'à inclure').toLowerCase()] || 'included';
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.devisReserves.push({
+    id: recapNewId('rsv_'),
+    text: text.trim(),
+    type: type,
+    roomId: null,
+    status: status,
+    note: '',
+    source: 'manual',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapCycleReserveStatus(reserveId){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var r = c.devisReserves.find(function(x){ return x.id === reserveId; });
+  if(!r) return;
+  if(r.status === 'included')       r.status = 'to_confirm';
+  else if(r.status === 'to_confirm') r.status = 'ignored';
+  else                                r.status = 'included';
+  r.updatedAt = Date.now();
+  recapSaveClient(c);
+  showRecap();
+}
+function recapRemoveReserve(id){
+  customConfirm('Supprimer cette réserve ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.devisReserves = c.devisReserves.filter(function(r){ return r.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer la réserve ?', danger:true, okLabel:'Supprimer'});
+}
+
+/* STATUT DES POSTES de travaux (par pièce) */
+function recapSetWorkItemStatus(pieceId, workKey, status){
+  var db=dbLoad(); var p=db.pieces[pieceId]; if(!p) return;
+  recapEnsurePiece(p);
+  p.workItemsStatus[workKey] = status;
+  recapSavePiece(p);
+}
+
+/* DÉPOSE EXISTANTE */
+function recapAddRemovalItem(){
+  var pieces = dbGetClientPieces(currentClientId);
+  if(!pieces.length){ if(typeof showToast==='function') showToast('Crée d\'abord une pièce'); return; }
+  var elementName = prompt('Élément existant à mentionner :\n\nExemples :\n- ancienne cabine de douche\n- paroi vitrée\n- meuble vasque\n- carrelage mural\n- coffrage tuyaux\n- WC suspendu\n- radiateur');
+  if(!elementName || !elementName.trim()) return;
+  var roomNameInput = prompt('Pièce ? (entrer le nom de la pièce — ' + pieces.map(function(p){return p.nom;}).join(' / ') + ')', pieces[0].nom);
+  var roomId = null;
+  if(roomNameInput && roomNameInput.trim()){
+    var found = pieces.find(function(p){ return p.nom && p.nom.toLowerCase().indexOf(roomNameInput.trim().toLowerCase()) >= 0; });
+    if(found) roomId = found.id;
+  }
+  if(!roomId) roomId = pieces[0].id;
+  var actionInput = prompt('Action ? (à déposer / à conserver / à confirmer)', 'à déposer');
+  var actionMap = { 'à déposer':'remove', 'a deposer':'remove', 'à conserver':'keep', 'a conserver':'keep', 'à confirmer':'to_confirm', 'a confirmer':'to_confirm' };
+  var action = actionMap[(actionInput||'à déposer').toLowerCase()] || 'remove';
+  var difficulty = prompt('Difficulté ? (simple / moyenne / complexe / inconnue)', 'moyenne');
+  var diffMap = { 'simple':'easy', 'moyenne':'medium', 'complexe':'hard', 'inconnue':'unknown', 'inconnu':'unknown' };
+  difficulty = diffMap[(difficulty||'moyenne').toLowerCase()] || 'medium';
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  c.removalItems.push({
+    id: recapNewId('rmv_'),
+    roomId: roomId,
+    elementName: elementName.trim(),
+    action: action,
+    preserve: action === 'keep' ? 'yes' : (action === 'to_confirm' ? 'to_confirm' : 'no'),
+    debrisRemoval: action === 'remove' ? 'yes' : 'no',
+    difficulty: difficulty,
+    comment: '',
+    photoIds: [],
+    sketchIds: [],
+    source: 'manual',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  });
+  recapSaveClient(c);
+  showRecap();
+}
+function recapEditRemovalItem(id, field, value){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var r = c.removalItems.find(function(x){ return x.id === id; });
+  if(r){ r[field] = value; r.updatedAt = Date.now(); }
+  recapSaveClient(c);
+}
+function recapCycleRemovalAction(id){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var r = c.removalItems.find(function(x){ return x.id === id; });
+  if(!r) return;
+  if(r.action === 'remove')          r.action = 'keep';
+  else if(r.action === 'keep')       r.action = 'to_confirm';
+  else                                r.action = 'remove';
+  r.preserve = r.action === 'keep' ? 'yes' : (r.action === 'to_confirm' ? 'to_confirm' : 'no');
+  r.debrisRemoval = r.action === 'remove' ? 'yes' : 'no';
+  r.updatedAt = Date.now();
+  recapSaveClient(c);
+  showRecap();
+}
+function recapRemoveRemovalItem(id){
+  customConfirm('Supprimer cet élément ?', function(){
+    var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+    recapEnsureClient(c);
+    c.removalItems = c.removalItems.filter(function(r){ return r.id !== id; });
+    recapSaveClient(c);
+    showRecap();
+  }, {title:'Supprimer la dépose ?', danger:true, okLabel:'Supprimer'});
+}
+
+/* FOURNITURES — étend recapAddPlannedMaterial avec les nouveaux champs */
+function recapEditMaterialField(id, field, value){
+  /* Alias pratique pour les éditeurs inline du récap */
+  recapEditPlannedMaterial(id, field, value);
+}
+function recapCycleMaterialSuppliedBy(id){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var m = c.plannedMaterials.find(function(x){ return x.id === id; });
+  if(!m) return;
+  if(m.suppliedBy === 'aj_pro')       m.suppliedBy = 'client';
+  else if(m.suppliedBy === 'client')  m.suppliedBy = 'to_confirm';
+  else                                 m.suppliedBy = 'aj_pro';
+  m.updatedAt = Date.now();
+  recapSaveClient(c);
+  showRecap();
+}
+function recapCycleMaterialStatus(id){
+  var db=dbLoad(); var c=db.clients[currentClientId]; if(!c) return;
+  recapEnsureClient(c);
+  var m = c.plannedMaterials.find(function(x){ return x.id === id; });
+  if(!m) return;
+  if(m.status === 'included')         m.status = 'option';
+  else if(m.status === 'option')      m.status = 'to_confirm';
+  else if(m.status === 'to_confirm')  m.status = 'excluded';
+  else                                 m.status = 'included';
+  m.updatedAt = Date.now();
+  recapSaveClient(c);
+  showRecap();
+}
+
+/* HELPERS de rendu pour les statuts/badges Session 11 */
+function recapWorkStatusBadge(status){
+  var s = (status||'included');
+  var map = {
+    'included':   { label:'Inclus',       bg:'rgba(45,106,79,0.15)',  color:'#1d4d33' },
+    'option':     { label:'Option',       bg:'rgba(106,74,142,0.15)', color:'#4a3565' },
+    'to_confirm': { label:'À confirmer',  bg:'rgba(232,98,26,0.15)',  color:'#9a4514' },
+    'excluded':   { label:'Non inclus',   bg:'rgba(122,136,150,0.18)', color:'#3a4a5c' }
+  };
+  return map[s] || map.included;
+}
+function recapSuppliedByBadge(by){
+  var b = (by||'aj_pro');
+  var map = {
+    'aj_pro':     { label:'AJ Pro',       bg:'rgba(201,169,110,0.18)', color:'#7a5a30' },
+    'client':     { label:'Client',       bg:'rgba(13,70,144,0.12)',   color:'#0d4690' },
+    'to_confirm': { label:'À confirmer',  bg:'rgba(232,98,26,0.15)',   color:'#9a4514' }
+  };
+  return map[b] || map.aj_pro;
+}
+function recapReserveStatusBadge(status){
+  var s = (status||'included');
+  var map = {
+    'included':   { label:'À inclure',    bg:'rgba(45,106,79,0.15)',   color:'#1d4d33', icon:'✓' },
+    'to_confirm': { label:'À confirmer',  bg:'rgba(232,98,26,0.15)',   color:'#9a4514', icon:'?' },
+    'ignored':    { label:'Ignoré',       bg:'rgba(122,136,150,0.18)', color:'#3a4a5c', icon:'—' }
+  };
+  return map[s] || map.included;
+}
+function recapRemovalActionBadge(action){
+  var a = (action||'remove');
+  var map = {
+    'remove':     { label:'À déposer',    bg:'rgba(198,40,40,0.12)',   color:'#8a1e1e' },
+    'keep':       { label:'À conserver',  bg:'rgba(45,106,79,0.15)',   color:'#1d4d33' },
+    'to_confirm': { label:'À confirmer',  bg:'rgba(232,98,26,0.15)',   color:'#9a4514' }
+  };
+  return map[a] || map.remove;
 }
 
 /* ─── HELPERS de rendu ─── */
@@ -4728,10 +5010,26 @@ function showRecap(){
           '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Surface sol</div><div style="font-weight:700;color:#0f2030">' + (surfaceSol || '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
           '<div><div style="font-size:10px;color:#7a8896;text-transform:uppercase;letter-spacing:0.5px">Surface murs</div><div style="font-weight:700;color:#0f2030">' + (surfaceMurs || '<span style="color:var(--c-muted);font-weight:400;font-style:italic">—</span>') + '</div></div>' +
         '</div>' +
-        '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Travaux sélectionnés</div>' +
+        /* Session 11 — Travaux sélectionnés AVEC sélecteur de statut par poste */
+        '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Travaux sélectionnés' + (travauxCount === 0 ? recapMissBadge('à compléter') : ' · <span style="font-weight:400;text-transform:none;letter-spacing:0">' + travauxCount + ' élément' + (travauxCount>1?'s':'') + '</span>') + '</div>' +
           (travauxCount === 0
-            ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px">Aucun travail coché' + recapMissBadge('à compléter') + '</div>'
-            : '<div style="font-size:12.5px;color:#3a4a5c;line-height:1.6"><b>' + travauxCount + '</b> élément' + (travauxCount>1?'s':'') + ' · ' + travauxLabels.slice(0, 12).map(esc).join(', ') + (travauxLabels.length > 12 ? ', …' : '') + '</div>') +
+            ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px">Aucun travail coché</div>'
+            : '<div style="display:flex;flex-direction:column;gap:6px">' +
+              travauxLabels.map(function(lbl){
+                var st = (p.workItemsStatus && p.workItemsStatus[lbl]) || 'included';
+                var b  = recapWorkStatusBadge(st);
+                /* Sélecteur compact via cycle clic */
+                return '<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:6px">' +
+                  '<span style="flex:1;font-size:12.5px;color:#0f2030">' + esc(lbl) + '</span>' +
+                  '<select onchange="recapSetWorkItemStatus(\'' + p.id + '\',\'' + esc(lbl).replace(/\x27/g,"\\'") + '\',this.value);showRecap()" style="background:' + b.bg + ';color:' + b.color + ';border:none;padding:3px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:0.3px;cursor:pointer;outline:none">' +
+                    '<option value="included"' + (st==='included'?' selected':'') + '>Inclus</option>' +
+                    '<option value="option"' + (st==='option'?' selected':'') + '>Option</option>' +
+                    '<option value="to_confirm"' + (st==='to_confirm'?' selected':'') + '>À confirmer</option>' +
+                    '<option value="excluded"' + (st==='excluded'?' selected':'') + '>Non inclus</option>' +
+                  '</select>' +
+                '</div>';
+              }).join('') +
+            '</div>') +
         '</div>' +
         '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Photos (' + nbPhotos + ')' + (nbPhotos === 0 ? recapMissBadge('aucune') : '') + '</div>' + (photosHtml || '<div style="color:var(--c-muted);font-style:italic;font-size:12px">Aucune photo</div>') + '</div>' +
         '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Croquis' + (hasCro ? '' : recapMissBadge('manquant')) + '</div>' + croquisHtml + '</div>' +
@@ -4826,28 +5124,123 @@ function showRecap(){
     '<button onclick="recapAddWorkOption()" style="margin-top:8px;padding:10px 14px;background:#1d4d33;border:none;color:#fff;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:700;width:100%">+ Ajouter une option proposée</button>'
   );
 
-  /* ─── 8. Matériel envisagé (Session 10) ─── */
+  /* ─── 8. Fournitures à prévoir (Session 11 — étend Matériel envisagé) ─── */
   var mats = (c.plannedMaterials||[]);
-  var sectionMaterials = section('Matériel envisagé', '📦', mats.length,
-    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Matériaux, équipements et fournitures envisagés. Pas de chiffrage — juste pour mémoire.</div>' +
+  var sectionMaterials = section('Fournitures à prévoir', '📦', mats.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Matériaux, équipements et accessoires envisagés — sans chiffrage. Cliquer sur les badges pour cycler le statut / qui fournit.</div>' +
     (mats.length === 0
-      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucun matériel pour l\'instant.</div>'
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune fourniture pour l\'instant.</div>'
       : mats.map(function(mat){
-          var statusColor = mat.status === 'validé' ? '#1d4d33' : (mat.status === 'à confirmer' ? '#9a4514' : '#3a4a5c');
-          var statusBg    = mat.status === 'validé' ? 'rgba(45,106,79,0.12)' : (mat.status === 'à confirmer' ? 'rgba(232,98,26,0.12)' : 'rgba(122,136,150,0.12)');
-          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
-            '<span style="font-size:14px;flex-shrink:0">📦</span>' +
-            '<div style="flex:1;min-width:0">' +
-              '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">' +
-                '<span style="font-weight:600;color:#0f2030;font-size:13px">' + esc(mat.name) + '</span>' +
-                '<span style="background:' + statusBg + ';color:' + statusColor + ';padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase">' + esc(mat.status||'envisagé') + '</span>' +
+          var sb = recapSuppliedByBadge(mat.suppliedBy);
+          var st = recapWorkStatusBadge(mat.status);
+          return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+            '<div style="display:flex;align-items:flex-start;gap:10px">' +
+              '<span style="font-size:14px;flex-shrink:0">📦</span>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                  '<span style="font-weight:600;color:#0f2030;font-size:13px">' + esc(mat.name) + '</span>' +
+                  '<button onclick="recapCycleMaterialSuppliedBy(\'' + mat.id + '\')" title="Cycler qui fournit" style="background:' + sb.bg + ';color:' + sb.color + ';border:none;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer">' + sb.label + '</button>' +
+                  '<button onclick="recapCycleMaterialStatus(\'' + mat.id + '\')" title="Cycler le statut" style="background:' + st.bg + ';color:' + st.color + ';border:none;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer">' + st.label + '</button>' +
+                '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:6px;margin-top:8px">' +
+                  '<div><label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">Quantité</label>' +
+                    '<input type="text" value="' + esc(mat.quantity||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'quantity\',this.value)" placeholder="—" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" /></div>' +
+                  '<div><label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">Unité</label>' +
+                    '<input type="text" value="' + esc(mat.unit||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'unit\',this.value)" placeholder="m² / U / ml…" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" /></div>' +
+                  '<div><label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">Dimensions</label>' +
+                    '<input type="text" value="' + esc(mat.dimensions||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'dimensions\',this.value)" placeholder="80×120cm…" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" /></div>' +
+                  '<div><label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">Marque / modèle</label>' +
+                    '<input type="text" value="' + esc(mat.brandModel||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'brandModel\',this.value)" placeholder="—" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" /></div>' +
+                  '<div style="grid-column:1/-1"><label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px">Finition / couleur</label>' +
+                    '<input type="text" value="' + esc(mat.finishColor||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'finishColor\',this.value)" placeholder="chromé / blanc / mat…" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" /></div>' +
+                '</div>' +
+                (mat.details ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:6px;line-height:1.5"><b>Notes :</b> ' + esc(mat.details) + '</div>' : '') +
+                '<label style="font-size:9.5px;color:#7a8896;font-weight:600;text-transform:uppercase;letter-spacing:0.3px;margin-top:6px;display:block">Commentaire</label>' +
+                '<input type="text" value="' + esc(mat.comment||'').replace(/"/g,'&quot;') + '" oninput="recapEditMaterialField(\'' + mat.id + '\',\'comment\',this.value)" placeholder="Précision, validation client en attente…" style="width:100%;padding:5px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11.5px;background:#fff" />' +
               '</div>' +
-              (mat.details ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:3px;line-height:1.5">' + esc(mat.details) + '</div>' : '') +
+              '<button onclick="recapRemovePlannedMaterial(\'' + mat.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px;flex-shrink:0">✕</button>' +
             '</div>' +
-            '<button onclick="recapRemovePlannedMaterial(\'' + mat.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
           '</div>';
         }).join('')) +
-    '<button onclick="recapAddPlannedMaterial()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un matériel envisagé</button>'
+    '<button onclick="recapAddPlannedMaterial()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une fourniture</button>'
+  );
+
+  /* ─── 9b. Dépose existante (Session 11 — par pièce) ─── */
+  var removals = (c.removalItems||[]);
+  var removalsByPiece = {};
+  removals.forEach(function(r){
+    var key = r.roomId || '__nopiece';
+    if(!removalsByPiece[key]) removalsByPiece[key] = [];
+    removalsByPiece[key].push(r);
+  });
+  var sectionRemovals = section('Dépose existante', '🪚', removals.length,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Éléments existants à déposer / conserver / confirmer. Cliquer sur le badge pour cycler l\'action.</div>' +
+    (removals.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucun élément renseigné pour l\'instant.</div>'
+      : Object.keys(removalsByPiece).map(function(roomId){
+          var pieceName = roomId === '__nopiece' ? 'Sans pièce' : (recapPieceNameById(roomId) || 'Pièce inconnue');
+          var items = removalsByPiece[roomId];
+          return '<div style="margin-bottom:10px">' +
+            '<div style="font-size:11px;color:#3a4a5c;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">' + esc(pieceName) + ' · ' + items.length + '</div>' +
+            items.map(function(r){
+              var ab = recapRemovalActionBadge(r.action);
+              var diffMap = { easy:'simple', medium:'moyenne', hard:'complexe', unknown:'inconnue' };
+              return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:6px;display:flex;align-items:flex-start;gap:10px">' +
+                '<span style="font-size:14px;flex-shrink:0">🪚</span>' +
+                '<div style="flex:1;min-width:0">' +
+                  '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">' +
+                    '<span style="font-weight:600;color:#0f2030;font-size:13px">' + esc(r.elementName) + '</span>' +
+                    '<button onclick="recapCycleRemovalAction(\'' + r.id + '\')" title="Cycler l\'action" style="background:' + ab.bg + ';color:' + ab.color + ';border:none;padding:2px 8px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer">' + ab.label + '</button>' +
+                  '</div>' +
+                  '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:#7a8896">' +
+                    (r.action === 'remove' ? '<span>🗑 Évacuation gravats : <b>' + (r.debrisRemoval==='yes'?'oui':r.debrisRemoval==='no'?'non':'à confirmer') + '</b></span>' : '') +
+                    '<span>⚙ Difficulté : <b>' + esc(diffMap[r.difficulty] || r.difficulty || 'inconnue') + '</b></span>' +
+                  '</div>' +
+                  (r.comment ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:5px;line-height:1.5">' + esc(r.comment) + '</div>' :
+                    '<input type="text" value="" oninput="recapEditRemovalItem(\'' + r.id + '\',\'comment\',this.value)" placeholder="Commentaire (optionnel)…" style="width:100%;padding:4px 7px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11px;background:#fff;margin-top:5px" />') +
+                '</div>' +
+                '<button onclick="recapRemoveRemovalItem(\'' + r.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:14px;padding:2px 4px">✕</button>' +
+              '</div>';
+            }).join('') +
+          '</div>';
+        }).join('')) +
+    '<button onclick="recapAddRemovalItem()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter un élément à déposer / conserver</button>'
+  );
+
+  /* ─── 10. Commentaires / réserves devis (Session 11) ─── */
+  var reserves = (c.devisReserves||[]);
+  var reservesById = {};
+  reserves.forEach(function(r){ reservesById[r.id] = r; });
+  var nbIncluded = reserves.filter(function(r){ return r.status === 'included'; }).length;
+  var nbToConf = reserves.filter(function(r){ return r.status === 'to_confirm'; }).length;
+  /* Liste des types prédéfinis avec checkbox cycle */
+  var predefHtml = RECAP_RESERVE_TYPES.map(function(t){
+    var existing = reservesById[t.id];
+    var isActive = existing && existing.status !== 'ignored';
+    var b = existing ? recapReserveStatusBadge(existing.status) : { label:'Ajouter', bg:'rgba(122,136,150,0.10)', color:'#7a8896', icon:'+' };
+    return '<div style="background:' + (isActive?'#fbf8f2':'#fff') + ';border:1px solid ' + (isActive?'var(--c-border,#e3dccc)':'rgba(15,32,48,0.06)') + ';border-radius:8px;padding:8px 10px;margin-bottom:5px;display:flex;align-items:flex-start;gap:8px;cursor:pointer" onclick="recapToggleReserveType(\'' + t.id + '\')" title="Cliquer pour cycler : à inclure → à confirmer → ignoré → retirer">' +
+      '<span style="background:' + b.bg + ';color:' + b.color + ';padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;flex-shrink:0;min-width:84px;text-align:center">' + b.label + '</span>' +
+      '<span style="font-size:12px;color:' + (isActive?'#0f2030':'#7a8896') + ';line-height:1.4;flex:1">' + esc(t.text) + '</span>' +
+      '<span style="font-size:9.5px;color:#7a8896;text-transform:uppercase;letter-spacing:0.3px;font-weight:600;flex-shrink:0">' + esc(t.type) + '</span>' +
+    '</div>';
+  }).join('');
+  /* Réserves custom */
+  var customReserves = reserves.filter(function(r){ return !RECAP_RESERVE_TYPES.find(function(t){ return t.id === r.id; }); });
+  var customHtml = customReserves.map(function(r){
+    var b = recapReserveStatusBadge(r.status);
+    return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:8px 10px;margin-bottom:5px;display:flex;align-items:flex-start;gap:8px">' +
+      '<button onclick="recapCycleReserveStatus(\'' + r.id + '\')" title="Cycler le statut" style="background:' + b.bg + ';color:' + b.color + ';border:none;padding:2px 7px;border-radius:99px;font-size:9.5px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;cursor:pointer;flex-shrink:0;min-width:84px">' + b.label + '</button>' +
+      '<span style="font-size:12px;color:#0f2030;line-height:1.4;flex:1">' + esc(r.text) + '</span>' +
+      '<span style="font-size:9.5px;color:#7a8896;text-transform:uppercase;letter-spacing:0.3px;font-weight:600;flex-shrink:0">' + esc(r.type) + '</span>' +
+      '<button onclick="recapRemoveReserve(\'' + r.id + '\')" title="Supprimer" style="background:transparent;border:none;color:#7a8896;cursor:pointer;font-size:13px;padding:2px 4px;flex-shrink:0">✕</button>' +
+    '</div>';
+  }).join('');
+  var sectionReserves = section('Commentaires / réserves devis', '📋', nbIncluded + nbToConf,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:8px;line-height:1.5">Commentaires types qui pourront être repris dans le devis. <b style="color:#1d4d33">' + nbIncluded + ' à inclure</b>' + (nbToConf ? ' · <b style="color:#9a4514">' + nbToConf + ' à confirmer</b>' : '') + '. Clic = cycle status.</div>' +
+    '<div style="font-size:10.5px;color:#7a8896;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin:8px 0 4px">Commentaires types</div>' +
+    predefHtml +
+    (customHtml ? '<div style="font-size:10.5px;color:#7a8896;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;margin:12px 0 4px">Réserves personnalisées</div>' + customHtml : '') +
+    '<button onclick="recapAddCustomReserve()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une réserve personnalisée</button>'
   );
 
   /* ─── 9. Main-d'œuvre à prévoir (Session 10) ─── */
@@ -4873,7 +5266,7 @@ function showRecap(){
     '<button onclick="recapAddPlannedLabor()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une intervention</button>'
   );
 
-  /* ─── Assemblage Session 10 ─── */
+  /* ─── Assemblage Session 11 (16 sections au total) ─── */
   document.getElementById('recap-content').innerHTML =
     sectionClient +
     sectionRequest +
@@ -4881,12 +5274,14 @@ function showRecap(){
     sectionConstraints +
     '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#7a8896;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin:18px 0 8px 4px">Pièces — ' + pieces.length + '</div>' +
     sectionPieces +
-    sectionNotes +
+    sectionRemovals +
+    sectionMaterials +
+    sectionLabor +
     sectionTech +
     sectionCheck +
     sectionOpts +
-    sectionMaterials +
-    sectionLabor;
+    sectionReserves +
+    sectionNotes;
 
   showScreen('screen-recap');
 }
