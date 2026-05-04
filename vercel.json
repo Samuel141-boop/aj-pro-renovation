@@ -20,7 +20,19 @@
       ]
     },
     {
-      "source": "/bathroom-quote.js",
+      "source": "/quote-aj-pro.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/quote-aj-pro-constants.js",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/quote-aj-pro.css",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
