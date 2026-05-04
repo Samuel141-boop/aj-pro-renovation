@@ -4244,6 +4244,14 @@ var RECAP_CONCERNED_ELEMENTS = [
   { id:'accessories',  label:'Accessoires' },
   { id:'other',        label:'Autre' }
 ];
+/* Session 14 — 5e champ : Statut devis (orientation pour la future génération) */
+var RECAP_QUOTE_STATUSES = [
+  { id:'included',   label:'Inclus',       color:'#1d4d33', bg:'rgba(45,106,79,0.15)' },
+  { id:'option',     label:'Option',       color:'#4a3565', bg:'rgba(106,74,142,0.15)' },
+  { id:'to_confirm', label:'À confirmer',  color:'#9a4514', bg:'rgba(232,98,26,0.15)' },
+  { id:'excluded',   label:'Non inclus',   color:'#3a4a5c', bg:'rgba(122,136,150,0.18)' }
+];
+
 var RECAP_PLANNED_ACTIONS = [
   { id:'',                label:'—' },
   { id:'remove',          label:'Déposer' },
@@ -4263,8 +4271,9 @@ var RECAP_PLANNED_ACTIONS = [
   { id:'other',           label:'Autre' }
 ];
 
-/* Applique les 4 champs IA-ready sur un item d'une collection (rétro-compat).
-   defaults = { source, certainty, element, action } selon le contexte d'origine. */
+/* Applique les 5 champs IA-ready sur un item d'une collection (rétro-compat).
+   defaults = { source, certainty, element, action, quoteStatus } selon le contexte d'origine.
+   Session 14 : ajout de quoteStatus et comment. */
 function recapEnsureItemMeta(item, defaults){
   if(!item || typeof item !== 'object') return;
   defaults = defaults || {};
@@ -4272,6 +4281,16 @@ function recapEnsureItemMeta(item, defaults){
   if(typeof item.certaintyLevel    === 'undefined') item.certaintyLevel    = defaults.certainty || 'to_check';
   if(typeof item.concernedElement  === 'undefined') item.concernedElement  = defaults.element || '';
   if(typeof item.plannedAction     === 'undefined') item.plannedAction     = defaults.action || '';
+  if(typeof item.quoteStatus       === 'undefined'){
+    /* Mapping rétro-compat : si l'item a déjà un champ 'status' = 'included|option|to_confirm|excluded'
+       (c'est le cas pour plannedMaterials Session 11), on le ré-utilise. */
+    if(typeof item.status === 'string' && ['included','option','to_confirm','excluded'].indexOf(item.status) >= 0){
+      item.quoteStatus = item.status;
+    } else {
+      item.quoteStatus = defaults.quoteStatus || 'to_confirm';
+    }
+  }
+  if(typeof item.comment === 'undefined') item.comment = '';
 }
 
 /* Helpers de structures de données (rétro-compat) — Sessions 9 / 10 / 11 / 12 */
@@ -4304,21 +4323,26 @@ function recapEnsureClient(c){
     if(typeof m.source === 'undefined')          m.source = 'manual';
     if(typeof m.status === 'undefined')          m.status = 'to_confirm';
   });
-  /* Session 12 — enrichir TOUTES les collections avec les 4 champs IA-ready */
-  c.technicalPoints.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'to_check' }); });
-  c.pointsToCheck.forEach(function(it){   recapEnsureItemMeta(it, { source:'manual', certainty:'to_check', action:'check' }); });
-  c.workOptions.forEach(function(it){     recapEnsureItemMeta(it, { source:'manual', certainty:'probable' }); });
-  c.siteConstraints.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'confirmed' }); });
-  c.plannedMaterials.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'to_check' }); });
-  c.plannedLabor.forEach(function(it){     recapEnsureItemMeta(it, { source:'manual', certainty:'probable' }); });
-  c.devisReserves.forEach(function(it){    recapEnsureItemMeta(it, { source:(it.source || 'checkbox'), certainty:'confirmed' }); });
+  /* Session 12+14 — enrichir TOUTES les collections avec les 5 champs IA-ready */
+  c.technicalPoints.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'to_check', quoteStatus:'to_confirm' }); });
+  c.pointsToCheck.forEach(function(it){   recapEnsureItemMeta(it, { source:'manual', certainty:'to_check', action:'check', quoteStatus:'to_confirm' }); });
+  c.workOptions.forEach(function(it){     recapEnsureItemMeta(it, { source:'manual', certainty:'probable', quoteStatus:'option' }); });
+  c.siteConstraints.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'confirmed', quoteStatus:'included' }); });
+  c.plannedMaterials.forEach(function(it){ recapEnsureItemMeta(it, { source:'manual', certainty:'to_check', quoteStatus:'to_confirm' }); });
+  c.plannedLabor.forEach(function(it){     recapEnsureItemMeta(it, { source:'manual', certainty:'probable', quoteStatus:'included' }); });
+  c.devisReserves.forEach(function(it){    recapEnsureItemMeta(it, { source:(it.source || 'checkbox'), certainty:'confirmed', quoteStatus:'included' }); });
   c.removalItems.forEach(function(it){
     /* removalItems a déjà 'action'='remove'/'keep'/'to_confirm' (Session 11). On le mappe vers plannedAction si pas encore fait. */
     if(typeof it.plannedAction === 'undefined' || it.plannedAction === ''){
       var actMap = { 'remove':'remove', 'keep':'keep', 'to_confirm':'check' };
       it.plannedAction = actMap[it.action] || 'remove';
     }
-    recapEnsureItemMeta(it, { source:'manual', certainty:(it.action === 'to_confirm' ? 'to_check' : 'confirmed'), action: it.plannedAction });
+    recapEnsureItemMeta(it, {
+      source:'manual',
+      certainty:(it.action === 'to_confirm' ? 'to_check' : 'confirmed'),
+      action: it.plannedAction,
+      quoteStatus:(it.action === 'to_confirm' ? 'to_confirm' : (it.action === 'keep' ? 'excluded' : 'included'))
+    });
   });
   return c;
 }
@@ -4340,13 +4364,16 @@ function recapEnsurePiece(p){
   /* Session 12 — métadonnées IA-ready par poste de travaux (clé = catKey)
      Stocke source/certainty/element/action séparément du status pour ne pas casser la rétro-compat. */
   if(!p.workItemsMeta || typeof p.workItemsMeta !== 'object') p.workItemsMeta = {};
-  /* Session 12 — métadonnées IA-ready au niveau du croquis pièce (un seul croquis par pièce) */
+  /* Session 12+14 — métadonnées IA-ready au niveau du croquis pièce (un seul croquis par pièce) */
   if(!p.croquisMeta || typeof p.croquisMeta !== 'object'){
-    p.croquisMeta = { informationSource:'sketch', certaintyLevel:'to_check', concernedElement:'', plannedAction:'' };
+    p.croquisMeta = { informationSource:'sketch', certaintyLevel:'to_check', concernedElement:'', plannedAction:'', quoteStatus:'to_confirm', comment:'' };
+  } else {
+    if(typeof p.croquisMeta.quoteStatus === 'undefined') p.croquisMeta.quoteStatus = 'to_confirm';
+    if(typeof p.croquisMeta.comment === 'undefined')     p.croquisMeta.comment = '';
   }
-  /* Session 12 — métadonnées IA-ready sur les photos et notes manuscrites de la pièce */
-  (p.photos || []).forEach(function(ph){ recapEnsureItemMeta(ph, { source:'photo', certainty:'to_check' }); });
-  (p.msNotes || []).forEach(function(n){ recapEnsureItemMeta(n,  { source:'note',  certainty:'to_check' }); });
+  /* Session 12+14 — métadonnées IA-ready sur les photos et notes manuscrites de la pièce */
+  (p.photos || []).forEach(function(ph){ recapEnsureItemMeta(ph, { source:'photo', certainty:'to_check', quoteStatus:'to_confirm' }); });
+  (p.msNotes || []).forEach(function(n){ recapEnsureItemMeta(n,  { source:'note',  certainty:'to_check', quoteStatus:'to_confirm' }); });
   return p;
 }
 
@@ -4892,34 +4919,83 @@ function recapSourceLabel(id){ var f = RECAP_INFO_SOURCES.find(function(s){ retu
 function recapCertaintyLabel(id){ var f = RECAP_CERTAINTY_LEVELS.find(function(s){ return s.id === id; }); return f || RECAP_CERTAINTY_LEVELS[2]; }
 function recapElementLabel(id){ var f = RECAP_CONCERNED_ELEMENTS.find(function(s){ return s.id === id; }); return f || RECAP_CONCERNED_ELEMENTS[0]; }
 function recapActionLabel(id){ var f = RECAP_PLANNED_ACTIONS.find(function(s){ return s.id === id; }); return f || RECAP_PLANNED_ACTIONS[0]; }
+function recapQuoteStatusLabel(id){ var f = RECAP_QUOTE_STATUSES.find(function(s){ return s.id === id; }); return f || RECAP_QUOTE_STATUSES[2]; }
 
 function recapBadgeMeta(item){
-  /* Renvoie la ligne de 4 badges (lecture seule) — utile pour l'affichage compact */
+  /* Renvoie la ligne de badges (lecture seule) — Session 14 : ajout statut devis */
   if(!item) return '';
   var s = recapSourceLabel(item.informationSource);
   var c = recapCertaintyLabel(item.certaintyLevel);
   var el = recapElementLabel(item.concernedElement);
   var ac = recapActionLabel(item.plannedAction);
+  var qs = recapQuoteStatusLabel(item.quoteStatus);
   return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;font-family:Inter,system-ui,sans-serif">' +
     '<span title="Source : ' + esc(s.label) + '" style="background:rgba(122,136,150,0.10);color:#3a4a5c;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600">' + s.icon + ' ' + esc(s.label) + '</span>' +
     '<span title="Certitude" style="background:' + c.bg + ';color:' + c.color + ';padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.3px">' + esc(c.label) + '</span>' +
     (item.concernedElement ? '<span title="Élément concerné" style="background:rgba(13,70,144,0.10);color:#0d4690;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600">📍 ' + esc(el.label) + '</span>' : '') +
     (item.plannedAction ? '<span title="Action prévue" style="background:rgba(106,74,142,0.12);color:#4a3565;padding:1px 6px;border-radius:99px;font-size:10px;font-weight:600">▶ ' + esc(ac.label) + '</span>' : '') +
+    '<span title="Statut devis" style="background:' + qs.bg + ';color:' + qs.color + ';padding:1px 6px;border-radius:99px;font-size:10px;font-weight:700;letter-spacing:0.3px">' + esc(qs.label) + '</span>' +
   '</div>';
 }
 
-/* Renvoie une rangée de 4 selects compacts pour ÉDITER les 4 champs IA-ready */
+/* Renvoie une rangée de 5 selects compacts pour ÉDITER les 5 champs IA-ready
+   + un input "Commentaire" optionnel en dessous (Session 14) */
 function recapMetaRow(collectionName, item){
   if(!item) return '';
-  var st = 'padding:3px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:10.5px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;min-width:0;flex:1;min-width:88px';
+  var st = 'padding:3px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:10.5px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;min-width:88px;flex:1';
+  var inputSt = 'width:100%;padding:5px 8px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;margin-top:4px';
   function opts(arr, sel){
     return arr.map(function(o){ return '<option value="' + esc(o.id) + '"' + (sel === o.id ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('');
   }
-  return '<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;font-family:Inter,system-ui,sans-serif">' +
-    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'informationSource\',this.value)" title="Source de l\'information" style="' + st + '">' + opts(RECAP_INFO_SOURCES, item.informationSource) + '</select>' +
-    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'certaintyLevel\',this.value)" title="Niveau de certitude" style="' + st + '">' + opts(RECAP_CERTAINTY_LEVELS, item.certaintyLevel) + '</select>' +
-    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'concernedElement\',this.value)" title="Élément concerné" style="' + st + '">' + opts(RECAP_CONCERNED_ELEMENTS, item.concernedElement) + '</select>' +
-    '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'plannedAction\',this.value)" title="Action prévue" style="' + st + '">' + opts(RECAP_PLANNED_ACTIONS, item.plannedAction) + '</select>' +
+  return '<div style="margin-top:6px;font-family:Inter,system-ui,sans-serif">' +
+    '<div style="display:flex;gap:4px;flex-wrap:wrap">' +
+      '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'informationSource\',this.value)" title="Source de l\'information" style="' + st + '">' + opts(RECAP_INFO_SOURCES, item.informationSource) + '</select>' +
+      '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'certaintyLevel\',this.value)" title="Niveau de certitude" style="' + st + '">' + opts(RECAP_CERTAINTY_LEVELS, item.certaintyLevel) + '</select>' +
+      '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'concernedElement\',this.value)" title="Élément concerné" style="' + st + '">' + opts(RECAP_CONCERNED_ELEMENTS, item.concernedElement) + '</select>' +
+      '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'plannedAction\',this.value)" title="Action prévue" style="' + st + '">' + opts(RECAP_PLANNED_ACTIONS, item.plannedAction) + '</select>' +
+      '<select onchange="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'quoteStatus\',this.value)" title="Statut devis" style="' + st + '">' + opts(RECAP_QUOTE_STATUSES, item.quoteStatus) + '</select>' +
+    '</div>' +
+    '<input type="text" value="' + esc(item.comment || '').replace(/"/g,'&quot;') + '" oninput="recapEditItemMeta(\'' + collectionName + '\',\'' + item.id + '\',\'comment\',this.value)" placeholder="Commentaire optionnel (précision pour le devis)" style="' + inputSt + '" />' +
+  '</div>';
+}
+
+/* Variante au niveau pièce — pour photos/msNotes (collections dans piece.X[]) */
+function recapMetaRowPiece(pieceId, collectionName, item){
+  if(!item) return '';
+  var st = 'padding:3px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:10.5px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;min-width:88px;flex:1';
+  var inputSt = 'width:100%;padding:5px 8px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;margin-top:4px';
+  function opts(arr, sel){
+    return arr.map(function(o){ return '<option value="' + esc(o.id) + '"' + (sel === o.id ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('');
+  }
+  return '<div style="margin-top:6px;font-family:Inter,system-ui,sans-serif">' +
+    '<div style="display:flex;gap:4px;flex-wrap:wrap">' +
+      '<select onchange="recapEditPieceItemMeta(\'' + pieceId + '\',\'' + collectionName + '\',\'' + item.id + '\',\'informationSource\',this.value)" title="Source" style="' + st + '">' + opts(RECAP_INFO_SOURCES, item.informationSource) + '</select>' +
+      '<select onchange="recapEditPieceItemMeta(\'' + pieceId + '\',\'' + collectionName + '\',\'' + item.id + '\',\'certaintyLevel\',this.value)" title="Certitude" style="' + st + '">' + opts(RECAP_CERTAINTY_LEVELS, item.certaintyLevel) + '</select>' +
+      '<select onchange="recapEditPieceItemMeta(\'' + pieceId + '\',\'' + collectionName + '\',\'' + item.id + '\',\'concernedElement\',this.value)" title="Élément concerné" style="' + st + '">' + opts(RECAP_CONCERNED_ELEMENTS, item.concernedElement) + '</select>' +
+      '<select onchange="recapEditPieceItemMeta(\'' + pieceId + '\',\'' + collectionName + '\',\'' + item.id + '\',\'plannedAction\',this.value)" title="Action prévue" style="' + st + '">' + opts(RECAP_PLANNED_ACTIONS, item.plannedAction) + '</select>' +
+      '<select onchange="recapEditPieceItemMeta(\'' + pieceId + '\',\'' + collectionName + '\',\'' + item.id + '\',\'quoteStatus\',this.value)" title="Statut devis" style="' + st + '">' + opts(RECAP_QUOTE_STATUSES, item.quoteStatus) + '</select>' +
+    '</div>' +
+    '<input type="text" value="' + esc(item.comment || '').replace(/"/g,'&quot;') + '" oninput="recapEditPieceItemMeta(\'' + pieceId + '\',\'' + collectionName + '\',\'' + item.id + '\',\'comment\',this.value)" placeholder="Commentaire optionnel" style="' + inputSt + '" />' +
+  '</div>';
+}
+
+/* Variante pour le croquis pièce (un seul croquis, donc pas d'id) */
+function recapMetaRowCroquis(pieceId, croquisMeta){
+  if(!croquisMeta) return '';
+  var st = 'padding:3px 6px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:10.5px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;min-width:88px;flex:1';
+  var inputSt = 'width:100%;padding:5px 8px;border:1px solid var(--c-border,#e3dccc);border-radius:6px;font-size:11px;background:#fff;color:#0f2030;font-family:Inter,system-ui,sans-serif;outline:none;margin-top:4px';
+  function opts(arr, sel){
+    return arr.map(function(o){ return '<option value="' + esc(o.id) + '"' + (sel === o.id ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('');
+  }
+  return '<div style="margin-top:6px;font-family:Inter,system-ui,sans-serif">' +
+    '<div style="display:flex;gap:4px;flex-wrap:wrap">' +
+      '<select onchange="recapEditPieceCroquisMeta(\'' + pieceId + '\',\'informationSource\',this.value)" title="Source" style="' + st + '">' + opts(RECAP_INFO_SOURCES, croquisMeta.informationSource) + '</select>' +
+      '<select onchange="recapEditPieceCroquisMeta(\'' + pieceId + '\',\'certaintyLevel\',this.value)" title="Certitude" style="' + st + '">' + opts(RECAP_CERTAINTY_LEVELS, croquisMeta.certaintyLevel) + '</select>' +
+      '<select onchange="recapEditPieceCroquisMeta(\'' + pieceId + '\',\'concernedElement\',this.value)" title="Élément concerné" style="' + st + '">' + opts(RECAP_CONCERNED_ELEMENTS, croquisMeta.concernedElement) + '</select>' +
+      '<select onchange="recapEditPieceCroquisMeta(\'' + pieceId + '\',\'plannedAction\',this.value)" title="Action prévue" style="' + st + '">' + opts(RECAP_PLANNED_ACTIONS, croquisMeta.plannedAction) + '</select>' +
+      '<select onchange="recapEditPieceCroquisMeta(\'' + pieceId + '\',\'quoteStatus\',this.value)" title="Statut devis" style="' + st + '">' + opts(RECAP_QUOTE_STATUSES, croquisMeta.quoteStatus) + '</select>' +
+    '</div>' +
+    '<input type="text" value="' + esc(croquisMeta.comment || '').replace(/"/g,'&quot;') + '" oninput="recapEditPieceCroquisMeta(\'' + pieceId + '\',\'comment\',this.value)" placeholder="Commentaire optionnel" style="' + inputSt + '" />' +
   '</div>';
 }
 
@@ -5184,7 +5260,7 @@ function showRecap(){
         if(m.haut){ var h=pf(m.haut); if(h>0) surfaceMurs = (2*(l+w)*h).toFixed(2)+' m²'; }
       }
 
-      /* Photos miniatures */
+      /* Photos miniatures + meta IA-ready (Session 14) — détails expandables */
       var photosHtml = '';
       if(nbPhotos){
         photosHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
@@ -5197,12 +5273,52 @@ function showRecap(){
           }).join('') +
           (nbPhotos > 12 ? '<div style="width:64px;height:64px;border-radius:6px;background:#fbf8f2;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#7a8896;border:1px solid var(--c-border,#e3dccc)">+'+(nbPhotos-12)+'</div>' : '') +
         '</div>';
+        /* Détail expandable : édition meta IA-ready par photo */
+        photosHtml += '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:#7a8896;padding:4px 0;font-weight:600">📋 Détails devis par photo (' + nbPhotos + ')</summary>' +
+          '<div style="padding:8px 0">' +
+          (p.photos||[]).map(function(ph, i){
+            if(!ph.id){
+              /* Migration douce : génère un id si absent (ancienne photo sans id) */
+              ph.id = 'ph_' + Date.now().toString(36) + '_' + i + Math.random().toString(36).slice(2,5);
+            }
+            var src = ph.dataUrl || ph.src || '';
+            return '<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-top:1px solid rgba(15,32,48,0.05)">' +
+              '<div style="width:48px;height:48px;border-radius:5px;overflow:hidden;border:1px solid var(--c-border,#e3dccc);flex-shrink:0">' +
+                (src ? '<img src="'+src+'" style="width:100%;height:100%;object-fit:cover" />' : '<div style="width:100%;height:100%;background:#fbf8f2;display:flex;align-items:center;justify-content:center;font-size:14px">📷</div>') +
+              '</div>' +
+              '<div style="flex:1;min-width:0">' +
+                '<div style="font-size:11px;color:#7a8896;font-weight:600">Photo ' + (i+1) + (ph.title ? ' · ' + esc(ph.title) : '') + '</div>' +
+                recapMetaRowPiece(p.id, 'photos', ph) +
+              '</div>' +
+            '</div>';
+          }).join('') +
+          '</div></details>';
       }
 
-      /* Croquis miniature */
+      /* Croquis miniature + meta IA-ready (Session 14) */
       var croquisHtml = hasCro
-        ? '<div style="margin-top:6px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;overflow:hidden;background:#fff;max-width:280px"><img src="'+esc(p.croquis)+'" style="width:100%;display:block" /></div>'
+        ? '<div style="margin-top:6px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;overflow:hidden;background:#fff;max-width:280px"><img src="'+esc(p.croquis)+'" style="width:100%;display:block" /></div>' +
+          '<details style="margin-top:8px"><summary style="cursor:pointer;font-size:11px;color:#7a8896;padding:4px 0;font-weight:600">📋 Détails devis du croquis</summary>' +
+            recapMetaRowCroquis(p.id, p.croquisMeta || {}) +
+          '</details>'
         : '<div style="color:var(--c-muted);font-style:italic;font-size:12px;margin-top:6px">Aucun croquis renseigné</div>';
+
+      /* Notes manuscrites — détails expandable avec meta IA-ready par note */
+      var msNotesHtml = '';
+      if(nbMs){
+        msNotesHtml = '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;padding:6px 0">📝 ' + nbMs + ' note' + (nbMs>1?'s':'') + ' manuscrite' + (nbMs>1?'s':'') + ' — détails devis</summary>' +
+          '<div style="padding:8px 0">' +
+          (p.msNotes||[]).map(function(n, i){
+            if(!n.id){
+              n.id = 'msn_' + Date.now().toString(36) + '_' + i + Math.random().toString(36).slice(2,5);
+            }
+            return '<div style="padding:8px 0;border-top:1px solid rgba(15,32,48,0.05)">' +
+              '<div style="font-size:11px;color:#7a8896;font-weight:600">' + esc(n.title || ('Note ' + (i+1))) + (n.ocrText ? ' · ' + esc(n.ocrText.slice(0,80)) + (n.ocrText.length > 80 ? '…' : '') : '') + '</div>' +
+              recapMetaRowPiece(p.id, 'msNotes', n) +
+            '</div>';
+          }).join('') +
+          '</div></details>';
+      }
 
       /* Points liés à la pièce */
       var ptsTechPiece = (c.technicalPoints||[]).filter(function(pt){ return pt.roomId === p.id; });
@@ -5270,7 +5386,7 @@ function showRecap(){
         '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Photos (' + nbPhotos + ')' + (nbPhotos === 0 ? recapMissBadge('aucune') : '') + '</div>' + (photosHtml || '<div style="color:var(--c-muted);font-style:italic;font-size:12px">Aucune photo</div>') + '</div>' +
         '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Croquis' + (hasCro ? '' : recapMissBadge('manquant')) + '</div>' + croquisHtml + '</div>' +
         (p.notes ? '<div style="margin-top:14px"><div style="font-size:11px;color:#3a4a5c;font-weight:600;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:6px">Notes pièce</div><div style="background:#fbf8f2;padding:10px 12px;border-radius:8px;font-size:12.5px;color:#3a4a5c;line-height:1.55;white-space:pre-wrap">' + esc(p.notes) + '</div></div>' : '') +
-        (nbMs ? '<div style="margin-top:14px;font-size:11.5px;color:#7a8896">📝 ' + nbMs + ' note' + (nbMs>1?'s':'') + ' manuscrite' + (nbMs>1?'s':'') + '</div>' : '') +
+        msNotesHtml +
         (ptsTechPiece.length || ptsCheckPiece.length ?
           '<div style="margin-top:14px;padding:10px 12px;background:rgba(232,98,26,0.05);border-left:3px solid #e8621a;border-radius:6px">' +
             (ptsTechPiece.length ? '<div style="font-size:11px;color:#9a4514;font-weight:700;margin-bottom:4px">⚠ ' + ptsTechPiece.length + ' point' + (ptsTechPiece.length>1?'s':'') + ' technique' + (ptsTechPiece.length>1?'s':'') + ' lié' + (ptsTechPiece.length>1?'s':'') + '</div>' : '') +

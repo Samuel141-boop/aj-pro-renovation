@@ -73,6 +73,61 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 14 — 5ème champ « Statut devis » + commentaire + édition photos/notes/croquis dans le récap)
+
+Extension naturelle de la Session 12. La structure méta passe de **4 → 5 champs** + champ commentaire. L'édition est maintenant accessible aussi sur **photos / notes manuscrites / croquis** (au niveau pièce, pas juste collections client).
+
+**5ème champ ajouté : `quoteStatus`**
+- Valeurs : `included` (Inclus) / `option` / `to_confirm` (À confirmer) / `excluded` (Non inclus)
+- Constante centralisée : `RECAP_QUOTE_STATUSES`
+- Helper : `recapQuoteStatusLabel(id)`
+- Mapping rétro-compat : pour les items qui ont déjà `status` (plannedMaterials Session 11), valeur reprise automatiquement dans `quoteStatus`
+
+**Champ `comment` ajouté** : input texte court optionnel sous chaque ligne meta. Permet une précision humaine sans alourdir la grille de selects.
+
+**Valeurs par défaut intelligentes par collection** :
+| Collection | quoteStatus défaut |
+|---|---|
+| `technicalPoints` (Points sensibles) | `to_confirm` |
+| `pointsToCheck` (À vérifier) | `to_confirm` |
+| `workOptions` (Options) | `option` |
+| `siteConstraints` (Contraintes) | `included` |
+| `plannedMaterials` (Fournitures) | hérite de `status` legacy |
+| `plannedLabor` (Main-d'œuvre) | `included` |
+| `devisReserves` (Réserves) | `included` |
+| `removalItems` (Dépose) | dérivé : `remove`→`included`, `keep`→`excluded`, `to_confirm`→`to_confirm` |
+| `piece.photos[]` | `to_confirm` (source auto `photo`) |
+| `piece.msNotes[]` | `to_confirm` (source auto `note`) |
+| `piece.croquisMeta` | `to_confirm` (source auto `sketch`) |
+
+**Helpers de rendu étendus** :
+- `recapMetaRow(collectionName, item)` : passe de 4 selects → **5 selects** (Source / Certitude / Élément / Action / **Statut devis**) + input commentaire en dessous
+- `recapMetaRowPiece(pieceId, collectionName, item)` : **NEW** — variante pour `piece.photos[]` et `piece.msNotes[]`. Délègue à `recapEditPieceItemMeta`
+- `recapMetaRowCroquis(pieceId, croquisMeta)` : **NEW** — variante pour le croquis pièce (objet unique, pas un array)
+- `recapBadgeMeta(item)` : affiche maintenant aussi le badge `quoteStatus`
+
+**UI dans le récap par pièce** (Session 14) :
+- **Photos** : sous la grille de miniatures, ajout d'un `<details>` repliable « 📋 Détails devis par photo (N) » → expose les 5 selects + commentaire pour chaque photo
+- **Croquis** : sous l'image du croquis, `<details>` « 📋 Détails devis du croquis » → 5 selects + commentaire pour la méta unique du croquis
+- **Notes manuscrites** : remplace le compteur simple par `<details>` « 📝 N notes manuscrites — détails devis » → 5 selects + commentaire par note
+
+**Migration douce** : photos/notes anciennes sans `id` reçoivent un `id` généré à la volée pour pouvoir être éditées (`ph_<timestamp>_<i>` / `msn_...`).
+
+**Source automatique** (déjà appliqué Session 12) :
+- Photo ajoutée → `informationSource:'photo'`
+- Note manuscrite → `informationSource:'note'`
+- Croquis dessiné → `informationSource:'sketch'`
+- Mesure renseignée → `informationSource:'measurement'` (à brancher si besoin futur)
+- Travail coché → `informationSource:'checkbox'`
+
+**Pièce automatique** : déjà hérité du contexte (currentPieceId), aucune modification requise.
+
+**Compatibilité localStorage : ✅ totale.** Tous les champs nouveaux créés à la volée par `recapEnsureClient` / `recapEnsurePiece` à la lecture. Les pièces et clients sauvegardés avant Session 14 s'ouvrent normalement, photos/notes anciennes reçoivent un `id` la première fois qu'elles sont rendues.
+
+**Régressions vérifiées** : 7 flags Session 6 toujours `false` (sauf `bathroomNav:true` Session 13). Pas d'IA active. Croquis stylet (Session 8) intact. Ordre onglets fiche pièce (Session 7) intact. Module Devis AJ Pro (Session 13) intact.
+
+**SW v21-devis-aj-pro → v22-meta-quote-status** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 13 — Module Devis AJ Pro réactivé + bouton « Créer depuis modèle » + Aperçu PDF)
 
 Le module Devis basé sur le PDF officiel AJ Pro **$002612** est **réactivé**. Tout l'infrastructure existait depuis le Commit A IA (Session 1) — juste masquée pendant les sessions de simplification.
