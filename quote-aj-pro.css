@@ -1,0 +1,876 @@
+/* ════════════════════════════════════════════════════════════════════
+   AJ PRO RÉNOVATION — STYLES VUE APERÇU DEVIS
+   ──────────────────────────────────────────────────────────────────
+   Reproduction fidèle (HTML/CSS) des PDF AJ Pro existants :
+   - format A4 (210 × 297mm) avec marges identiques
+   - police lisible administrative (Arial / Helvetica fallback)
+   - tableaux denses, bordures fines, sous-totaux séparés
+   - en-tête + pied répété sur chaque page
+   - styles @print prêts pour future export PDF
+
+   Préfixe `.ajq-` partout pour ne pas polluer le reste de l'app.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────────────────────────
+   CONTENEUR PRÉVUE — fond gris pour démarquer les pages
+   ───────────────────────────────────────────────────────────────── */
+.ajq-preview-shell {
+  background: #e7eaed;
+  padding: 24px 12px 80px;
+  min-height: 100vh;
+  font-family: Arial, Helvetica, sans-serif;
+  color: #111;
+}
+
+.ajq-preview-toolbar {
+  max-width: 210mm;
+  margin: 0 auto 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  background: #fff;
+  border: 1px solid #d8dde2;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 13px;
+  color: #1a2330;
+}
+
+.ajq-preview-toolbar strong { color: #0f2030; }
+
+/* ─────────────────────────────────────────────────────────────────
+   PAGE A4 — chaque page = 210 × 297mm avec marges
+   ───────────────────────────────────────────────────────────────── */
+.ajq-page {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto 14px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
+  position: relative;
+  overflow: hidden;
+  padding: 14mm 14mm 22mm 14mm; /* haut / D / bas (réservé pied) / G */
+  box-sizing: border-box;
+  font-size: 9.5pt;
+  line-height: 1.35;
+  color: #111;
+}
+
+/* Filigrane Brouillon (en bas-centre, comme sur les PDFs source) */
+.ajq-page--draft::after {
+  content: "Brouillon";
+  position: absolute;
+  left: 0; right: 0;
+  bottom: 8mm;
+  text-align: center;
+  font-size: 11pt;
+  color: rgba(0,0,0,0.16);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  pointer-events: none;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   EN-TÊTE répété sur chaque page (identique aux PDFs)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-header {
+  border-bottom: 0.5pt solid #6b6b6b;
+  padding-bottom: 4mm;
+  margin-bottom: 4mm;
+}
+
+.ajq-header__line1 {
+  font-size: 8.5pt;
+  text-align: center;
+  font-weight: 400;
+}
+
+.ajq-header__num {
+  font-size: 9pt;
+  font-weight: 700;
+  text-align: right;
+  margin-top: 1mm;
+}
+
+.ajq-header__line2,
+.ajq-header__line3 {
+  font-size: 8pt;
+  text-align: center;
+  margin-top: 0.5mm;
+  color: #2a2a2a;
+}
+
+.ajq-header__pagenum {
+  font-size: 8pt;
+  text-align: right;
+  color: #555;
+  margin-top: 1mm;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   BLOC ACTIVITÉS (sous l'en-tête, page 1 uniquement)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-activities {
+  font-size: 9pt;
+  line-height: 1.5;
+  margin: 2mm 0 4mm 6mm;
+  color: #1a1a1a;
+}
+.ajq-activities div { margin: 0; }
+
+/* ─────────────────────────────────────────────────────────────────
+   TITRE DOCUMENT (Devis n° X du DD/MM/YYYY)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-doctitle {
+  font-size: 11pt;
+  font-weight: 700;
+  margin: 1mm 0 1.5mm;
+  color: #0a0a0a;
+}
+
+.ajq-doctitle__revline {
+  font-size: 9pt;
+  font-weight: 400;
+  color: #333;
+  margin-top: 0.5mm;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   BLOC CHANTIER + AJ PRO + CLIENT (3 zones côte à côte sur PDFs)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-blocks {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6mm;
+  margin: 3mm 0 5mm;
+  font-size: 8.5pt;
+  line-height: 1.45;
+}
+
+.ajq-block { min-height: 28mm; }
+
+.ajq-block__title {
+  font-weight: 700;
+  font-size: 9pt;
+  margin-bottom: 1mm;
+}
+
+.ajq-block__line { white-space: pre-line; }
+
+.ajq-block__rcs {
+  font-size: 7.5pt;
+  color: #444;
+  margin-top: 1mm;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   TITRE TRAVAUX (avant le tableau)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-worktitle {
+  font-style: italic;
+  font-size: 10pt;
+  margin: 2mm 0 3mm;
+  color: #1a1a1a;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   TABLEAU PRINCIPAL — N° / Désignation / Qté / U / [PU /R%] / PUHT / Total HT
+   ───────────────────────────────────────────────────────────────── */
+.ajq-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9pt;
+  table-layout: fixed;
+}
+
+.ajq-table th {
+  font-weight: 700;
+  text-align: left;
+  border-bottom: 0.7pt solid #555;
+  padding: 1.5mm 2mm;
+  font-size: 8.5pt;
+  background: #fafafa;
+}
+
+.ajq-table th.num,
+.ajq-table th.qty,
+.ajq-table th.unit,
+.ajq-table th.pu,
+.ajq-table th.disc,
+.ajq-table th.puht,
+.ajq-table th.total { text-align: right; }
+.ajq-table th.des { text-align: left; }
+.ajq-table th.num { text-align: left; }
+
+.ajq-table td {
+  padding: 1.4mm 2mm;
+  vertical-align: top;
+  border-bottom: 0.3pt solid #e2e2e2;
+  font-size: 9pt;
+}
+
+.ajq-table td.num,
+.ajq-table td.qty,
+.ajq-table td.unit,
+.ajq-table td.pu,
+.ajq-table td.disc,
+.ajq-table td.puht,
+.ajq-table td.total { text-align: right; white-space: nowrap; }
+
+.ajq-table td.des {
+  white-space: pre-line;
+  word-wrap: break-word;
+}
+
+.ajq-table td.num { text-align: left; font-weight: 600; }
+
+/* Largeurs colonnes — sans remise */
+.ajq-table.ajq-table--no-discount col.num   { width: 11mm; }
+.ajq-table.ajq-table--no-discount col.des   { width: auto; }
+.ajq-table.ajq-table--no-discount col.qty   { width: 10mm; }
+.ajq-table.ajq-table--no-discount col.unit  { width: 10mm; }
+.ajq-table.ajq-table--no-discount col.puht  { width: 16mm; }
+.ajq-table.ajq-table--no-discount col.total { width: 18mm; }
+
+/* Avec remise — colonnes plus serrées */
+.ajq-table.ajq-table--with-discount col.num   { width: 11mm; }
+.ajq-table.ajq-table--with-discount col.des   { width: auto; }
+.ajq-table.ajq-table--with-discount col.qty   { width: 9mm; }
+.ajq-table.ajq-table--with-discount col.unit  { width: 9mm; }
+.ajq-table.ajq-table--with-discount col.pu    { width: 13mm; }
+.ajq-table.ajq-table--with-discount col.disc  { width: 11mm; }
+.ajq-table.ajq-table--with-discount col.puht  { width: 13mm; }
+.ajq-table.ajq-table--with-discount col.total { width: 16mm; }
+
+/* Ligne de section (titre en gras) */
+.ajq-row--section td {
+  font-weight: 700;
+  background: #fff;
+  border-top: 0.5pt solid #999;
+  padding-top: 2.5mm;
+  padding-bottom: 1mm;
+  font-size: 9.5pt;
+  white-space: pre-line;
+}
+
+.ajq-row--section td.num { font-weight: 700; }
+
+.ajq-row--section .ajq-option-pill {
+  display: inline-block;
+  margin-left: 4pt;
+  padding: 0.3mm 1.2mm;
+  font-size: 7.5pt;
+  font-weight: 700;
+  letter-spacing: 0.3pt;
+  background: #efe6d6;
+  color: #6b4f1a;
+  border-radius: 1mm;
+  vertical-align: 1pt;
+}
+
+/* Ligne commentaire — pas de chiffres */
+.ajq-row--comment td.des {
+  font-style: italic;
+  color: #2a2a2a;
+}
+
+/* Ligne avec mise en surbrillance */
+.ajq-row--highlight-red td {
+  background: rgba(220, 53, 69, 0.06);
+}
+
+/* Sous-total de section (sur deux colonnes : libellé + montant) */
+.ajq-row--subtotal td {
+  font-weight: 700;
+  border-top: 0.4pt solid #555;
+  border-bottom: 0.7pt solid #555;
+  padding-top: 1.5mm;
+  padding-bottom: 1.5mm;
+  background: #f5f5f5;
+}
+
+.ajq-row--subtotal td.des { text-align: right; }
+
+/* Ligne désignation longue (description multi-lignes) */
+.ajq-line__designation { font-weight: 600; }
+.ajq-line__description {
+  font-weight: 400;
+  font-size: 8.5pt;
+  color: #333;
+  white-space: pre-line;
+  margin-top: 0.5mm;
+}
+
+/* Lignes "Option" affichées hors total */
+.ajq-row--option td { color: #444; }
+
+/* Lignes "Excluded" — barre + grisé (rare, mais possible) */
+.ajq-row--excluded td {
+  text-decoration: line-through;
+  color: #888;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   ATTESTATION TVA (page totaux)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-tva-attestation {
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin: 4mm 0 3mm;
+  white-space: pre-line;
+  color: #1a1a1a;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   BLOC TOTAUX (Total HT / TVA / TTC + tableau TVA)
+   ───────────────────────────────────────────────────────────────── */
+.ajq-totals {
+  margin: 3mm 0 2mm;
+  font-size: 9pt;
+}
+
+.ajq-totals__title {
+  font-weight: 700;
+  font-size: 10pt;
+  margin-bottom: 2mm;
+}
+
+.ajq-totals__grid {
+  display: grid;
+  grid-template-columns: 1fr 36mm 28mm;
+  gap: 0;
+  border-top: 0.5pt solid #555;
+}
+
+.ajq-totals__row {
+  display: contents;
+}
+
+.ajq-totals__row > div {
+  padding: 1.2mm 2mm;
+  border-bottom: 0.3pt solid #d4d4d4;
+}
+
+.ajq-totals__row > div.lab { font-weight: 600; }
+.ajq-totals__row > div.val { text-align: right; }
+.ajq-totals__row > div.cur { text-align: right; }
+
+.ajq-totals__row--ttc > div { background: #f1eee5; font-weight: 700; }
+.ajq-totals__row--ttc > div.val { font-size: 10pt; }
+
+.ajq-tva-table {
+  margin-top: 3mm;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+}
+
+.ajq-tva-table th, .ajq-tva-table td {
+  padding: 1mm 2mm;
+  border: 0.3pt solid #c0c0c0;
+  text-align: right;
+}
+
+.ajq-tva-table th { font-weight: 700; background: #fafafa; }
+.ajq-tva-table th:first-child, .ajq-tva-table td:first-child { text-align: left; }
+
+/* ─────────────────────────────────────────────────────────────────
+   BLOC CONDITIONS DE RÈGLEMENT
+   ───────────────────────────────────────────────────────────────── */
+.ajq-payment {
+  margin-top: 4mm;
+  font-size: 9pt;
+  line-height: 1.5;
+}
+
+.ajq-payment__row { margin-bottom: 1mm; }
+.ajq-payment__row strong { font-weight: 700; }
+
+.ajq-payment__deposit {
+  font-weight: 600;
+  margin-top: 1mm;
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   BLOC ASSURANCE PROFESSIONNELLE
+   ───────────────────────────────────────────────────────────────── */
+.ajq-insurance {
+  margin-top: 4mm;
+  font-size: 9pt;
+  line-height: 1.5;
+}
+
+.ajq-insurance__title { font-weight: 700; }
+
+/* ─────────────────────────────────────────────────────────────────
+   BLOC SIGNATURE
+   ───────────────────────────────────────────────────────────────── */
+.ajq-signature {
+  margin-top: 6mm;
+  font-size: 9pt;
+  border-top: 0.4pt solid #888;
+  padding-top: 3mm;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8mm;
+}
+
+.ajq-signature__num { font-weight: 700; margin-bottom: 1mm; }
+.ajq-signature__mention { font-style: italic; color: #2a2a2a; }
+.ajq-signature__box {
+  margin-top: 6mm;
+  border: 0.4pt dashed #888;
+  height: 28mm;
+}
+.ajq-signature__entreprise { font-weight: 700; margin-top: 6mm; }
+
+/* ─────────────────────────────────────────────────────────────────
+   PAGE CGV
+   ───────────────────────────────────────────────────────────────── */
+.ajq-cgv-title {
+  font-size: 11pt;
+  font-weight: 700;
+  margin: 0 0 2mm;
+}
+
+.ajq-cgv-intro {
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin-bottom: 3mm;
+  color: #2a2a2a;
+}
+
+.ajq-cgv-article { margin-bottom: 2.5mm; }
+
+.ajq-cgv-article__title {
+  font-size: 9pt;
+  font-weight: 700;
+  margin-bottom: 0.5mm;
+}
+
+.ajq-cgv-article__body {
+  font-size: 8pt;
+  line-height: 1.45;
+  white-space: pre-line;
+  text-align: justify;
+}
+
+.ajq-cgv-article__bullets {
+  margin: 0.5mm 0 0 4mm;
+  padding: 0;
+  font-size: 8pt;
+  line-height: 1.45;
+}
+
+.ajq-cgv-article__bullets li { margin-bottom: 0.5mm; }
+
+/* ─────────────────────────────────────────────────────────────────
+   IMPRESSION (préparation export PDF future)
+   ───────────────────────────────────────────────────────────────── */
+@media print {
+  @page { size: A4; margin: 0; }
+  body * { visibility: hidden; }
+  .ajq-preview-shell, .ajq-preview-shell * { visibility: visible; }
+  .ajq-preview-toolbar { display: none; }
+  .ajq-preview-shell { background: #fff; padding: 0; }
+  .ajq-page {
+    margin: 0;
+    box-shadow: none;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   VUE ÉDITION — styles propres au module (préfixe .ajqe-)
+   ───────────────────────────────────────────────────────────────── */
+.ajqe-shell { padding: 0 0 80px; font-family: Inter, system-ui, sans-serif; }
+
+.ajqe-tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e3dccc;
+}
+
+.ajqe-tab {
+  padding: 10px 18px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: #7a8896;
+  transition: all 0.15s;
+}
+
+.ajqe-tab:hover { color: #0f2030; background: rgba(15,32,48,0.04); }
+
+.ajqe-tab.active {
+  color: #0f2030;
+  border-bottom-color: #c9a96e;
+}
+
+.ajqe-meta {
+  background: #fff;
+  border: 1px solid #e3dccc;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.ajqe-meta__field { display: flex; flex-direction: column; gap: 4px; }
+.ajqe-meta__label { font-size: 11px; font-weight: 600; color: #7a8896; text-transform: uppercase; letter-spacing: 0.4px; }
+.ajqe-meta__input,
+.ajqe-meta__select {
+  padding: 8px 10px;
+  border: 1px solid #e3dccc;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  background: #fff;
+  color: #0f2030;
+}
+.ajqe-meta__input:focus,
+.ajqe-meta__select:focus { outline: none; border-color: #c9a96e; box-shadow: 0 0 0 2px rgba(201,169,110,0.15); }
+
+.ajqe-section {
+  background: #fff;
+  border: 1px solid #e3dccc;
+  border-radius: 12px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+
+.ajqe-section--option { border-color: #d8c595; background: #fdf9ef; }
+
+.ajqe-section__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e8e4d6;
+  background: linear-gradient(180deg, #fafaf6, #f6f4ec);
+}
+.ajqe-section--option .ajqe-section__head { background: linear-gradient(180deg, #faf3df, #f6ecd0); }
+
+.ajqe-section__num {
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f2030;
+  min-width: 22px;
+}
+
+.ajqe-section__title {
+  flex: 1;
+  font-weight: 700;
+  font-size: 14px;
+  color: #0f2030;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-family: inherit;
+}
+.ajqe-section__title:hover { border-color: #e3dccc; background: #fff; }
+.ajqe-section__title:focus { outline: none; border-color: #c9a96e; background: #fff; }
+
+.ajqe-section__pill {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  border-radius: 99px;
+  background: #efe6d6;
+  color: #6b4f1a;
+  text-transform: uppercase;
+}
+
+.ajqe-section__actions { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.ajqe-btn {
+  padding: 6px 11px;
+  background: #fff;
+  border: 1px solid #e3dccc;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #0f2030;
+  transition: all 0.12s;
+}
+.ajqe-btn:hover { border-color: #c9a96e; background: #fcf8ef; }
+.ajqe-btn--danger { color: #c62828; border-color: rgba(198,40,40,0.3); }
+.ajqe-btn--danger:hover { background: rgba(198,40,40,0.06); border-color: #c62828; }
+.ajqe-btn--primary { background: #c9a96e; color: #0f2030; border-color: #c9a96e; font-weight: 700; }
+.ajqe-btn--primary:hover { background: #b89455; border-color: #b89455; }
+.ajqe-btn--gold-outline { color: #7a5a30; border-color: #c9a96e; }
+.ajqe-btn--gold-outline:hover { background: #faf3df; }
+
+.ajqe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.ajqe-table th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 11px;
+  color: #7a8896;
+  padding: 8px 6px;
+  border-bottom: 1px solid #e8e4d6;
+  background: #fafaf6;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.ajqe-table th.r { text-align: right; }
+.ajqe-table th.c { text-align: center; }
+
+.ajqe-table td {
+  padding: 6px;
+  vertical-align: top;
+  border-bottom: 1px solid #f1eee2;
+}
+
+.ajqe-line__num { font-weight: 700; color: #0f2030; }
+
+.ajqe-line__designation,
+.ajqe-line__description,
+.ajqe-line__cell input,
+.ajqe-line__cell select {
+  font-family: inherit;
+  font-size: 12.5px;
+  width: 100%;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: #0f2030;
+  background: transparent;
+  resize: vertical;
+}
+.ajqe-line__designation:hover,
+.ajqe-line__description:hover,
+.ajqe-line__cell input:hover,
+.ajqe-line__cell select:hover { border-color: #e3dccc; background: #fff; }
+.ajqe-line__designation:focus,
+.ajqe-line__description:focus,
+.ajqe-line__cell input:focus,
+.ajqe-line__cell select:focus { outline: none; border-color: #c9a96e; background: #fff; box-shadow: 0 0 0 1px rgba(201,169,110,0.2); }
+
+.ajqe-line__designation { font-weight: 600; }
+.ajqe-line__description { font-weight: 400; font-size: 11.5px; color: #3a4a5c; min-height: 26px; }
+
+.ajqe-line__cell input.r,
+.ajqe-line__cell input.qty,
+.ajqe-line__cell input.unit,
+.ajqe-line__cell input.pu,
+.ajqe-line__cell input.disc { text-align: right; }
+.ajqe-line__cell input.unit { text-align: center; }
+
+.ajqe-line__total { font-weight: 700; color: #0f2030; padding-right: 8px; text-align: right; white-space: nowrap; }
+
+.ajqe-line__row--option .ajqe-line__num,
+.ajqe-line__row--option .ajqe-line__total { color: #6b4f1a; }
+.ajqe-line__row--excluded { opacity: 0.55; }
+.ajqe-line__row--hidden td { background: rgba(122,136,150,0.06); border-color: #e8e4d6; }
+.ajqe-line__row--hidden .ajqe-line__designation { color: #888; font-style: italic; }
+.ajqe-line__row--highlight-red { background: rgba(220, 53, 69, 0.05); }
+
+.ajqe-line__statusrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+.ajqe-line__statusrow select {
+  padding: 3px 6px;
+  border: 1px solid #e3dccc;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 11px;
+  background: #fff;
+  color: #0f2030;
+}
+
+.ajqe-line__actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ajqe-line__icon {
+  background: transparent;
+  border: none;
+  color: #7a8896;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.ajqe-line__icon:hover { background: #f1eee2; color: #0f2030; }
+.ajqe-line__icon--danger:hover { background: rgba(198,40,40,0.08); color: #c62828; }
+
+.ajqe-section__addline {
+  width: calc(100% - 24px);
+  margin: 8px 12px 12px;
+  padding: 8px;
+  background: rgba(255,255,255,0.6);
+  border: 1px dashed rgba(15,32,48,0.18);
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  color: #3a4a5c;
+  font-weight: 600;
+}
+.ajqe-section__addline:hover { background: #fff; border-color: #c9a96e; color: #0f2030; }
+
+.ajqe-addsection {
+  width: 100%;
+  padding: 14px;
+  background: rgba(255,255,255,0.5);
+  border: 2px dashed rgba(15,32,48,0.18);
+  border-radius: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  color: #3a4a5c;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.ajqe-addsection:hover { background: #fff; border-color: #c9a96e; color: #0f2030; }
+
+/* Sticky totaux barre du bas */
+.ajqe-totalsbar {
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(135deg, #0f2030, #1a3349);
+  color: #fff;
+  border-radius: 14px 14px 0 0;
+  padding: 14px 18px;
+  margin: 18px -2px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  box-shadow: 0 -8px 24px rgba(15,32,48,0.18);
+  font-family: Inter, system-ui, sans-serif;
+}
+
+.ajqe-totalsbar__col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ajqe-totalsbar__lab {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: rgba(255,255,255,0.6);
+}
+.ajqe-totalsbar__val {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1;
+}
+.ajqe-totalsbar__val--gold { color: #c9a96e; }
+
+.ajqe-totalsbar__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Cards : liste des devis du chantier */
+.ajqe-listcard {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: #fff;
+  border: 1px solid #e3dccc;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.ajqe-listcard:hover { border-color: #c9a96e; box-shadow: 0 2px 8px rgba(201,169,110,0.18); }
+
+.ajqe-listcard__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(201,169,110,0.12);
+  color: #7a5a30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 700;
+}
+.ajqe-listcard__body { flex: 1; min-width: 0; }
+.ajqe-listcard__title { font-weight: 700; color: #0f2030; font-size: 14px; }
+.ajqe-listcard__sub { font-size: 12px; color: #7a8896; margin-top: 2px; }
+.ajqe-listcard__total {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 22px;
+  font-weight: 600;
+  color: #0f2030;
+}
+
+/* Templates picker */
+.ajqe-tplgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+.ajqe-tplcard {
+  padding: 16px;
+  background: #fff;
+  border: 1px solid #e3dccc;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.12s;
+  text-align: left;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ajqe-tplcard:hover { border-color: #c9a96e; box-shadow: 0 4px 12px rgba(201,169,110,0.18); transform: translateY(-1px); }
+.ajqe-tplcard__icon { font-size: 26px; }
+.ajqe-tplcard__title { font-weight: 700; color: #0f2030; font-size: 14px; }
+.ajqe-tplcard__desc { font-size: 12px; color: #3a4a5c; line-height: 1.4; }
+.ajqe-tplcard__type {
+  margin-top: 6px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #7a5a30;
+  font-weight: 700;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+  .ajq-blocks { grid-template-columns: 1fr; }
+  .ajq-page {
+    width: 100%;
+    min-height: auto;
+    padding: 16px;
+  }
+  .ajq-table { font-size: 11px; }
+  .ajqe-table { font-size: 12px; }
+}
