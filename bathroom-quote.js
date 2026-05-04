@@ -175,7 +175,7 @@
         '<line x1="7" y1="19" x2="7" y2="21"/>' +
         '<line x1="17" y1="19" x2="17" y2="21"/>' +
       '</svg></span>' +
-      '<span>Devis salle de bain</span>';
+      '<span>Devis</span>';
     item.onclick = function(){
       if(typeof closeSidebar === 'function' && window.innerWidth <= 980) closeSidebar();
       if(typeof screenHistory !== 'undefined') screenHistory = [];
@@ -202,7 +202,7 @@
     s.innerHTML =
       '<div style="padding:0 0 80px;">' +
         '<div style="margin-bottom:18px;">' +
-          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:#0f2030;">Devis salle de bain</div>' +
+          '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:30px;font-weight:600;color:#0f2030;">Devis</div>' +
           '<div style="font-size:13px;color:#3a4a5c;margin-top:4px;">Prise d\'informations chez le client → devis structuré</div>' +
         '</div>' +
         '<div id="aj-bath-body"></div>' +
@@ -1589,7 +1589,8 @@
     /* Boutons d'action */
     var actions =
       '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;">' +
-        '<button onclick="AJBath.wizardSaveDraft()" style="flex:1;min-width:160px;padding:14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;cursor:pointer;font-weight:600;color:#0f2030;font-family:Inter,sans-serif;font-size:14px;">💾 Enregistrer brouillon</button>' +
+        '<button onclick="AJBath.wizardSaveDraft()" style="flex:1;min-width:140px;padding:14px;background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:10px;cursor:pointer;font-weight:600;color:#0f2030;font-family:Inter,sans-serif;font-size:14px;">💾 Enregistrer</button>' +
+        '<button onclick="AJBath.wizardPreviewPDF()" style="flex:1;min-width:140px;padding:14px;background:#fff;border:1px solid #c9a96e;color:#7a5a30;border-radius:10px;cursor:pointer;font-weight:600;font-family:Inter,sans-serif;font-size:14px;">👁 Aperçu PDF</button>' +
         '<button onclick="AJBath.wizardEmit()" style="flex:2;min-width:200px;padding:14px;background:#1d4d33;color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:700;font-family:Inter,sans-serif;font-size:14px;">📋 Émettre devis officiel — verrouillage immédiat</button>' +
       '</div>';
 
@@ -1693,6 +1694,56 @@
     db.numbering.devis = current;
     safeSave(db);
     return 'DEV-' + year + '-' + String(current.counter).padStart(3, '0');
+  }
+
+  /* Session 13 — Aperçu PDF en mode brouillon (filigrane, pas de numéro réservé,
+     pas de snapshot persisté). Permet de voir le rendu fidèle au PDF AJ Pro
+     sans verrouiller le devis. */
+  function wizardPreviewPDF(){
+    if(!_currentDraft){ if(typeof showToast==='function') showToast('Aucun brouillon en cours'); return; }
+    var fd = _currentDraft.formData;
+    var template = getBathroomTemplate();
+    var lines = generateLines(template, fd);
+    if(!lines.length){
+      if(typeof showToast==='function') showToast('⚠ Aucune prestation cochée — passe par les étapes pour activer des lignes');
+      return;
+    }
+    var totals = computeTotals(lines, { vatRate: template.vatRate, depositPct: template.depositPct });
+    var emetteur = getEmetteur();
+    if(typeof showToast==='function') showToast('Aperçu PDF en cours de génération...');
+    /* Doc temporaire avec status='brouillon' → buildBathPDF appliquera le filigrane */
+    var previewDoc = {
+      id      : 'preview_' + Date.now().toString(36),
+      type    : 'devis',
+      subtype : 'bathroom',
+      number  : 'APERÇU',
+      date    : new Date().toISOString().slice(0, 10),
+      emittedAt: Date.now(),
+      clientId: null,
+      snapshot: {
+        formData      : JSON.parse(JSON.stringify(fd)),
+        lines         : JSON.parse(JSON.stringify(lines)),
+        totals        : JSON.parse(JSON.stringify(totals)),
+        template      : { templateId: template.templateId, version: template.version, vatRate: template.vatRate, depositPct: template.depositPct },
+        emetteur      : emetteur,
+        legalMentions : template.legalMentions,
+        cgv           : template.cgv,
+        timestamp     : Date.now()
+      },
+      totals: { totalHT: totals.totalHT, htMarge: totals.totalHT, ttc: totals.totalTTC, tva: totals.tva, marge: 0 },
+      locked: false,
+      status: 'brouillon'  /* déclenche le filigrane "Brouillon" dans buildBathPDF */
+    };
+    /* Charge jsPDF + logo puis build PDF directement (pas de persistance dans db.documents) */
+    loadJsPDF(function(){
+      loadLogo(function(logoDataURL){
+        try { buildBathPDF(previewDoc, logoDataURL); }
+        catch(e){
+          console.error(e);
+          if(typeof showToast==='function') showToast('⚠ Erreur PDF : ' + (e.message || e));
+        }
+      });
+    });
   }
 
   function wizardEmit(){
@@ -2599,6 +2650,7 @@
     wizardGoTo: wizardGoTo,
     wizardSaveDraft: wizardSaveDraft,
     wizardEmit: wizardEmit,
+    wizardPreviewPDF: wizardPreviewPDF,  /* Session 13 : aperçu PDF sans verrouillage */
     wizardDelete: wizardDelete,
     /* Calculs (utilisables depuis console) */
     computeMeasurements: computeMeasurements,

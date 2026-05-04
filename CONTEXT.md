@@ -73,6 +73,44 @@ Mot de passe d'accès : `Jérome0307`.
 - **Repo** : https://github.com/Samuel141-boop/aj-pro-renovation
 - **Vercel auto-deploy** sur push vers `main`.
 
+## État au 2026-05-02 (Session 13 — Module Devis AJ Pro réactivé + bouton « Créer depuis modèle » + Aperçu PDF)
+
+Le module Devis basé sur le PDF officiel AJ Pro **$002612** est **réactivé**. Tout l'infrastructure existait depuis le Commit A IA (Session 1) — juste masquée pendant les sessions de simplification.
+
+**Le module qui répond exactement à la spec du brief :**
+- `quote-template-sdb.js` (~720 lignes) : modélisation EXACTE du PDF $002612
+  - 18 sections : 6 principales (Commentaires, Démolition, Plomberie, Électricité, Fournitures, Livraison) + 12 options (Dépose carrelage, Plafond suspendu, Niche carrelée, Masquage tuyaux, Vanne isolement, Électricité supp, Mise en teinte, Placard, PMR, Galandage, Porte applique, etc.)
+  - 148 lignes avec prix par défaut, unités, descriptions
+  - Mentions légales (article 278-0 bis A CGI), CGV 10 articles, infos AJ Pro complètes (SIRET, TVA intracommunautaire, IBAN, BIC, RCS Nanterre, AXA assurance, CM2C médiateur)
+- `bathroom-quote.js` (~2700 lignes) : wizard 12 étapes + **éditeur tabulaire complet** (étape 12) avec édition inline label/qté/unité/PUHT, drag-drop, ajout/suppression, toggle Option, sous-totaux temps réel, génération PDF officiel verrouillé `DEV-2026-XXX`
+
+**Changements Session 13 :**
+- ✅ `FEATURES_ENABLED.bathroomNav: false → true` → l'item « **Devis** » réapparaît dans la sidebar
+- ✅ Renommage label sidebar : « Devis salle de bain » → « **Devis** » (label générique demandé)
+- ✅ Renommage titre écran : « Devis salle de bain » → « **Devis** »
+- ✅ **Nouvelle fonction `wizardPreviewPDF()`** (`bathroom-quote.js`) : génère un PDF en mode brouillon (filigrane « Brouillon » automatique), **sans réserver de numéro chronologique** ni persister de snapshot. Permet de voir le rendu fidèle au PDF AJ Pro avant validation finale.
+- ✅ **Nouveau bouton « 👁 Aperçu PDF »** dans la barre d'actions de l'éditeur étape 12 (à côté de « 💾 Enregistrer » et « 📋 Émettre devis officiel »)
+- ✅ **Bouton « 📋 Créer un devis depuis le modèle type AJ Pro »** dans le Récap (en haut, sous le header) → handler `recapCreateDevisFromTemplate()` qui crée un nouveau draft, pré-remplit infos client/chantier, ouvre direct l'éditeur étape 12
+
+**Flux utilisateur cible :**
+```
+Récap → bouton "Créer un devis depuis modèle AJ Pro"
+  → wizardStartNew()
+  → infos client pré-remplies depuis dbLoad().clients[currentClientId]
+  → wizardGoTo(11)  ← saute direct à l'éditeur (toutes les sections AJ Pro)
+  → édition ligne par ligne (qty/unité/PUHT/label, drag-drop, options)
+  → "👁 Aperçu PDF" pour voir le rendu fidèle
+  → "📋 Émettre devis officiel" pour verrouiller (DEV-2026-XXX)
+```
+
+**Vues du module Devis :**
+- **Vue édition** = étape 12 du wizard (éditeur tabulaire complet, déjà en place depuis Session B IA)
+- **Vue aperçu** = `wizardPreviewPDF()` (PDF généré en mémoire, ouvre dans l'onglet navigateur)
+
+**Régressions vérifiées** : 7 flags Session 6 toujours `false` (sauf `bathroomNav` qui devient `true`). Pas d'IA active. Le module Récap (Sessions 9-12) reste totalement intact. Croquis stylet (Session 8) intact. Ordre onglets fiche pièce (Session 7) intact.
+
+**SW v20-ai-ready-meta → v21-devis-aj-pro** — vide le cache au reload.
+
 ## État au 2026-05-02 (Session 12 — 4 champs IA-ready sur tous les éléments importants)
 
 Session de **structuration** pour préparer une future génération de devis par IA. **Pas d'IA active**, juste de la donnée bien typée. Chaque élément important du chantier porte désormais 4 méta-champs qui permettront à une IA future de distinguer ce qui est **vu / coché / mesuré / supposé / à confirmer**.

@@ -4154,6 +4154,48 @@ function savePieceFinal(){persistPiece();renderPiecesList();goBack();showToast('
      piece.objectifTravaux = string libre
    ════════════════════════════════════════════════════════════════════ */
 
+/* ─── Création d'un devis depuis le modèle type AJ Pro (Session 13) ───
+   Utilise le module Devis existant (bathroom-quote.js) qui charge
+   le template canonique quote-template-sdb.js (= PDF $002612).
+   Pré-remplit les infos client depuis le chantier en cours puis ouvre
+   directement l'éditeur étape 12 (toutes les sections + lignes du
+   modèle officiel AJ Pro déjà en place, modifiables). */
+function recapCreateDevisFromTemplate(){
+  if(typeof window.AJBath === 'undefined' || typeof window.AJBath.wizardStartNew !== 'function'){
+    if(typeof showToast === 'function') showToast('⚠ Module Devis non chargé');
+    return;
+  }
+  var c = dbLoad().clients[currentClientId];
+  if(!c){ if(typeof showToast === 'function') showToast('Aucun client sélectionné'); return; }
+
+  /* Crée un nouveau draft devis */
+  window.AJBath.wizardStartNew();
+
+  /* Pré-remplit les infos client + chantier dans le draft fraîchement créé */
+  setTimeout(function(){
+    var drafts = (typeof window.AJBath.getDrafts === 'function') ? window.AJBath.getDrafts() : [];
+    var draft = drafts[drafts.length - 1];  /* Le dernier draft = celui qu'on vient de créer */
+    if(!draft) return;
+    if(c.prenom)  draft.formData['client.prenom']         = c.prenom;
+    if(c.nom)     draft.formData['client.nom']            = c.nom;
+    if(c.tel)     draft.formData['client.tel']            = c.tel;
+    if(c.email)   draft.formData['client.email']          = c.email;
+    if(c.adresse) draft.formData['client.adresseChantier']= c.adresse;
+    if(c.etage)   draft.formData['client.etage']          = c.etage;
+    if(c.code)    draft.formData['client.codeAcces']      = c.code;
+    if(c.type)    draft.formData['client.typeLogement']   = c.type;
+    /* Lien arrière vers le chantier d'origine */
+    draft.fromRecap        = true;
+    draft.recapClientId    = currentClientId;
+    if(typeof window.AJBath.saveDraft === 'function') window.AJBath.saveDraft(draft);
+    /* Saute direct à l'éditeur (étape 12, index 11) — toutes les sections du modèle AJ Pro sont là */
+    setTimeout(function(){
+      if(typeof window.AJBath.wizardGoTo === 'function') window.AJBath.wizardGoTo(11);
+      if(typeof showToast === 'function') showToast('Devis créé depuis le modèle AJ Pro · 18 sections, 148 lignes par défaut');
+    }, 300);
+  }, 350);
+}
+
 /* ─── Constantes IA-ready (Session 12) ──────────────────────────
    4 champs pour structurer chaque info importante du chantier :
    source / certitude / élément concerné / action prévue.
@@ -5015,12 +5057,20 @@ function showRecap(){
     '</div>';
 
   /* ─── Bandeau de complétude ─── */
-  document.getElementById('recap-completion-bar').innerHTML = score.missing.length === 0
+  /* Session 13 — bouton "Créer un devis depuis le modèle type" */
+  var devisCta = '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">' +
+    '<button onclick="recapCreateDevisFromTemplate()" style="flex:1;min-width:240px;padding:14px 18px;background:linear-gradient(135deg,#0f2030,#1a3349);color:#c9a96e;border:none;border-radius:10px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:14px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px">' +
+      '<span style="font-size:18px">📋</span>' +
+      '<span>Créer un devis depuis le modèle type AJ Pro</span>' +
+    '</button>' +
+  '</div>';
+
+  document.getElementById('recap-completion-bar').innerHTML = devisCta + (score.missing.length === 0
     ? '<div style="background:rgba(45,106,79,0.08);border:1px solid rgba(45,106,79,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif;font-size:12px;color:#1d4d33;font-weight:600">✓ Fiche chantier complète — toutes les informations essentielles sont présentes</div>'
     : '<div style="background:rgba(232,98,26,0.06);border:1px solid rgba(232,98,26,0.25);border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:Inter,system-ui,sans-serif">' +
         '<div style="font-size:12px;color:#9a4514;font-weight:700;margin-bottom:4px">⚠ ' + score.missing.length + ' élément' + (score.missing.length>1?'s':'') + ' à compléter pour finaliser la fiche</div>' +
         '<div style="font-size:11px;color:#3a4a5c;line-height:1.6">' + score.missing.slice(0, 12).map(function(m){ return '• ' + esc(m); }).join(' &nbsp; ') + (score.missing.length > 12 ? ' &nbsp; • …' : '') + '</div>' +
-      '</div>';
+      '</div>');
 
   /* ─── Section helpers ─── */
   function section(title, icon, count, body){
@@ -6306,7 +6356,7 @@ window.FEATURES_ENABLED = Object.assign({
   statsNav:      false,  /* Sidebar : Statistiques */
   settingsNav:   false,  /* Sidebar : Paramètres devis */
   documentsNav:  false,  /* Sidebar : Documents émis */
-  bathroomNav:   false,  /* Sidebar : Devis salle de bain */
+  bathroomNav:   true,   /* Sidebar : Devis (réactivé Session 13 — module devis officiel basé sur modèle PDF AJ Pro $002612) */
   analysisNav:   false,  /* Sidebar : Analyse rendez-vous */
   tutorialBtn:   false,  /* Sidebar footer : Tutoriel guidé (?) */
   helpFooter:    false,  /* Sidebar footer : carte "Besoin d'aide ?" statique */
