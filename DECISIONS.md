@@ -4,6 +4,171 @@
 
 ---
 
+## ADR-019 — 5e méta-champ « Statut devis » + édition photos/notes/croquis dans le récap
+
+**Date** : 2026-05-02
+**Statut** : ✅ Accepté · Commit `08eb4db` (Session 14)
+
+**Contexte** : Après les 4 méta-champs IA-ready (Session 12), il manquait l'orientation explicite « comment cette info doit aller dans le devis » (vs `certaintyLevel` qui dit juste si c'est sûr). Et photos/notes/croquis avaient les méta en localStorage mais pas d'UI éditable.
+
+**Décision** :
+- Ajout 5e méta : `quoteStatus` (`included` / `option` / `to_confirm` / `excluded`)
+- Ajout champ `comment` optionnel (input court sous chaque rangée meta)
+- Mapping rétro-compat : items avec `status` legacy (Session 11) → `quoteStatus`
+- 2 nouveaux helpers `recapMetaRowPiece(pieceId, collectionName, item)` et `recapMetaRowCroquis(pieceId, croquisMeta)` pour l'édition au niveau pièce
+- Rendu `<details>` repliés par défaut sous photos/croquis/msNotes dans le Récap par pièce → zéro alourdissement visuel
+- Migration douce : photos/notes anciennes sans `id` reçoivent un id auto-généré au render
+
+**Conséquences** :
+- ✅ Toutes les structures sont 100% IA-ready (pour génération devis future)
+- ✅ Aucun champ existant supprimé/renommé, rétro-compat totale
+- ⚠ Édition meta sur photos/notes/croquis uniquement dans le Récap (pas dans la fiche pièce) — choix volontaire pour ne pas alourdir l'UI terrain
+- ⚠ `workItemsMeta` (méta par travail coché) stocké mais UI pas encore exposée
+
+---
+
+## ADR-018 — Module Devis AJ Pro = template canonique réutilisé, pas refait
+
+**Date** : 2026-05-02
+**Statut** : ✅ Accepté · Commit `f15ee81` (Session 13)
+
+**Contexte** : Le user demande un module Devis basé sur le PDF officiel AJ Pro $002612, exactement structuré comme le PDF, modifiable ligne par ligne. Tentation : tout recoder. Réalité : `quote-template-sdb.js` (Commit A IA Session 1) modélise déjà EXACTEMENT le PDF (18 sections, 148 lignes, mentions légales, CGV, infos AJ Pro, prix par défaut). `bathroom-quote.js` (Session B IA) fournit déjà l'éditeur tabulaire complet + génération PDF officiel `DEV-2026-XXX`.
+
+**Décision** : Pas recréer — **réactiver** ce qui était caché en Session 6 (`bathroomNav: false → true`). Renommer label « Devis salle de bain » → « Devis ». Ajouter 2 ponts seulement :
+- Bouton « 📋 Créer un devis depuis le modèle type AJ Pro » dans le Récap → `recapCreateDevisFromTemplate()` qui crée un draft, pré-remplit infos client, ouvre direct l'éditeur (étape 12)
+- Bouton « 👁 Aperçu PDF » sur l'éditeur étape 12 → `wizardPreviewPDF()` qui génère un PDF avec filigrane « Brouillon » sans réserver de numéro ni persister snapshot
+
+**Conséquences** :
+- ✅ Réponse complète au brief en 147 lignes seulement (au lieu de potentiellement 1500+)
+- ✅ Toute la richesse du Commit A IA est exploitée : 8 groupes d'alternatives, semanticKey, déductions, etc.
+- ⚠ Aperçu PDF s'ouvre comme téléchargement (jsPDF.save) plutôt qu'inline
+- ⚠ Le wizard 12 étapes reste accessible (non retiré, peut servir de saisie pas-à-pas)
+
+---
+
+## ADR-017 — Structure « IA-ready » : 4 (puis 5) méta-champs sur tous les éléments importants
+
+**Date** : 2026-05-02
+**Statut** : ✅ Accepté · Commits `708b616` (Session 12) + `08eb4db` (Session 14)
+
+**Contexte** : Pour qu'une IA future génère un devis fiable depuis le récap, elle doit pouvoir distinguer **vu / coché / mesuré / supposé / à confirmer** sur chaque info. Sans cette structure, l'IA inventerait des lignes ou confondrait hypothèse et fait.
+
+**Décision** : Ajout de **5 méta-champs centralisés** (constantes JS exposées) sur tous les éléments importants du chantier :
+- `informationSource` : `manual` / `note` / `photo` / `sketch` / `checkbox` / `measurement` / `client_statement` / `other` (auto-renseigné selon le module d'origine, jamais demandé manuellement à l'utilisateur)
+- `certaintyLevel` : `confirmed` / `probable` / `to_check` / `not_planned`
+- `concernedElement` : 24 valeurs métier (`shower` / `bathtub` / `toilet` / `drain` / `tiling` / `painting` / etc.)
+- `plannedAction` : 15 valeurs (`remove` / `keep` / `replace` / `install` / `repair_or_rework` / `check` / etc.)
+- `quoteStatus` : `included` / `option` / `to_confirm` / `excluded`
+- `comment` (texte libre court, optionnel)
+
+11 collections enrichies via `recapEnsureItemMeta` à la lecture (8 collections client + photos/msNotes/croquisMeta des pièces). Helpers réutilisables `recapMetaRow` / `recapMetaRowPiece` / `recapMetaRowCroquis` pour l'édition compacte (5 selects + input commentaire).
+
+**Conséquences** :
+- ✅ Une IA branchée plus tard pourra lire le récap et générer un devis structuré sans inventer
+- ✅ Migration totalement douce : tous les champs créés à la volée à la lecture, jamais imposés
+- ⚠ Édition se fait via dropdowns dans le Récap (pas de modal complexe, pas de batch)
+- ⚠ Mesures pas encore individualisées (objet plat `piece.mesures` — pas urgent)
+
+---
+
+## ADR-016 — Récap = fiche chantier interne, pas export PDF/devis
+
+**Date** : 2026-05-02
+**Statut** : ✅ Accepté · Commits `2bde5e1` (Session 9) + `31f065b` (Session 10) + `d46aa2a` (Session 11)
+
+**Contexte** : Le module Récap était caché en Session 5 (`recap: false`) avec un contenu basique (juste mesures et travaux). Le user veut maintenant **réactiver mais transformer** : pas un export PDF client, pas un brouillon de devis — une **fiche chantier interne** complète, lisible, organisée par pièce, qui servira plus tard d'entrée à une IA générant un devis brouillon.
+
+**Décision** : Réactiver `recap: true` + refondre `showRecap()` en 12 sections + score de complétude :
+1. Informations client & logistique
+2. Demande du client (textarea + budgetLevel/priorités/délai/préférences)
+3. Contexte chantier (type, complexité, contraintes techniques, urgence)
+4. Contraintes chantier (liste structurée)
+5. Récap par pièce (état actuel, objectif, mesures, travaux avec **statut Inclus/Option/À confirmer/Non inclus**, photos miniatures, croquis, points liés)
+6. Notes terrain globales
+7. Points sensibles (renommé de « Points techniques importants »)
+8. Points à vérifier avant devis (avec checkbox de résolution)
+9. Options proposées (titre + objectif + contenu détaillé + badge)
+10. Fournitures à prévoir (qty/unité/dimensions/marque/finition + suppliedBy AJ Pro/Client/À confirmer + status)
+11. Main-d'œuvre à prévoir (intervention + difficulté + durée estimée)
+12. Commentaires / réserves devis (13 commentaires types pré-définis cochables + custom)
+13. Notes terrain
++ **Score « Devis prêt »** 0-100% pondéré (~125 points max), affiché en gros (32px) avec code couleur, bandeau de complétude détaillé en dessous
+
+**Conséquences** :
+- ✅ Fiche chantier exhaustive sans nécessiter d'IA active (toutes les saisies humaines structurées)
+- ✅ Compatibilité localStorage totale — `recapEnsureClient` / `recapEnsurePiece` créent les champs à la volée
+- ⚠ Saisie d'items de listes via `window.prompt()` — minimal, mais suffit pour V1
+- ⚠ Liaison `roomId` pour matériel/main-d'œuvre via match de nom (pas de sélecteur visuel)
+
+---
+
+## ADR-015 — Onglet Croquis transformé en carnet stylet Samsung S Pen
+
+**Date** : 2026-05-02
+**Statut** : ✅ Accepté · Commit `71d1cac` (Session 8)
+
+**Contexte** : Le user travaille principalement sur tablette Samsung avec stylet. L'onglet Croquis avait une palette 5 couleurs et un bouton secondaire « Analyser comme croquis géométrique » qui parasitait l'usage carnet de notes manuscrites.
+
+**Décision** : Refonte ciblée du step-2 (Croquis) en carnet stylet pur :
+- Titre « Croquis & bloc-notes visuel » → **« Croquis & notes au stylet »**
+- Toolbar : retrait palette couleurs, ajout **Annuler / Rétablir** (branchés sur `canvas._ajUndo` / `_ajRedo` de Phase 1)
+- Bouton « Analyser comme croquis géométrique » retiré (cohérent avec « pas de reconnaissance automatique »). La fonction `analyzeCroquis()` reste dans le code pour préservation
+- Canvas hauteur **600px**, fond blanc explicite
+- Bouton CTA principal « **⛶ Ouvrir en grand pour écrire au stylet** » plein largeur, btn-primary doré
+- Message confirm clear adapté : « Effacer tout le croquis ? Cette action supprimera le dessin actuel. »
+- Reset stacks `undoStack`/`redoStack` après clear
+
+**Conséquences** :
+- ✅ Réutilise totalement le moteur Phase 1 (HiDPI, palm rejection 200ms, snapshot auto, stylo pression)
+- ✅ Simple à comprendre : 5 boutons (Stylo / Gomme / Annuler / Rétablir / Effacer), 1 CTA principal
+- ⚠ Couleur unique noir bleuté `#1a1a2e` (variable `curColor` reste lue par moteur de dessin)
+
+---
+
+## ADR-014 — Réorganisation des onglets fiche pièce + ajout step Résumé
+
+**Date** : 2026-05-02
+**Statut** : ✅ Accepté · Commit `5394bc0` (Session 7)
+
+**Contexte** : Workflow naturel d'un RDV chantier = identifier la pièce → photos → croquis stylet → travaux à prévoir → mesures → notes → résumé. L'ordre actuel (Infos / Croquis / Mesures / Travaux / Photos / Notes) ne reflétait pas ce flux.
+
+**Décision** : Réordonner les `step-btn` HTML statiques + renommer atomiquement les ids `step-N` (dual-pass sed avec marqueurs temporaires pour éviter collision step-1↔step-2↔step-4). Nouvel ordre : **Infos (0) → Photos (1) → Croquis (2) → Travaux (3) → Mesures (4) → Notes (5) → Résumé (6)**. Ajout d'un step-6 dynamique (« Résumé ») qui affiche un récap pièce avec boutons « ↺ Modifier » sautant à l'onglet correspondant.
+
+**Conséquences** :
+- ✅ DOM physique inchangé (un seul step visible à la fois — l'ordre des divs ne se voit pas)
+- ✅ Ids alignés sur l'ordre visuel pour faciliter `switchStep(n)` simple `display step-n`
+- ✅ Compatibilité localStorage : aucun champ de données renommé
+- ⚠ Item Travaux **dans la fiche pièce** est restauré, mais l'item Travaux **sidebar** reste masqué (cohérent avec « recentrage prise de notes »)
+
+---
+
+## ADR-013 — Allègement UI radical via FEATURES_ENABLED (recentrage tablette/stylet terrain)
+
+**Date** : 2026-04-30
+**Statut** : ✅ Accepté · Commits `bc55bce` (Session 5) + `e236412` (Session 6)
+
+**Contexte** : L'app accumule 20+ modules développés au fil des sessions (devis SDB, analyse, synthèse, statistiques, etc.). En usage terrain réel sur tablette Samsung avec stylet, ces modules **parasitent** la prise de note chantier — l'utilisateur veut une expérience simple, rapide, fiable.
+
+**Décision** : Centraliser tous les flags dans `window.FEATURES_ENABLED`. Désactiver par défaut **18 modules / éléments UI** sans toucher au code profond :
+- Sidebar : Documents émis · Devis SDB · Analyse RDV · Synthèse · Statistiques · Paramètres devis · **Travaux** · Tutoriel guidé · Carte « Besoin d'aide ? »
+- Dashboard : Carte « Prochaine action »
+- Fiche pièce : Barre quick-actions (Peinture standard / Reno complète / Template / Sauver) · Checklist 0/5 sticky · Section « Annotations libres » sous le croquis
+- Création client : micro 🎙 sur Observations
+- Mesures : Calcul rapide des murs
+- Tout le logiciel : **Tous les micros 🎙 dictée vocale** (suppression globale)
+- Boutons : 📄 PDF / ✍ Bon de visite / 📦 Export complet
+- Barre flottante FAB photo/croquis/note/✓
+- Création client : redirection directe vers Ajout pièce (au lieu de la fiche client)
+- Notes (step-5) : fusion « Notes texte + Notes manuscrites » en une seule section « Notes »
+
+**Conséquences** :
+- ✅ Sidebar passe de 13+ items à **7 items minimum** (Tableau de bord · Clients · Pièces · Mesures · Photos · Notes · Devis depuis Session 13)
+- ✅ Tout reste réactivable en une ligne console (`Object.assign(FEATURES_ENABLED, {...:true}); location.reload();`)
+- ✅ Code conservé intact pour réactivation future (modules avancés Session 13+ ont remis `bathroomNav` puis `recap` à `true`)
+- ⚠ Le user pense parfois devoir tout recréer alors que tout existe sous le capot — d'où l'importance de DECISIONS.md à jour
+
+---
+
 ## ADR-012 — Module Analyse rendez-vous en parallèle (pas de remplacement)
 
 **Date** : 2026-04-28
