@@ -108,7 +108,9 @@
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
   }
 
-  /* Génère un numéro de devis style D-2026XXXX en fonction du compteur année */
+  /* Génère un numéro de devis tentatif au moment de la création (modifiable
+     par l'utilisateur tant que le devis n'est pas émis). Compteur séparé du
+     compteur strict d'émission — voir generateOfficialNumber() */
   function generateQuoteNumber(){
     var db = (typeof dbLoad === 'function') ? dbLoad() : { ajQuoteCounter: null };
     var year = new Date().getFullYear();
@@ -119,6 +121,23 @@
     db.ajQuoteCounter.counter += 1;
     if(typeof dbSave === 'function') dbSave(db);
     var seq = String(db.ajQuoteCounter.counter).padStart(4, '0');
+    return 'D-' + year + seq;
+  }
+
+  /* Génère le numéro officiel STRICT à l'émission (jamais de gap, jamais
+     ré-utilisé). Conformité légale française — chronologique sans trou.
+     Compteur dédié `db.ajEmissionCounter` qui n'incrémente qu'à l'émission. */
+  function generateOfficialNumber(){
+    if(typeof dbLoad !== 'function' || typeof dbSave !== 'function') return null;
+    var db = dbLoad();
+    var year = new Date().getFullYear();
+    db.ajEmissionCounter = db.ajEmissionCounter || { year: year, counter: 0 };
+    if(db.ajEmissionCounter.year !== year){
+      db.ajEmissionCounter = { year: year, counter: 0 };
+    }
+    db.ajEmissionCounter.counter += 1;
+    dbSave(db);
+    var seq = String(db.ajEmissionCounter.counter).padStart(4, '0');
     return 'D-' + year + seq;
   }
 
@@ -226,6 +245,13 @@
       sections: src.sections || [],
       termsMode: 'default',
       termsCustom: null,
+      /* Émission verrouillée (Session 16) */
+      locked: false,                /* true après émission officielle, plus jamais modifiable */
+      emittedAt: null,              /* timestamp de l'émission */
+      officialNumber: null,         /* numéro chronologique strict assigné à l'émission */
+      lockedSnapshot: null,         /* JSON.stringify deep clone au moment de l'émission */
+      parentQuoteId: null,          /* pour avenants/révisions : id du devis source */
+      parentOfficialNumber: null,   /* pour avenants/révisions : numéro officiel du parent */
       createdAt: null,
       updatedAt: null
     };
@@ -234,6 +260,135 @@
     recomputeNumbers(quote);
     saveQuote(quote);
     return quote;
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     ÉMISSION VERROUILLÉE (Session 16)
+     ──────────────────────────────────────────────────────────────────
+     - emit(quoteId)            → fige le devis avec n° officiel chronologique
+     - createAmendmentFrom(id)  → crée un avenant (devis vide, parent référencé)
+     - createRevisionFrom(id)   → crée une révision (clone des lignes du parent)
+
+     Une fois émis, un devis devient immutable :
+     - locked: true, emittedAt: timestamp, officialNumber: 'D-YYYYNNNN'
+     - lockedSnapshot: JSON deep clone au moment de l'émission
+     - Pour corriger un devis émis : créer un avenant ou une révision
+     ───────────────────────────────────────────────────────────────── */
+  function emitQuote(quoteId){
+    var quote = getQuote(quoteId);
+    if(!quote) return { ok: false, error: 'Devis introuvable' };
+    if(quote.locked) return { ok: false, error: 'Devis déjà émis' };
+    /* Validation minimale : titre + au moins 1 ligne avec montant > 0 */
+    var hasAnyValuedLine = false;
+    (quote.sections || []).forEach(function(sec){
+      (sec.lines || []).forEach(function(ln){
+        if(ln.visible !== false && ln.totalHT && ln.totalHT !== 0) hasAnyValuedLine = true;
+      });
+    });
+    if(!hasAnyValuedLine){
+      return { ok: false, error: 'Aucune ligne avec un montant. L\'émission officielle nécessite au moins une ligne valorisée.' };
+    }
+    /* Recompute final */
+    recomputeNumbers(quote);
+    var totals = computeQuoteTotals(quote);
+    /* Assigne le numéro officiel STRICT */
+    var officialNum = generateOfficialNumber();
+    if(!officialNum) return { ok: false, error: 'Impossible de générer un numéro officiel' };
+    quote.officialNumber = officialNum;
+    /* Le quoteNumber affiché est désormais l'officiel (écrase le tentatif) */
+    quote.quoteNumber = officialNum;
+    quote.locked = true;
+    quote.emittedAt = Date.now();
+    /* Snapshot immutable : deep clone JSON après tous les calculs/numérotations */
+    quote.totalsAtEmission = totals;
+    quote.lockedSnapshot = JSON.stringify({
+      quoteNumber: quote.quoteNumber,
+      officialNumber: quote.officialNumber,
+      typeDocument: quote.typeDocument,
+      quoteDate: quote.quoteDate,
+      validityDate: quote.validityDate,
+      revisionNumber: quote.revisionNumber,
+      revisionDate: quote.revisionDate,
+      title: quote.title,
+      clientInfo: quote.clientInfo,
+      chantierInfo: quote.chantierInfo,
+      companyInfo: quote.companyInfo,
+      vatRate: quote.vatRate,
+      depositRate: quote.depositRate,
+      paymentMethod: quote.paymentMethod,
+      paymentDelay: quote.paymentDelay,
+      showDiscountColumn: quote.showDiscountColumn,
+      optionsIncludedInTotal: quote.optionsIncludedInTotal,
+      sections: quote.sections,
+      totals: totals,
+      emittedAt: quote.emittedAt
+    });
+    saveQuote(quote);
+    return { ok: true, officialNumber: officialNum, quote: quote };
+  }
+
+  /* Crée un avenant à partir d'un devis émis : devis vide pré-rempli avec
+     les infos client/chantier du parent + référence parent.
+     L'avenant lui-même peut ensuite être édité puis émis. */
+  function createAmendmentFrom(parentQuoteId){
+    var parent = getQuote(parentQuoteId);
+    if(!parent){ alert('Devis source introuvable'); return null; }
+    if(!parent.locked){ alert('Le devis source doit être émis avant de pouvoir créer un avenant.'); return null; }
+    var amendment = createQuoteFromTemplate('tpl_aj_avenant_vide', parent.clientId);
+    if(!amendment) return null;
+    /* Reprend les infos client/chantier du parent (qui peuvent avoir été modifiées) */
+    amendment.clientInfo = JSON.parse(JSON.stringify(parent.clientInfo || {}));
+    amendment.chantierInfo = JSON.parse(JSON.stringify(parent.chantierInfo || {}));
+    amendment.title = 'Travaux supplémentaires';
+    amendment.parentQuoteId = parent.id;
+    amendment.parentOfficialNumber = parent.officialNumber;
+    amendment.vatRate = parent.vatRate;
+    amendment.depositRate = parent.depositRate;
+    amendment.showDiscountColumn = parent.showDiscountColumn;
+    amendment.optionsIncludedInTotal = parent.optionsIncludedInTotal;
+    saveQuote(amendment);
+    return amendment;
+  }
+
+  /* Crée une révision : clone profond des sections/lignes du parent,
+     avec typeDocument='revision' et numérotation incrémentale. */
+  function createRevisionFrom(parentQuoteId){
+    var parent = getQuote(parentQuoteId);
+    if(!parent){ alert('Devis source introuvable'); return null; }
+    if(!parent.locked){ alert('Le devis source doit être émis avant de pouvoir créer une révision.'); return null; }
+    /* Compte les révisions existantes pour ce parent */
+    var allQuotes = loadQuotes();
+    var existingRevs = 0;
+    Object.keys(allQuotes).forEach(function(k){
+      var q = allQuotes[k];
+      if(q.parentQuoteId === parent.id && q.typeDocument === 'revision') existingRevs += 1;
+    });
+    var revNum = existingRevs + 1;
+
+    /* Clone profond du parent (sections + lignes), avec nouveaux ids */
+    var revision = createQuoteFromTemplate('tpl_aj_vide', parent.clientId);
+    if(!revision) return null;
+    revision.typeDocument = 'revision';
+    revision.title = parent.title;
+    revision.sections = JSON.parse(JSON.stringify(parent.sections || []));
+    /* Régénère ids pour éviter collision */
+    revision.sections.forEach(function(sec){
+      sec.id = uid('s_');
+      (sec.lines || []).forEach(function(ln){ ln.id = uid('l_'); });
+    });
+    revision.clientInfo = JSON.parse(JSON.stringify(parent.clientInfo || {}));
+    revision.chantierInfo = JSON.parse(JSON.stringify(parent.chantierInfo || {}));
+    revision.vatRate = parent.vatRate;
+    revision.depositRate = parent.depositRate;
+    revision.showDiscountColumn = parent.showDiscountColumn;
+    revision.optionsIncludedInTotal = parent.optionsIncludedInTotal;
+    revision.parentQuoteId = parent.id;
+    revision.parentOfficialNumber = parent.officialNumber;
+    revision.revisionNumber = String(revNum);
+    revision.revisionDate = todayISO();
+    recomputeNumbers(revision);
+    saveQuote(revision);
+    return revision;
   }
 
   /* ─────────────────────────────────────────────────────────────────
@@ -457,9 +612,27 @@
 
   function persistCurrent(quote){
     if(!quote) return;
+    /* Devis émis : refuse toute persistance (Session 16) */
+    if(quote.locked){
+      console.warn('[AJ Quotes] persist rejeté — devis verrouillé', quote.officialNumber);
+      return;
+    }
     recomputeNumbers(quote);
     computeQuoteTotals(quote);
     saveQuote(quote);
+  }
+
+  /* Helper : refuse l'édition si le devis est verrouillé (émis).
+     Affiche un toast informatif. Retourne true si éditable, false sinon. */
+  function _assertEditable(quote){
+    if(!quote) return false;
+    if(quote.locked){
+      var msg = '🔒 Ce devis est émis (n° ' + (quote.officialNumber || '?') + ') — non modifiable. Pour corriger, créez un avenant ou une révision.';
+      if(typeof showToast === 'function') showToast(msg);
+      else alert(msg);
+      return false;
+    }
+    return true;
   }
 
   /* ─────────────────────────────────────────────────────────────────
@@ -521,23 +694,34 @@
           '</div>';
       } else {
         html += allQuotes.map(function(q){
-          var totals = computeQuoteTotals(q);
+          var totals = q.locked && q.totalsAtEmission ? q.totalsAtEmission : computeQuoteTotals(q);
           var typeDef = K.QUOTE_DOC_TYPES.find(function(d){ return d.id === q.typeDocument; });
           var typeLabel = typeDef ? typeDef.label : 'Devis';
           var dateFR = isoToFR(q.quoteDate);
           var nbLines = (q.sections || []).reduce(function(n, s){ return n + (s.lines || []).length; }, 0);
+          var lockedBadge = q.locked
+            ? '<span style="display:inline-block;background:#1d4d33;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px;letter-spacing:0.4px;text-transform:uppercase;">🔒 Émis</span>'
+            : '<span style="display:inline-block;background:rgba(122,136,150,0.12);color:#7a8896;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:6px;letter-spacing:0.4px;text-transform:uppercase;">Brouillon</span>';
+          var parentRef = q.parentOfficialNumber
+            ? '<div style="font-size:11px;color:#7a5a30;margin-top:2px;">Lié au devis ' + esc(q.parentOfficialNumber) + '</div>'
+            : '';
+          /* Bouton suppression masqué pour les devis émis (intégrité légale) */
+          var deleteBtn = q.locked
+            ? ''
+            : '<button class="ajqe-line__icon ajqe-line__icon--danger" title="Supprimer" ' +
+              'onclick="event.stopPropagation();AJQuotes.deleteQuote(\'' + esc(q.id) + '\')" ' +
+              'style="margin-left:8px;font-size:16px;">🗑</button>';
           return '<div class="ajqe-listcard" onclick="AJQuotes.openEditor(\'' + esc(q.id) + '\')">' +
             '<div class="ajqe-listcard__icon">' + (q.typeDocument === 'amendment' ? '📑' : (q.typeDocument === 'revision' ? '✏️' : '📄')) + '</div>' +
             '<div class="ajqe-listcard__body">' +
-              '<div class="ajqe-listcard__title">' + esc(typeLabel) + ' n° ' + esc(q.quoteNumber || '—') + '</div>' +
+              '<div class="ajqe-listcard__title">' + esc(typeLabel) + ' n° ' + esc(q.quoteNumber || '—') + lockedBadge + '</div>' +
               '<div class="ajqe-listcard__sub">' + esc(dateFR) + ' · ' + nbLines + ' ligne' + (nbLines > 1 ? 's' : '') + ' · ' + esc(q.title || 'Sans titre') + '</div>' +
+              parentRef +
             '</div>' +
             '<div class="ajqe-listcard__total">' + fmtMoney(totals.totalTTC) + ' €' +
               '<div style="font-size:10px;color:#7a8896;font-family:Inter,sans-serif;font-weight:500;text-align:right;margin-top:2px;">TTC</div>' +
             '</div>' +
-            '<button class="ajqe-line__icon ajqe-line__icon--danger" title="Supprimer" ' +
-              'onclick="event.stopPropagation();AJQuotes.deleteQuote(\'' + esc(q.id) + '\')" ' +
-              'style="margin-left:8px;font-size:16px;">🗑</button>' +
+            deleteBtn +
           '</div>';
         }).join('');
       }
@@ -603,6 +787,37 @@
 
     var html = '';
 
+    /* Bandeau verrouillé (Session 16) — affiché si quote émis */
+    if(quote.locked){
+      var emittedDate = quote.emittedAt ? new Date(quote.emittedAt) : null;
+      var dateStr = emittedDate
+        ? String(emittedDate.getDate()).padStart(2,'0') + '/' +
+          String(emittedDate.getMonth()+1).padStart(2,'0') + '/' +
+          emittedDate.getFullYear() + ' à ' +
+          String(emittedDate.getHours()).padStart(2,'0') + ':' +
+          String(emittedDate.getMinutes()).padStart(2,'0')
+        : '';
+      html +=
+        '<div class="ajqe-locked-banner">' +
+          '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
+            '<div style="font-size:28px;">🔒</div>' +
+            '<div style="flex:1;min-width:200px;">' +
+              '<div style="font-weight:700;font-size:15px;color:#0f2030;">Devis officiel émis — non modifiable</div>' +
+              '<div style="font-size:12.5px;color:#3a4a5c;margin-top:3px;line-height:1.5;">' +
+                'N° officiel : <strong>' + esc(quote.officialNumber || '?') + '</strong>' +
+                (dateStr ? ' · Émis le ' + esc(dateStr) : '') +
+                '<br>Pour corriger, créez un avenant ou une révision liée à ce devis.' +
+              '</div>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+              '<button class="ajqe-btn" onclick="AJQuotes.createAmendmentFromCurrent()">📑 Créer un avenant</button>' +
+              '<button class="ajqe-btn" onclick="AJQuotes.createRevisionFromCurrent()">✏️ Créer une révision</button>' +
+              '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="AJQuotes.setView(\'preview\')">📄 Aperçu officiel</button>' +
+            '</div>' +
+          '</div>' +
+        '</div>';
+    }
+
     /* Bandeau métadonnées doc */
     html += renderMetaBlock(quote);
 
@@ -614,8 +829,10 @@
       html += renderSectionEditor(quote, sec);
     });
 
-    /* Bouton ajout section */
-    html += '<button class="ajqe-addsection" onclick="AJQuotes.addSection()">+ Ajouter une section</button>';
+    /* Bouton ajout section (uniquement si pas verrouillé) */
+    if(!quote.locked){
+      html += '<button class="ajqe-addsection" onclick="AJQuotes.addSection()">+ Ajouter une section</button>';
+    }
 
     /* Sticky bar totaux */
     html +=
@@ -644,10 +861,37 @@
           : '') +
         '<div class="ajqe-totalsbar__actions">' +
           '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="AJQuotes.setView(\'preview\')">📄 Aperçu AJ Pro</button>' +
+          /* Bouton Émettre uniquement si pas déjà émis */
+          (!quote.locked
+            ? '<button class="ajqe-btn ajqe-btn--primary" onclick="AJQuotes.emitCurrent()" title="Verrouille le devis avec un n° officiel chronologique strict (irréversible)">📋 Émettre devis officiel</button>'
+            : '<span style="color:#c9a96e;font-weight:600;font-size:12px;align-self:center;">🔒 Émis</span>') +
         '</div>' +
       '</div>';
 
+    /* Si verrouillé : on désactive tous les inputs/textareas/selects et on cache les boutons d'action ligne/section */
     view.innerHTML = html;
+    if(quote.locked){
+      _applyLockedReadonly(view);
+    }
+  }
+
+  /* Désactive en lecture-seule tous les contrôles dans la vue édition.
+     Sont préservés : les boutons explicitement marqués `data-keep-locked` (Avenant, Révision, Aperçu) */
+  function _applyLockedReadonly(rootEl){
+    if(!rootEl) return;
+    var inputs = rootEl.querySelectorAll('input, textarea, select');
+    inputs.forEach(function(el){
+      el.disabled = true;
+      el.style.cursor = 'not-allowed';
+    });
+    /* Boutons d'action interne (ajout/suppression/déplacement) : on les masque */
+    rootEl.querySelectorAll('.ajqe-line__icon, .ajqe-section__addline, .ajqe-addsection').forEach(function(b){
+      b.style.display = 'none';
+    });
+    /* Boutons "Marquer option / Masquer / Supprimer section" dans la barre de section */
+    rootEl.querySelectorAll('.ajqe-section__actions .ajqe-btn').forEach(function(b){
+      b.style.display = 'none';
+    });
   }
 
   function renderMetaBlock(quote){
@@ -796,7 +1040,8 @@
     }).join('');
 
     var addLineBtn =
-      '<button class="ajqe-section__addline" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\')">+ Ajouter une ligne</button>' +
+      '<button class="ajqe-section__addline" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\')">+ Ajouter une ligne vide</button>' +
+      '<button class="ajqe-section__addline" onclick="AJQuotes.openLibraryPicker(\'' + esc(sec.id) + '\')" style="margin-top:-4px;background:#faf3df;border-color:#c9a96e;color:#7a5a30;">📚 + Depuis la bibliothèque AJ Pro</button>' +
       '<button class="ajqe-section__addline" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\', \'comment\')" style="margin-top:-4px;">+ Ajouter un commentaire</button>';
 
     var sectionClass = 'ajqe-section' + (sec.isOption ? ' ajqe-section--option' : '');
@@ -932,7 +1177,7 @@
   }
 
   function setField(field, value, isNumber){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     if(isNumber) value = parseNum(value);
     quote[field] = value;
     /* Effets de bord : si on change le type, mettre à jour le titre par défaut éventuel */
@@ -941,21 +1186,21 @@
   }
 
   function setClientField(field, value){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     quote.clientInfo = quote.clientInfo || {};
     quote.clientInfo[field] = value;
     persistCurrent(quote);
   }
 
   function setChantierField(field, value){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     quote.chantierInfo = quote.chantierInfo || {};
     quote.chantierInfo[field] = value;
     persistCurrent(quote);
   }
 
   function setSectionField(secId, field, value){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     sec[field] = value;
@@ -964,7 +1209,7 @@
   }
 
   function setLineField(secId, lineId, field, value, isNumber){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     var ln = (sec.lines || []).find(function(l){ return l.id === lineId; });
@@ -981,7 +1226,7 @@
   }
 
   function toggleLineFlag(secId, lineId, flag){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     var ln = (sec.lines || []).find(function(l){ return l.id === lineId; });
@@ -992,7 +1237,7 @@
   }
 
   function toggleLineVisible(secId, lineId){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     var ln = (sec.lines || []).find(function(l){ return l.id === lineId; });
@@ -1003,7 +1248,7 @@
   }
 
   function moveLine(secId, lineId, delta){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec || !sec.lines) return;
     var idx = sec.lines.findIndex(function(l){ return l.id === lineId; });
@@ -1017,7 +1262,7 @@
   }
 
   function duplicateLine(secId, lineId){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec || !sec.lines) return;
     var idx = sec.lines.findIndex(function(l){ return l.id === lineId; });
@@ -1031,7 +1276,7 @@
   }
 
   function deleteLine(secId, lineId){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec || !sec.lines) return;
     if(!confirm('Supprimer cette ligne ?')) return;
@@ -1041,7 +1286,7 @@
   }
 
   function addLine(secId, type){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     sec.lines = sec.lines || [];
@@ -1072,8 +1317,149 @@
     renderEditView();
   }
 
+  /* ─────────────────────────────────────────────────────────────────
+     BIBLIOTHÈQUE DE LIGNES TYPES — picker modale (Session 17)
+     ───────────────────────────────────────────────────────────────── */
+  var _libraryPickerState = {
+    targetSectionId: null,
+    activeCategory: null,
+    searchTerm: ''
+  };
+
+  function openLibraryPicker(secId){
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
+    _libraryPickerState.targetSectionId = secId;
+    _libraryPickerState.activeCategory = K.getLibraryCategories()[0] || null;
+    _libraryPickerState.searchTerm = '';
+    renderLibraryPicker();
+  }
+
+  function closeLibraryPicker(){
+    _libraryPickerState.targetSectionId = null;
+    var modal = document.getElementById('ajq-library-modal');
+    if(modal && modal.parentNode) modal.parentNode.removeChild(modal);
+  }
+
+  function setLibraryCategory(cat){
+    _libraryPickerState.activeCategory = cat;
+    renderLibraryPicker();
+  }
+
+  function setLibrarySearch(term){
+    _libraryPickerState.searchTerm = term || '';
+    renderLibraryPickerList();
+  }
+
+  function addLineFromLibrary(libId){
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
+    var secId = _libraryPickerState.targetSectionId;
+    var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
+    if(!sec){ closeLibraryPicker(); return; }
+    var ln = K.buildLineFromLibrary(libId);
+    if(!ln){ alert('Ligne introuvable dans la bibliothèque'); return; }
+    sec.lines = sec.lines || [];
+    ln.order = sec.lines.length;
+    sec.lines.push(ln);
+    persistCurrent(quote);
+    /* Garde la modale ouverte pour permettre l'insertion de plusieurs lignes d'un coup */
+    renderLibraryPickerList(); /* rafraîchit juste la liste, pas la modale entière */
+    renderEditView();
+    /* Mais après render, le DOM modal a été préservé — on force une re-extraction */
+    if(!document.getElementById('ajq-library-modal')) renderLibraryPicker();
+  }
+
+  function _filteredLibrary(){
+    var lib = K.QUOTE_LINE_LIBRARY;
+    var term = (_libraryPickerState.searchTerm || '').toLowerCase().trim();
+    var cat = _libraryPickerState.activeCategory;
+    return lib.filter(function(l){
+      if(cat && l.category !== cat) return false;
+      if(!term) return true;
+      var hay = (l.designation + ' ' + (l.description || '')).toLowerCase();
+      return hay.indexOf(term) !== -1;
+    });
+  }
+
+  function renderLibraryPicker(){
+    /* Crée la modale si absente */
+    var modal = document.getElementById('ajq-library-modal');
+    if(!modal){
+      modal = document.createElement('div');
+      modal.id = 'ajq-library-modal';
+      modal.className = 'ajq-modal-backdrop';
+      modal.addEventListener('click', function(e){
+        if(e.target === modal) closeLibraryPicker();
+      });
+      document.body.appendChild(modal);
+    }
+    var cats = K.getLibraryCategories();
+    var catChips = cats.map(function(c){
+      var n = K.QUOTE_LINE_LIBRARY.filter(function(l){ return l.category === c; }).length;
+      var active = c === _libraryPickerState.activeCategory;
+      return '<button class="ajq-libcat' + (active ? ' active' : '') + '" onclick="AJQuotes.setLibraryCategory(\'' + esc(c).replace(/'/g, "\\'") + '\')">' +
+        esc(c) + ' <span style="opacity:0.6;font-weight:500;">' + n + '</span>' +
+      '</button>';
+    }).join('');
+
+    modal.innerHTML =
+      '<div class="ajq-modal" style="max-width:780px;">' +
+        '<div class="ajq-modal-head">' +
+          '<div>' +
+            '<div style="font-family:\'Cormorant Garamond\',Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;">📚 Bibliothèque de lignes AJ Pro</div>' +
+            '<div style="font-size:12.5px;color:#7a8896;margin-top:2px;">Cliquez sur une ligne pour l\'ajouter au devis. La modale reste ouverte pour en ajouter plusieurs.</div>' +
+          '</div>' +
+          '<button class="ajqe-btn" onclick="AJQuotes.closeLibraryPicker()">✕ Fermer</button>' +
+        '</div>' +
+        '<div style="padding:12px 18px;border-bottom:1px solid #e8e4d6;">' +
+          '<input id="ajq-libsearch" class="ajqe-meta__input" placeholder="🔍 Rechercher dans la bibliothèque…" ' +
+            'value="' + esc(_libraryPickerState.searchTerm) + '" ' +
+            'oninput="AJQuotes.setLibrarySearch(this.value)" style="width:100%" />' +
+          '<div class="ajq-libcats">' + catChips + '</div>' +
+        '</div>' +
+        '<div id="ajq-library-list" class="ajq-library-list"></div>' +
+      '</div>';
+    renderLibraryPickerList();
+  }
+
+  function renderLibraryPickerList(){
+    var list = document.getElementById('ajq-library-list');
+    if(!list) return;
+    var items = _filteredLibrary();
+    if(!items.length){
+      list.innerHTML = '<div style="padding:40px 20px;text-align:center;color:#7a8896;font-size:13px;">Aucune ligne ne correspond à votre recherche.</div>';
+      return;
+    }
+    list.innerHTML = items.map(function(l){
+      var priceLbl = (l.defaultPrice === 0)
+        ? '<span style="color:#7a8896;">0 €</span>'
+        : fmtMoney(l.defaultPrice) + ' €';
+      var supplyBadge = l.defaultSuppliedBy
+        ? '<span style="background:rgba(13,70,144,0.10);color:#0d4690;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;margin-left:6px;">' + (l.defaultSuppliedBy === 'aj_pro' ? 'AJ Pro' : (l.defaultSuppliedBy === 'client' ? 'Client' : '?')) + '</span>'
+        : '';
+      var statusBadge = (l.defaultStatus === 'option')
+        ? '<span style="background:rgba(232,98,26,0.15);color:#9a4514;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;margin-left:6px;letter-spacing:0.4px;">OPTION</span>'
+        : '';
+      var commentBadge = (l.defaultType === 'comment')
+        ? '<span style="background:rgba(122,136,150,0.15);color:#3a4a5c;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;margin-left:6px;font-style:italic;">commentaire</span>'
+        : '';
+      var descHtml = l.description
+        ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:3px;white-space:pre-line;line-height:1.4;">' + esc(l.description) + '</div>'
+        : '';
+      return '<div class="ajq-libitem" onclick="AJQuotes.addLineFromLibrary(\'' + esc(l.id) + '\')">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;color:#0f2030;font-size:13px;line-height:1.4;">' + esc(l.designation) + statusBadge + supplyBadge + commentBadge + '</div>' +
+          descHtml +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;margin-left:14px;">' +
+          '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + priceLbl + '</div>' +
+          '<div style="font-size:10.5px;color:#7a8896;">' + fmtQty(l.defaultQty) + ' ' + esc(l.defaultUnit) + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
   function addSection(){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var title = prompt('Titre de la nouvelle section ?', 'Nouvelle section');
     if(title == null) return; /* annulé */
     quote.sections = quote.sections || [];
@@ -1094,7 +1480,7 @@
   }
 
   function deleteSection(secId){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     if(!confirm('Supprimer la section « ' + (sec.title || '') + ' » et toutes ses lignes ?')) return;
@@ -1104,7 +1490,7 @@
   }
 
   function moveSection(secId, delta){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var idx = quote.sections.findIndex(function(s){ return s.id === secId; });
     if(idx < 0) return;
     var newIdx = idx + delta;
@@ -1116,7 +1502,7 @@
   }
 
   function toggleSectionOption(secId){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     sec.isOption = !sec.isOption;
@@ -1126,7 +1512,7 @@
   }
 
   function toggleSectionVisible(secId){
-    var quote = getCurrentQuote(); if(!quote) return;
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
     var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
     if(!sec) return;
     sec.visible = sec.visible === false ? true : false;
@@ -1170,9 +1556,62 @@
   }
 
   function deleteQuoteAction(id){
+    var q = getQuote(id);
+    if(q && q.locked){
+      alert('Ce devis est officiellement émis (n° ' + (q.officialNumber || '?') + ') et ne peut pas être supprimé. C\'est une exigence légale (intégrité de la chronologie des devis).');
+      return;
+    }
     if(!confirm('Supprimer définitivement ce devis ?')) return;
     deleteQuote(id);
     renderListScreen();
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     ÉMISSION & DÉRIVATION — handlers UI (Session 16)
+     ───────────────────────────────────────────────────────────────── */
+  function emitCurrent(){
+    var q = getCurrentQuote();
+    if(!q){ alert('Aucun devis ouvert'); return; }
+    if(q.locked){ alert('Devis déjà émis'); return; }
+    var totals = computeQuoteTotals(q);
+    var typeDef = K.QUOTE_DOC_TYPES.find(function(d){ return d.id === q.typeDocument; });
+    var label = typeDef ? typeDef.label : 'Devis';
+    var msg =
+      '⚠ Émission officielle du ' + label.toLowerCase() + '\n\n' +
+      'Cette action est IRRÉVERSIBLE :\n' +
+      '• Le devis sera figé avec un numéro officiel chronologique strict.\n' +
+      '• Plus aucune modification ne sera possible (label, prix, lignes…).\n' +
+      '• Pour corriger : il faudra créer un avenant ou une révision.\n\n' +
+      'Total TTC : ' + fmtMoney(totals.totalTTC) + ' €\n\n' +
+      'Confirmer l\'émission ?';
+    if(!confirm(msg)) return;
+
+    var res = emitQuote(q.id);
+    if(!res.ok){
+      alert('Émission impossible : ' + res.error);
+      return;
+    }
+    alert('✅ Devis émis avec le numéro officiel ' + res.officialNumber + '.\n\nIl est désormais verrouillé.');
+    /* Re-render — quote est désormais locked */
+    renderEditorScreen();
+  }
+
+  function createAmendmentFromCurrent(){
+    var q = getCurrentQuote();
+    if(!q){ alert('Aucun devis ouvert'); return; }
+    if(!q.locked){ alert('Le devis doit d\'abord être émis officiellement avant de créer un avenant.'); return; }
+    var amendment = createAmendmentFrom(q.id);
+    if(!amendment) return;
+    openEditor(amendment.id);
+  }
+
+  function createRevisionFromCurrent(){
+    var q = getCurrentQuote();
+    if(!q){ alert('Aucun devis ouvert'); return; }
+    if(!q.locked){ alert('Le devis doit d\'abord être émis officiellement avant de créer une révision.'); return; }
+    var revision = createRevisionFrom(q.id);
+    if(!revision) return;
+    openEditor(revision.id);
   }
 
   /* ─────────────────────────────────────────────────────────────────
@@ -1201,12 +1640,18 @@
     var html = '';
 
     /* Toolbar (non imprimée) */
+    var statusBadge = quote.locked
+      ? '<span style="background:#1d4d33;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;margin-left:8px;letter-spacing:0.4px;">🔒 ÉMIS</span>'
+      : '<span style="background:rgba(122,136,150,0.18);color:#3a4a5c;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;margin-left:8px;letter-spacing:0.4px;">BROUILLON</span>';
     html +=
       '<div class="ajq-preview-shell">' +
         '<div class="ajq-preview-toolbar">' +
-          '<div><strong>' + esc(typeDef.label) + ' n° ' + esc(quote.quoteNumber) + '</strong> · ' + esc(isoToFR(quote.quoteDate)) + ' · Total TTC ' + fmtMoney(totals.totalTTC) + ' €</div>' +
+          '<div><strong>' + esc(typeDef.label) + ' n° ' + esc(quote.quoteNumber) + '</strong>' + statusBadge + ' · ' + esc(isoToFR(quote.quoteDate)) + ' · Total TTC ' + fmtMoney(totals.totalTTC) + ' €</div>' +
           '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
             '<button class="ajqe-btn" onclick="AJQuotes.setView(\'edit\')">← Retour à l\'édition</button>' +
+            (!quote.locked
+              ? '<button class="ajqe-btn ajqe-btn--primary" onclick="AJQuotes.emitCurrent()" title="Verrouille définitivement le devis avec un n° officiel chronologique">📋 Émettre devis officiel</button>'
+              : '') +
             '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="window.print()">🖨 Imprimer</button>' +
           '</div>' +
         '</div>' +
@@ -1247,8 +1692,15 @@
     if(quote.typeDocument === 'revision' && quote.revisionNumber){
       revLine = 'Révision n° ' + esc(quote.revisionNumber) + (quote.revisionDate ? ' du ' + esc(isoToFR(quote.revisionDate)) : '');
     }
+    /* Référence au devis parent pour avenants/révisions */
+    var parentLine = '';
+    if(quote.parentOfficialNumber && (quote.typeDocument === 'amendment' || quote.typeDocument === 'revision')){
+      var label = quote.typeDocument === 'amendment' ? 'Avenant au devis' : 'Révision du devis';
+      parentLine = label + ' n° ' + esc(quote.parentOfficialNumber);
+    }
     return '<div class="ajq-doctitle">' + line1 +
       (revLine ? '<div class="ajq-doctitle__revline">' + revLine + '</div>' : '') +
+      (parentLine ? '<div class="ajq-doctitle__revline">' + parentLine + '</div>' : '') +
     '</div>';
   }
 
@@ -1352,7 +1804,7 @@
         '</tr>';
     });
 
-    var draftClass = quote.status === 'emis' ? '' : ' ajq-page--draft';
+    var draftClass = quote.locked ? '' : ' ajq-page--draft';
     return '<div class="ajq-page' + draftClass + '">' +
       renderHeaderBlock(quote, company, 1, totalPages) +
       renderActivitiesBlock(company) +
@@ -1413,7 +1865,7 @@
 
   function renderPreviewPageTotaux(quote, company, typeDef, totals){
     var totalPages = 3;
-    var draftClass = quote.status === 'emis' ? '' : ' ajq-page--draft';
+    var draftClass = quote.locked ? '' : ' ajq-page--draft';
     var validityFR = isoToFR(quote.validityDate);
     var depositPct = fmtQty(totals.depositRate);
 
@@ -1482,7 +1934,7 @@
 
   function renderPreviewPageCGV(quote, company){
     var totalPages = 3;
-    var draftClass = quote.status === 'emis' ? '' : ' ajq-page--draft';
+    var draftClass = quote.locked ? '' : ' ajq-page--draft';
 
     var articlesHtml = K.AJ_PRO_TERMS_AND_CONDITIONS.map(function(art){
       var bullets = art.bullets ? '<ul class="ajq-cgv-article__bullets">' + art.bullets.map(function(b){ return '<li>' + esc(b) + '</li>'; }).join('') + '</ul>' : '';
@@ -1579,6 +2031,21 @@
     moveSection: moveSection,
     toggleSectionOption: toggleSectionOption,
     toggleSectionVisible: toggleSectionVisible,
+
+    /* Émission verrouillée + dérivations (Session 16) */
+    emitCurrent: emitCurrent,
+    emit: emitQuote,
+    createAmendmentFrom: createAmendmentFrom,
+    createRevisionFrom: createRevisionFrom,
+    createAmendmentFromCurrent: createAmendmentFromCurrent,
+    createRevisionFromCurrent: createRevisionFromCurrent,
+
+    /* Bibliothèque de lignes types (Session 17) */
+    openLibraryPicker: openLibraryPicker,
+    closeLibraryPicker: closeLibraryPicker,
+    setLibraryCategory: setLibraryCategory,
+    setLibrarySearch: setLibrarySearch,
+    addLineFromLibrary: addLineFromLibrary,
 
     /* Calc helpers exposés (pour le récap, etc.) */
     computeTotals: computeQuoteTotals,
