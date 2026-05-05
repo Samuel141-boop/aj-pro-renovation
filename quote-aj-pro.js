@@ -1040,7 +1040,8 @@
     }).join('');
 
     var addLineBtn =
-      '<button class="ajqe-section__addline" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\')">+ Ajouter une ligne</button>' +
+      '<button class="ajqe-section__addline" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\')">+ Ajouter une ligne vide</button>' +
+      '<button class="ajqe-section__addline" onclick="AJQuotes.openLibraryPicker(\'' + esc(sec.id) + '\')" style="margin-top:-4px;background:#faf3df;border-color:#c9a96e;color:#7a5a30;">📚 + Depuis la bibliothèque AJ Pro</button>' +
       '<button class="ajqe-section__addline" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\', \'comment\')" style="margin-top:-4px;">+ Ajouter un commentaire</button>';
 
     var sectionClass = 'ajqe-section' + (sec.isOption ? ' ajqe-section--option' : '');
@@ -1314,6 +1315,147 @@
     sec.lines.push(ln);
     persistCurrent(quote);
     renderEditView();
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     BIBLIOTHÈQUE DE LIGNES TYPES — picker modale (Session 17)
+     ───────────────────────────────────────────────────────────────── */
+  var _libraryPickerState = {
+    targetSectionId: null,
+    activeCategory: null,
+    searchTerm: ''
+  };
+
+  function openLibraryPicker(secId){
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
+    _libraryPickerState.targetSectionId = secId;
+    _libraryPickerState.activeCategory = K.getLibraryCategories()[0] || null;
+    _libraryPickerState.searchTerm = '';
+    renderLibraryPicker();
+  }
+
+  function closeLibraryPicker(){
+    _libraryPickerState.targetSectionId = null;
+    var modal = document.getElementById('ajq-library-modal');
+    if(modal && modal.parentNode) modal.parentNode.removeChild(modal);
+  }
+
+  function setLibraryCategory(cat){
+    _libraryPickerState.activeCategory = cat;
+    renderLibraryPicker();
+  }
+
+  function setLibrarySearch(term){
+    _libraryPickerState.searchTerm = term || '';
+    renderLibraryPickerList();
+  }
+
+  function addLineFromLibrary(libId){
+    var quote = getCurrentQuote(); if(!_assertEditable(quote)) return;
+    var secId = _libraryPickerState.targetSectionId;
+    var sec = (quote.sections || []).find(function(s){ return s.id === secId; });
+    if(!sec){ closeLibraryPicker(); return; }
+    var ln = K.buildLineFromLibrary(libId);
+    if(!ln){ alert('Ligne introuvable dans la bibliothèque'); return; }
+    sec.lines = sec.lines || [];
+    ln.order = sec.lines.length;
+    sec.lines.push(ln);
+    persistCurrent(quote);
+    /* Garde la modale ouverte pour permettre l'insertion de plusieurs lignes d'un coup */
+    renderLibraryPickerList(); /* rafraîchit juste la liste, pas la modale entière */
+    renderEditView();
+    /* Mais après render, le DOM modal a été préservé — on force une re-extraction */
+    if(!document.getElementById('ajq-library-modal')) renderLibraryPicker();
+  }
+
+  function _filteredLibrary(){
+    var lib = K.QUOTE_LINE_LIBRARY;
+    var term = (_libraryPickerState.searchTerm || '').toLowerCase().trim();
+    var cat = _libraryPickerState.activeCategory;
+    return lib.filter(function(l){
+      if(cat && l.category !== cat) return false;
+      if(!term) return true;
+      var hay = (l.designation + ' ' + (l.description || '')).toLowerCase();
+      return hay.indexOf(term) !== -1;
+    });
+  }
+
+  function renderLibraryPicker(){
+    /* Crée la modale si absente */
+    var modal = document.getElementById('ajq-library-modal');
+    if(!modal){
+      modal = document.createElement('div');
+      modal.id = 'ajq-library-modal';
+      modal.className = 'ajq-modal-backdrop';
+      modal.addEventListener('click', function(e){
+        if(e.target === modal) closeLibraryPicker();
+      });
+      document.body.appendChild(modal);
+    }
+    var cats = K.getLibraryCategories();
+    var catChips = cats.map(function(c){
+      var n = K.QUOTE_LINE_LIBRARY.filter(function(l){ return l.category === c; }).length;
+      var active = c === _libraryPickerState.activeCategory;
+      return '<button class="ajq-libcat' + (active ? ' active' : '') + '" onclick="AJQuotes.setLibraryCategory(\'' + esc(c).replace(/'/g, "\\'") + '\')">' +
+        esc(c) + ' <span style="opacity:0.6;font-weight:500;">' + n + '</span>' +
+      '</button>';
+    }).join('');
+
+    modal.innerHTML =
+      '<div class="ajq-modal" style="max-width:780px;">' +
+        '<div class="ajq-modal-head">' +
+          '<div>' +
+            '<div style="font-family:\'Cormorant Garamond\',Georgia,serif;font-size:22px;font-weight:600;color:#0f2030;">📚 Bibliothèque de lignes AJ Pro</div>' +
+            '<div style="font-size:12.5px;color:#7a8896;margin-top:2px;">Cliquez sur une ligne pour l\'ajouter au devis. La modale reste ouverte pour en ajouter plusieurs.</div>' +
+          '</div>' +
+          '<button class="ajqe-btn" onclick="AJQuotes.closeLibraryPicker()">✕ Fermer</button>' +
+        '</div>' +
+        '<div style="padding:12px 18px;border-bottom:1px solid #e8e4d6;">' +
+          '<input id="ajq-libsearch" class="ajqe-meta__input" placeholder="🔍 Rechercher dans la bibliothèque…" ' +
+            'value="' + esc(_libraryPickerState.searchTerm) + '" ' +
+            'oninput="AJQuotes.setLibrarySearch(this.value)" style="width:100%" />' +
+          '<div class="ajq-libcats">' + catChips + '</div>' +
+        '</div>' +
+        '<div id="ajq-library-list" class="ajq-library-list"></div>' +
+      '</div>';
+    renderLibraryPickerList();
+  }
+
+  function renderLibraryPickerList(){
+    var list = document.getElementById('ajq-library-list');
+    if(!list) return;
+    var items = _filteredLibrary();
+    if(!items.length){
+      list.innerHTML = '<div style="padding:40px 20px;text-align:center;color:#7a8896;font-size:13px;">Aucune ligne ne correspond à votre recherche.</div>';
+      return;
+    }
+    list.innerHTML = items.map(function(l){
+      var priceLbl = (l.defaultPrice === 0)
+        ? '<span style="color:#7a8896;">0 €</span>'
+        : fmtMoney(l.defaultPrice) + ' €';
+      var supplyBadge = l.defaultSuppliedBy
+        ? '<span style="background:rgba(13,70,144,0.10);color:#0d4690;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;margin-left:6px;">' + (l.defaultSuppliedBy === 'aj_pro' ? 'AJ Pro' : (l.defaultSuppliedBy === 'client' ? 'Client' : '?')) + '</span>'
+        : '';
+      var statusBadge = (l.defaultStatus === 'option')
+        ? '<span style="background:rgba(232,98,26,0.15);color:#9a4514;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;margin-left:6px;letter-spacing:0.4px;">OPTION</span>'
+        : '';
+      var commentBadge = (l.defaultType === 'comment')
+        ? '<span style="background:rgba(122,136,150,0.15);color:#3a4a5c;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;margin-left:6px;font-style:italic;">commentaire</span>'
+        : '';
+      var descHtml = l.description
+        ? '<div style="font-size:11.5px;color:#3a4a5c;margin-top:3px;white-space:pre-line;line-height:1.4;">' + esc(l.description) + '</div>'
+        : '';
+      return '<div class="ajq-libitem" onclick="AJQuotes.addLineFromLibrary(\'' + esc(l.id) + '\')">' +
+        '<div style="flex:1;min-width:0;">' +
+          '<div style="font-weight:600;color:#0f2030;font-size:13px;line-height:1.4;">' + esc(l.designation) + statusBadge + supplyBadge + commentBadge + '</div>' +
+          descHtml +
+        '</div>' +
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;margin-left:14px;">' +
+          '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + priceLbl + '</div>' +
+          '<div style="font-size:10.5px;color:#7a8896;">' + fmtQty(l.defaultQty) + ' ' + esc(l.defaultUnit) + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join('');
   }
 
   function addSection(){
@@ -1897,6 +2039,13 @@
     createRevisionFrom: createRevisionFrom,
     createAmendmentFromCurrent: createAmendmentFromCurrent,
     createRevisionFromCurrent: createRevisionFromCurrent,
+
+    /* Bibliothèque de lignes types (Session 17) */
+    openLibraryPicker: openLibraryPicker,
+    closeLibraryPicker: closeLibraryPicker,
+    setLibraryCategory: setLibraryCategory,
+    setLibrarySearch: setLibrarySearch,
+    addLineFromLibrary: addLineFromLibrary,
 
     /* Calc helpers exposés (pour le récap, etc.) */
     computeTotals: computeQuoteTotals,
