@@ -754,6 +754,24 @@
 }
 .ajqe-addsection:hover { background: #fff; border-color: #c9a96e; color: #0f2030; }
 
+/* Bandeau "Devis émis — non modifiable" (Session 16) */
+.ajqe-locked-banner {
+  background: linear-gradient(180deg, #fdf9ef, #f6ecd0);
+  border: 1.5px solid #d8c595;
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* Mode lecture seule : visuellement plus terne */
+.ajqe-section--locked input,
+.ajqe-section--locked textarea,
+.ajqe-section--locked select {
+  background: rgba(122,136,150,0.04);
+  cursor: not-allowed !important;
+}
+
 /* Sticky totaux barre du bas */
 .ajqe-totalsbar {
   position: sticky;
