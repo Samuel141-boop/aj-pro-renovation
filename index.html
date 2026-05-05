@@ -6430,6 +6430,10 @@ renderHome();
 <!-- Module Devis AJ Pro (remplace bathroom-quote.js depuis Session 15) -->
 <script src="/quote-aj-pro-constants.js"></script>
 <script src="/quote-aj-pro.js"></script>
+<!-- Module Analyse IA chantier (Session 18) -->
+<script src="/ai-prompt-builder.js"></script>
+<script src="/ai-analysis-service.js"></script>
+<script src="/ai-analysis-screen.js"></script>
 <script src="/chantier-analysis.js"></script>
 <script>
 
@@ -6452,6 +6456,7 @@ window.FEATURES_ENABLED = Object.assign({
   documentsNav:  false,  /* Sidebar : Documents émis */
   bathroomNav:   false,  /* Session 15 : ancien module bathroom-quote.js désactivé (script retiré) — remplacé par quotesNav */
   quotesNav:     true,   /* Sidebar : Devis AJ Pro — nouveau module manuel (Session 15, 2026-05-04) */
+  aiAnalysis:    true,   /* Sidebar : 🤖 Analyse IA chantier (Session 18, 2026-05-05) */
   analysisNav:   false,  /* Sidebar : Analyse rendez-vous */
   tutorialBtn:   false,  /* Sidebar footer : Tutoriel guidé (?) */
   helpFooter:    false,  /* Sidebar footer : carte "Besoin d'aide ?" statique */
