@@ -64,8 +64,16 @@
   function fmtQty(n){
     if(n == null || isNaN(n)) return '';
     var rounded = Math.round(n * 100) / 100;
+    /* Format PDF AJ Pro : toujours 2 décimales avec virgule (1,00 / 13,90 / 27,80) */
+    return rounded.toFixed(2).replace('.', ',');
+  }
+
+  /* Variante compacte (sans force 2 décimales) — utilisée dans l'éditeur et la sticky bar */
+  function fmtQtyShort(n){
+    if(n == null || isNaN(n)) return '';
+    var rounded = Math.round(n * 100) / 100;
     var s = rounded.toFixed(2);
-    s = s.replace(/\.?0+$/, ''); /* "1.00" -> "1", "1.50" -> "1.5", "1.25" -> "1.25" */
+    s = s.replace(/\.?0+$/, '');
     return s.replace('.', ',');
   }
 
@@ -842,7 +850,7 @@
           '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.totalHT) + ' €</div>' +
         '</div>' +
         '<div class="ajqe-totalsbar__col">' +
-          '<div class="ajqe-totalsbar__lab">TVA ' + fmtQty(totals.vatRate) + '%</div>' +
+          '<div class="ajqe-totalsbar__lab">TVA ' + fmtQtyShort(totals.vatRate) + '%</div>' +
           '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.vat) + ' €</div>' +
         '</div>' +
         '<div class="ajqe-totalsbar__col">' +
@@ -850,7 +858,7 @@
           '<div class="ajqe-totalsbar__val ajqe-totalsbar__val--gold">' + fmtMoney(totals.totalTTC) + ' €</div>' +
         '</div>' +
         '<div class="ajqe-totalsbar__col">' +
-          '<div class="ajqe-totalsbar__lab">Acompte ' + fmtQty(totals.depositRate) + '%</div>' +
+          '<div class="ajqe-totalsbar__lab">Acompte ' + fmtQtyShort(totals.depositRate) + '%</div>' +
           '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.deposit) + ' €</div>' +
         '</div>' +
         (totals.optionsTotalHT
@@ -1452,7 +1460,7 @@
         '</div>' +
         '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex-shrink:0;margin-left:14px;">' +
           '<div style="font-weight:700;color:#0f2030;font-size:13px;">' + priceLbl + '</div>' +
-          '<div style="font-size:10.5px;color:#7a8896;">' + fmtQty(l.defaultQty) + ' ' + esc(l.defaultUnit) + '</div>' +
+          '<div style="font-size:10.5px;color:#7a8896;">' + fmtQtyShort(l.defaultQty) + ' ' + esc(l.defaultUnit) + '</div>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -1707,46 +1715,89 @@
   function renderClientChantierBlocks(quote, company){
     var ci = quote.clientInfo || {};
     var ch = quote.chantierInfo || {};
-    var clientLines = [];
-    if(ci.attentionA) clientLines.push('<strong>' + esc(ci.attentionA) + '</strong>');
-    else if(ci.nom || ci.prenom) clientLines.push('<strong>' + esc(((ci.prenom || '') + ' ' + (ci.nom || '')).trim()) + '</strong>');
-    if(ci.attentionA) clientLines.push('A l\'attention de ' + esc(ci.attentionA));
-    if(ci.adresse) clientLines.push(esc(ci.adresse));
-    if(ci.codePostal || ci.ville) clientLines.push(esc((ci.codePostal || '') + ' ' + (ci.ville || '')).trim());
-    if(ci.tel) clientLines.push(esc(ci.tel));
-    if(ci.email) clientLines.push(esc(ci.email));
 
-    var chantierLines = [];
-    var clientFullName = ((ci.prenom || '') + ' ' + (ci.nom || '')).trim() || ci.attentionA || '';
-    if(clientFullName) chantierLines.push(esc(clientFullName));
-    if(ch.adresse) chantierLines.push(esc(ch.adresse));
-    if(ch.etage || ch.ascenseur) {
-      chantierLines.push(esc((ch.etage ? ch.etage + (ch.etage.indexOf('étage') > -1 ? '' : ' étage') : '') + (ch.ascenseur ? (ch.etage ? ' - ' : '') + ch.ascenseur : '')));
-    }
-    if(ch.codeAccess) chantierLines.push('Code : ' + esc(ch.codeAccess));
-    if(ch.interphone) chantierLines.push('Interphone : ' + esc(ch.interphone));
-    if(ch.codePostal || ch.ville) chantierLines.push(esc((ch.codePostal || '') + ' ' + (ch.ville || '')).trim());
+    /* ─── BLOC CHANTIER (gauche) ───
+       Format PDF AJ Pro :
+         "Chantier : NOM-COURT (optionnel)"
+         "(plus de lignes vides en haut, puis...)"
+         "France"
+         "Travaux : RENOVATION D'UNE SALLE DE DOUCHE" (optionnel) */
+    var chantierShort = ch.nom || ch.shortName || '';
+    var chantierBlock =
+      '<div class="ajq-block">' +
+        '<div class="ajq-block__title">Chantier :' + (chantierShort ? ' ' + esc(chantierShort) : '') + '</div>' +
+        (ch.adresse ? '<div class="ajq-block__line">' + esc(ch.adresse) + '</div>' : '') +
+        ((ch.codePostal || ch.ville) ? '<div class="ajq-block__line">' + esc(((ch.codePostal || '') + ' ' + (ch.ville || '')).trim()) + '</div>' : '') +
+        '<div class="ajq-block__line">' + esc(company.pays || 'France') + '</div>' +
+        (quote.title ? '<div class="ajq-block__travaux">Travaux : ' + esc(quote.title) + '</div>' : '') +
+      '</div>';
 
-    return '<div class="ajq-blocks">' +
-      /* BLOC CHANTIER */
+    /* ─── BLOC AJ PRO (centre) ───
+       Format PDF :
+         "AJ Pro Rénovation"
+         "95/97 rue Gallieni"
+         "92500 Rueil-Malmaison France"
+         "Email : contact@ajprorenovation.com"
+         "Tél : 01 78 53 30 08"
+         "RCS NANTERRE 487 953 465" */
+    var ajproName = (company.raisonSociale || 'AJ Pro Rénovation').replace(/^Sarl\s+/i, '');
+    var ajproBlock =
       '<div class="ajq-block">' +
-        '<div class="ajq-block__title">Chantier :</div>' +
-        chantierLines.map(function(l){ return '<div class="ajq-block__line">' + l + '</div>'; }).join('') +
-      '</div>' +
-      /* BLOC AJ PRO */
-      '<div class="ajq-block">' +
-        '<div class="ajq-block__title">' + esc(company.raisonSociale.replace('Sarl ', '')) + '</div>' +
+        '<div class="ajq-block__line ajq-block__line--bold">' + esc(ajproName) + '</div>' +
         '<div class="ajq-block__line">' + esc(company.adresse) + '</div>' +
-        '<div class="ajq-block__line">' + esc(company.codePostal + ' ' + company.ville + ' ' + company.pays) + '</div>' +
+        '<div class="ajq-block__line">' + esc((company.codePostal || '') + ' ' + (company.ville || '') + ' ' + (company.pays || 'France')).trim() + '</div>' +
         '<div class="ajq-block__line">Email : ' + esc(company.email) + '</div>' +
         '<div class="ajq-block__line">Tél : ' + esc(company.tel) + '</div>' +
         '<div class="ajq-block__rcs">' + esc(company.rcs) + '</div>' +
-      '</div>' +
-      /* BLOC CLIENT */
+      '</div>';
+
+    /* ─── BLOC CLIENT (droite) ───
+       Format PDF :
+         "Mme/M. NOM (en gras)"
+         "À l'attention de Mme NOM"
+         "(adresse)"
+         "(détails accès : étage, ascenseur, code, interphone)"
+         "(CP VILLE PAYS)"
+         "(téléphone client)"
+       Le téléphone est sur sa propre ligne en bas. */
+    var civNomComplet = '';
+    if(ci.attentionA) civNomComplet = ci.attentionA;
+    else if(ci.civilite || ci.prenom || ci.nom){
+      civNomComplet = ((ci.civilite || '') + ' ' + (ci.prenom || '') + ' ' + (ci.nom || '')).replace(/\s+/g, ' ').trim();
+    }
+
+    var accessLines = [];
+    if(ch.etage){
+      var ligneAcces = ch.etage;
+      if(ch.etage.indexOf('étage') === -1) ligneAcces += ' étage';
+      if(ch.ascenseur) ligneAcces += ' - ' + ch.ascenseur;
+      if(ch.codeAccess) ligneAcces += ' - Code ' + ch.codeAccess;
+      if(ch.interphone) ligneAcces += ' - Interphone ' + ch.interphone;
+      accessLines.push(ligneAcces);
+    } else if(ch.ascenseur || ch.codeAccess || ch.interphone){
+      var ligne = [];
+      if(ch.ascenseur) ligne.push(ch.ascenseur);
+      if(ch.codeAccess) ligne.push('Code ' + ch.codeAccess);
+      if(ch.interphone) ligne.push('Interphone ' + ch.interphone);
+      accessLines.push(ligne.join(' - '));
+    }
+
+    var clientCp = ci.codePostal || '';
+    var clientVille = ci.ville || '';
+    var clientLineCpVille = (clientCp || clientVille) ? ((clientCp + ' ' + clientVille).trim() + ' ' + (company.pays === 'France' ? 'France' : '')).trim() : '';
+
+    var clientBlock =
       '<div class="ajq-block">' +
-        clientLines.map(function(l){ return '<div class="ajq-block__line">' + l + '</div>'; }).join('') +
-      '</div>' +
-    '</div>';
+        (civNomComplet ? '<div class="ajq-block__line ajq-block__line--bold">' + esc(civNomComplet) + '</div>' : '') +
+        (ci.attentionA ? '<div class="ajq-block__line">A l\'attention de ' + esc(ci.attentionA) + '</div>' : '') +
+        (ci.adresse ? '<div class="ajq-block__line">' + esc(ci.adresse) + '</div>' : '') +
+        accessLines.map(function(l){ return '<div class="ajq-block__line">' + esc(l) + '</div>'; }).join('') +
+        (clientLineCpVille ? '<div class="ajq-block__line">' + esc(clientLineCpVille) + '</div>' : '') +
+        (ci.tel ? '<div class="ajq-block__line" style="margin-top:1mm;">' + esc(ci.tel) + '</div>' : '') +
+        (ci.email ? '<div class="ajq-block__line">' + esc(ci.email) + '</div>' : '') +
+      '</div>';
+
+    return '<div class="ajq-blocks">' + chantierBlock + ajproBlock + clientBlock + '</div>';
   }
 
   function renderPreviewPageTravaux(quote, company, typeDef, totals){
@@ -1774,16 +1825,25 @@
     '</colgroup>';
 
     var body = '';
+    /* Nombre total de colonnes : sans remise = 6 (N° + Des + Qté + U + PUHT + Total)
+                                  avec remise  = 8 (... + PU + R%)                  */
+    var totalCols = withDiscount ? 8 : 6;
+    var sectionTitleColspan = totalCols - 1;  /* tout sauf la cellule N° */
+    var subtotalLabelColspan = totalCols - 1; /* tout sauf la cellule du montant */
+
     quote.sections.forEach(function(sec){
       if(sec.visible === false) return;
-      /* Titre de section */
+      /* Titre de section — style PDF AJ Pro :
+         "1 Commentaires"
+         "2 Peinture - Chambre parentale - hors intérieur placard"
+         "1.6 Toile à enduire - plafond + murs - si besoin Option" (option = inline)
+         La mention "Option" suit le titre comme dans les PDFs. */
       var titlePiece = (sec.title || '');
-      var pillHtml = sec.isOption ? '<span class="ajq-option-pill">Option</span>' : '';
-      var colspan = withDiscount ? 7 : 5;
+      var optionInline = sec.isOption ? ' <span class="ajq-option-pill">Option</span>' : '';
       body +=
         '<tr class="ajq-row--section">' +
           '<td class="num">' + esc(sec.number) + '</td>' +
-          '<td class="des" colspan="' + colspan + '">' + esc(titlePiece) + pillHtml + '</td>' +
+          '<td class="des" colspan="' + sectionTitleColspan + '">' + esc(titlePiece) + optionInline + '</td>' +
         '</tr>';
 
       /* Lignes */
@@ -1792,14 +1852,17 @@
         body += renderPreviewLineRow(ln, sec, withDiscount);
       });
 
-      /* Sous-total section */
+      /* Sous-total section — style PDF :
+         "Sous-total Peinture - Chambre parentale - hors intérieur placard 1 304,00"
+         "Sous-total Toile à enduire - plafond + murs - si besoin Option 664,80"
+         La mention Option suit le titre, le montant à droite.
+         Si total = 0 et seulement des commentaires, "Sous-total Commentaires" sans montant. */
       var subtotal = computeSectionSubtotal(sec, { optionsIncludedInTotal: !!quote.optionsIncludedInTotal });
       var subTotalDisplay = subtotal === 0 ? '' : fmtMoney(subtotal);
-      var subColspan = withDiscount ? 6 : 4;
+      var subtotalLabel = 'Sous-total ' + (sec.title || '') + (sec.isOption ? ' Option' : '');
       body +=
         '<tr class="ajq-row--subtotal">' +
-          '<td></td>' +
-          '<td class="des" colspan="' + subColspan + '">Sous-total ' + esc(sec.title || '') + (sec.isOption ? ' Option' : '') + '</td>' +
+          '<td class="des" colspan="' + subtotalLabelColspan + '">' + esc(subtotalLabel) + '</td>' +
           '<td class="total">' + esc(subTotalDisplay) + '</td>' +
         '</tr>';
     });
@@ -1826,10 +1889,17 @@
     if(ln.status === 'excluded') rowClass += ' ajq-row--excluded';
     if(ln.highlighted && ln.highlightColor === 'red') rowClass += ' ajq-row--highlight-red';
 
+    /* Style PDF AJ Pro : désignation principale + description multilignes,
+       même taille, pas d'italique, juste retours à la ligne. */
     var designationHtml = '<div class="ajq-line__designation">' + esc(ln.designation || '') + '</div>';
     if(ln.description) designationHtml += '<div class="ajq-line__description">' + esc(ln.description) + '</div>';
-    if(ln.suppliedBy === 'client') designationHtml += '<div class="ajq-line__description" style="font-style:italic;">Fourni par le client</div>';
-    if(ln.suppliedBy === 'to_confirm') designationHtml += '<div class="ajq-line__description" style="font-style:italic;color:#7a5a30;">Fourniture à confirmer</div>';
+    /* Indication "fourni client" / "à confirmer" : seulement si pas déjà dans la désignation */
+    var dlow = ((ln.designation || '') + ' ' + (ln.description || '')).toLowerCase();
+    if(ln.suppliedBy === 'client' && dlow.indexOf('fourni') === -1 && dlow.indexOf('client') === -1){
+      designationHtml += '<div class="ajq-line__description">--&gt; fourni / client</div>';
+    } else if(ln.suppliedBy === 'to_confirm' && dlow.indexOf('confirmer') === -1){
+      designationHtml += '<div class="ajq-line__description">--&gt; à confirmer</div>';
+    }
 
     var qty = (ln.type === 'comment' || ln.quantity == null) ? '' : fmtQty(ln.quantity);
     var unit = (ln.type === 'comment') ? '' : (ln.unit || '');
@@ -1873,29 +1943,26 @@
       renderHeaderBlock(quote, company, 2, totalPages) +
       /* Attestation TVA */
       '<div class="ajq-tva-attestation">' + esc(K.AJ_PRO_TVA_ATTESTATION) + '</div>' +
-      /* Bloc totaux */
+      /* Bloc totaux — style PDF AJ Pro : 2 colonnes (label, valeur) sans col EUR séparée */
       '<div class="ajq-totals">' +
         '<div class="ajq-totals__title">' + esc(typeDef.label) + ' (EUR)</div>' +
         '<div class="ajq-totals__grid">' +
           '<div class="ajq-totals__row">' +
             '<div class="lab">Total H.T</div>' +
             '<div class="val">' + fmtMoney(totals.totalHT) + '</div>' +
-            '<div class="cur">EUR</div>' +
           '</div>' +
           '<div class="ajq-totals__row">' +
             '<div class="lab">TVA</div>' +
             '<div class="val">' + fmtMoney(totals.vat) + '</div>' +
-            '<div class="cur">EUR</div>' +
           '</div>' +
           '<div class="ajq-totals__row ajq-totals__row--ttc">' +
             '<div class="lab">Total T.T.C</div>' +
             '<div class="val">' + fmtMoney(totals.totalTTC) + '</div>' +
-            '<div class="cur">EUR</div>' +
           '</div>' +
         '</div>' +
       '</div>' +
-      /* Tableau TVA */
-      '<table class="ajq-tva-table" style="width:60%;margin-top:3mm;">' +
+      /* Tableau TVA — petit tableau aligné droite comme PDFs (width réglé en CSS) */
+      '<table class="ajq-tva-table">' +
         '<tr><th>% TVA</th><th>Base</th><th>Total TVA</th></tr>' +
         '<tr><td>' + fmtQty(totals.vatRate) + '</td><td>' + fmtMoney(totals.totalHT) + '</td><td>' + fmtMoney(totals.vat) + '</td></tr>' +
       '</table>' +
@@ -1917,18 +1984,25 @@
         '<div>Activités couvertes : ' + esc(company.assurance.activitesCouvertes) + '</div>' +
         '<div>' + esc(company.assurance.mention) + '</div>' +
       '</div>' +
-      /* Signature */
-      '<div class="ajq-signature">' +
-        '<div>' +
-          '<div class="ajq-signature__num">' + esc(typeDef.label) + ' n° ' + esc(quote.quoteNumber || '') + '</div>' +
-          '<div class="ajq-signature__mention">' + esc(K.AJ_PRO_SIGNATURE_MENTION) + '</div>' +
-          '<div class="ajq-signature__box"></div>' +
-        '</div>' +
-        '<div>' +
-          '<div class="ajq-signature__entreprise">Pour l\'Entreprise</div>' +
-          '<div class="ajq-signature__box"></div>' +
-        '</div>' +
-      '</div>' +
+      /* Signature — format PDF AJ Pro :
+         "Devis n° D-2026XXXX" ou "Devis n° D-2026XXXX-N" si révision (suffixe -N) */
+      (function(){
+        var sigNum = quote.quoteNumber || '';
+        if(quote.typeDocument === 'revision' && quote.revisionNumber){
+          sigNum = sigNum + '-' + quote.revisionNumber;
+        }
+        return '<div class="ajq-signature">' +
+          '<div>' +
+            '<div class="ajq-signature__num">' + esc(typeDef.label) + ' n° ' + esc(sigNum) + '</div>' +
+            '<div class="ajq-signature__mention">' + esc(K.AJ_PRO_SIGNATURE_MENTION) + '</div>' +
+            '<div class="ajq-signature__box"></div>' +
+          '</div>' +
+          '<div>' +
+            '<div class="ajq-signature__entreprise">Pour l\'Entreprise</div>' +
+            '<div class="ajq-signature__box"></div>' +
+          '</div>' +
+        '</div>';
+      })() +
     '</div>';
   }
 

@@ -52,24 +52,24 @@
   box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 12px rgba(0,0,0,0.04);
   position: relative;
   overflow: hidden;
-  padding: 14mm 14mm 22mm 14mm; /* haut / D / bas (réservé pied) / G */
+  padding: 10mm 12mm 16mm 12mm; /* marges réduites façon PDF AJ Pro */
   box-sizing: border-box;
-  font-size: 9.5pt;
-  line-height: 1.35;
+  font-size: 9pt;
+  line-height: 1.3;
   color: #111;
 }
 
-/* Filigrane Brouillon (en bas-centre, comme sur les PDFs source) */
+/* Filigrane Brouillon (en bas-centre comme sur le PDF source $002612) */
 .ajq-page--draft::after {
   content: "Brouillon";
   position: absolute;
   left: 0; right: 0;
-  bottom: 8mm;
+  bottom: 6mm;
   text-align: center;
-  font-size: 11pt;
-  color: rgba(0,0,0,0.16);
-  font-weight: 700;
-  letter-spacing: 1.2px;
+  font-size: 10pt;
+  color: rgba(0,0,0,0.18);
+  font-weight: 400;
+  letter-spacing: 0.3px;
   pointer-events: none;
 }
 
@@ -77,47 +77,55 @@
    EN-TÊTE répété sur chaque page (identique aux PDFs)
    ───────────────────────────────────────────────────────────────── */
 .ajq-header {
-  border-bottom: 0.5pt solid #6b6b6b;
-  padding-bottom: 4mm;
-  margin-bottom: 4mm;
+  padding-bottom: 2mm;
+  margin-bottom: 3mm;
+  position: relative;
 }
 
 .ajq-header__line1 {
-  font-size: 8.5pt;
+  font-size: 8pt;
   text-align: center;
   font-weight: 400;
+  color: #1a1a1a;
 }
 
+/* Le n° de doc est aligné à droite, sur la même zone que le header — comme les PDFs */
 .ajq-header__num {
+  position: absolute;
+  top: 4mm;
+  right: 0;
   font-size: 9pt;
   font-weight: 700;
   text-align: right;
-  margin-top: 1mm;
+  color: #000;
 }
 
 .ajq-header__line2,
 .ajq-header__line3 {
-  font-size: 8pt;
+  font-size: 7.5pt;
   text-align: center;
-  margin-top: 0.5mm;
-  color: #2a2a2a;
+  margin-top: 0.3mm;
+  color: #1a1a1a;
 }
 
+/* "page X sur Y" — aligné droite, sous l'en-tête, discret */
 .ajq-header__pagenum {
   font-size: 8pt;
   text-align: right;
-  color: #555;
-  margin-top: 1mm;
+  color: #1a1a1a;
+  margin-top: 0.5mm;
+  padding-right: 0;
 }
 
 /* ─────────────────────────────────────────────────────────────────
    BLOC ACTIVITÉS (sous l'en-tête, page 1 uniquement)
    ───────────────────────────────────────────────────────────────── */
 .ajq-activities {
-  font-size: 9pt;
-  line-height: 1.5;
-  margin: 2mm 0 4mm 6mm;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin: 1.5mm 0 3mm 4mm;
   color: #1a1a1a;
+  font-weight: 400;
 }
 .ajq-activities div { margin: 0; }
 
@@ -125,17 +133,17 @@
    TITRE DOCUMENT (Devis n° X du DD/MM/YYYY)
    ───────────────────────────────────────────────────────────────── */
 .ajq-doctitle {
-  font-size: 11pt;
+  font-size: 10pt;
   font-weight: 700;
-  margin: 1mm 0 1.5mm;
-  color: #0a0a0a;
+  margin: 1mm 0 1mm;
+  color: #000;
 }
 
 .ajq-doctitle__revline {
-  font-size: 9pt;
-  font-weight: 400;
-  color: #333;
-  margin-top: 0.5mm;
+  font-size: 9.5pt;
+  font-weight: 700;
+  color: #000;
+  margin-top: 0.3mm;
 }
 
 /* ─────────────────────────────────────────────────────────────────
@@ -144,55 +152,69 @@
 .ajq-blocks {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 6mm;
-  margin: 3mm 0 5mm;
+  gap: 4mm;
+  margin: 2mm 0 3mm;
   font-size: 8.5pt;
-  line-height: 1.45;
+  line-height: 1.4;
 }
 
-.ajq-block { min-height: 28mm; }
+.ajq-block { min-height: 26mm; }
 
 .ajq-block__title {
-  font-weight: 700;
-  font-size: 9pt;
-  margin-bottom: 1mm;
+  font-weight: 400;
+  font-size: 8.5pt;
+  margin-bottom: 0.3mm;
+  color: #000;
 }
 
 .ajq-block__line { white-space: pre-line; }
 
+.ajq-block__line--bold { font-weight: 700; }
+
 .ajq-block__rcs {
   font-size: 7.5pt;
-  color: #444;
-  margin-top: 1mm;
+  color: #1a1a1a;
+  margin-top: 0.5mm;
+}
+
+/* Champ "Travaux : ..." parfois présent dans le bloc Chantier */
+.ajq-block__travaux {
+  margin-top: 1.5mm;
+  font-size: 8.5pt;
+  color: #1a1a1a;
 }
 
 /* ─────────────────────────────────────────────────────────────────
    TITRE TRAVAUX (avant le tableau)
    ───────────────────────────────────────────────────────────────── */
 .ajq-worktitle {
-  font-style: italic;
-  font-size: 10pt;
-  margin: 2mm 0 3mm;
-  color: #1a1a1a;
+  font-style: normal;
+  font-size: 9pt;
+  margin: 1mm 0 2mm;
+  color: #000;
+  font-weight: 400;
 }
 
 /* ─────────────────────────────────────────────────────────────────
    TABLEAU PRINCIPAL — N° / Désignation / Qté / U / [PU /R%] / PUHT / Total HT
+   Style PDF AJ Pro : pas de fond gris, bordures fines, dense
    ───────────────────────────────────────────────────────────────── */
 .ajq-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 9pt;
+  font-size: 8.5pt;
   table-layout: fixed;
+  margin-top: 1mm;
 }
 
 .ajq-table th {
   font-weight: 700;
   text-align: left;
-  border-bottom: 0.7pt solid #555;
-  padding: 1.5mm 2mm;
+  border-bottom: 0.6pt solid #000;
+  padding: 0.8mm 1.5mm;
   font-size: 8.5pt;
-  background: #fafafa;
+  background: transparent;
+  color: #000;
 }
 
 .ajq-table th.num,
@@ -206,10 +228,10 @@
 .ajq-table th.num { text-align: left; }
 
 .ajq-table td {
-  padding: 1.4mm 2mm;
+  padding: 0.8mm 1.5mm;
   vertical-align: top;
-  border-bottom: 0.3pt solid #e2e2e2;
-  font-size: 9pt;
+  border: none;
+  font-size: 8.5pt;
 }
 
 .ajq-table td.num,
@@ -225,7 +247,7 @@
   word-wrap: break-word;
 }
 
-.ajq-table td.num { text-align: left; font-weight: 600; }
+.ajq-table td.num { text-align: left; font-weight: 400; }
 
 /* Largeurs colonnes — sans remise */
 .ajq-table.ajq-table--no-discount col.num   { width: 11mm; }
@@ -245,36 +267,37 @@
 .ajq-table.ajq-table--with-discount col.puht  { width: 13mm; }
 .ajq-table.ajq-table--with-discount col.total { width: 16mm; }
 
-/* Ligne de section (titre en gras) */
+/* Ligne de section (titre en gras) — style PDF AJ Pro : juste gras inline */
 .ajq-row--section td {
   font-weight: 700;
-  background: #fff;
-  border-top: 0.5pt solid #999;
-  padding-top: 2.5mm;
-  padding-bottom: 1mm;
-  font-size: 9.5pt;
+  background: transparent;
+  border: none;
+  padding-top: 2mm;
+  padding-bottom: 0.5mm;
+  font-size: 8.5pt;
   white-space: pre-line;
+  color: #000;
 }
 
 .ajq-row--section td.num { font-weight: 700; }
 
+/* "Option" : juste mention inline normale comme dans les PDFs (pas de pill décor) */
 .ajq-row--section .ajq-option-pill {
-  display: inline-block;
+  display: inline;
   margin-left: 4pt;
-  padding: 0.3mm 1.2mm;
-  font-size: 7.5pt;
+  padding: 0;
+  font-size: 8.5pt;
   font-weight: 700;
-  letter-spacing: 0.3pt;
-  background: #efe6d6;
-  color: #6b4f1a;
-  border-radius: 1mm;
-  vertical-align: 1pt;
+  background: transparent;
+  color: #000;
+  letter-spacing: 0;
+  vertical-align: baseline;
 }
 
-/* Ligne commentaire — pas de chiffres */
+/* Ligne commentaire — texte standard (pas d'italique : les PDFs ne le font pas) */
 .ajq-row--comment td.des {
-  font-style: italic;
-  color: #2a2a2a;
+  font-style: normal;
+  color: #000;
 }
 
 /* Ligne avec mise en surbrillance */
@@ -282,30 +305,33 @@
   background: rgba(220, 53, 69, 0.06);
 }
 
-/* Sous-total de section (sur deux colonnes : libellé + montant) */
+/* Sous-total de section — fond blanc, juste bord supérieur fin */
 .ajq-row--subtotal td {
   font-weight: 700;
-  border-top: 0.4pt solid #555;
-  border-bottom: 0.7pt solid #555;
-  padding-top: 1.5mm;
+  border-top: 0.4pt solid #000;
+  border-bottom: none;
+  padding-top: 0.8mm;
   padding-bottom: 1.5mm;
-  background: #f5f5f5;
+  background: transparent;
+  font-size: 8.5pt;
+  color: #000;
 }
 
-.ajq-row--subtotal td.des { text-align: right; }
+.ajq-row--subtotal td.des { text-align: left; }
 
-/* Ligne désignation longue (description multi-lignes) */
-.ajq-line__designation { font-weight: 600; }
+/* Désignation : style PDF AJ Pro = titre en début + description sur les lignes suivantes,
+   tout dans la même cellule, même taille, juste retours à la ligne */
+.ajq-line__designation { font-weight: 400; color: #000; }
 .ajq-line__description {
   font-weight: 400;
   font-size: 8.5pt;
-  color: #333;
+  color: #000;
   white-space: pre-line;
-  margin-top: 0.5mm;
+  margin-top: 0;
 }
 
-/* Lignes "Option" affichées hors total */
-.ajq-row--option td { color: #444; }
+/* Lignes "Option" affichées hors total — pas de couleur particulière dans les PDFs */
+.ajq-row--option td { color: #000; }
 
 /* Lignes "Excluded" — barre + grisé (rare, mais possible) */
 .ajq-row--excluded td {
@@ -318,31 +344,34 @@
    ───────────────────────────────────────────────────────────────── */
 .ajq-tva-attestation {
   font-size: 8.5pt;
-  line-height: 1.45;
-  margin: 4mm 0 3mm;
+  line-height: 1.4;
+  margin: 3mm 0 2mm;
   white-space: pre-line;
-  color: #1a1a1a;
+  color: #000;
 }
 
 /* ─────────────────────────────────────────────────────────────────
    BLOC TOTAUX (Total HT / TVA / TTC + tableau TVA)
+   Style PDF AJ Pro : sobre, pas de fond beige, juste alignement
    ───────────────────────────────────────────────────────────────── */
 .ajq-totals {
-  margin: 3mm 0 2mm;
+  margin: 2mm 0 2mm;
   font-size: 9pt;
 }
 
 .ajq-totals__title {
   font-weight: 700;
-  font-size: 10pt;
-  margin-bottom: 2mm;
+  font-size: 9.5pt;
+  margin-bottom: 1mm;
+  color: #000;
 }
 
 .ajq-totals__grid {
   display: grid;
-  grid-template-columns: 1fr 36mm 28mm;
+  grid-template-columns: 1fr 32mm;
   gap: 0;
-  border-top: 0.5pt solid #555;
+  max-width: 100mm;
+  margin-left: auto;
 }
 
 .ajq-totals__row {
@@ -350,122 +379,126 @@
 }
 
 .ajq-totals__row > div {
-  padding: 1.2mm 2mm;
-  border-bottom: 0.3pt solid #d4d4d4;
+  padding: 0.6mm 2mm;
+  font-size: 9pt;
 }
 
-.ajq-totals__row > div.lab { font-weight: 600; }
-.ajq-totals__row > div.val { text-align: right; }
-.ajq-totals__row > div.cur { text-align: right; }
+.ajq-totals__row > div.lab { font-weight: 700; color: #000; }
+.ajq-totals__row > div.val { text-align: right; font-weight: 400; }
 
-.ajq-totals__row--ttc > div { background: #f1eee5; font-weight: 700; }
-.ajq-totals__row--ttc > div.val { font-size: 10pt; }
+.ajq-totals__row--ttc > div { background: transparent; font-weight: 700; }
+.ajq-totals__row--ttc > div.val { font-size: 9pt; }
 
 .ajq-tva-table {
-  margin-top: 3mm;
-  width: 100%;
+  margin-top: 2mm;
+  width: 70mm;
   border-collapse: collapse;
   font-size: 8.5pt;
+  margin-left: auto;
 }
 
 .ajq-tva-table th, .ajq-tva-table td {
-  padding: 1mm 2mm;
-  border: 0.3pt solid #c0c0c0;
+  padding: 0.6mm 2mm;
+  border: 0.4pt solid #000;
   text-align: right;
 }
 
-.ajq-tva-table th { font-weight: 700; background: #fafafa; }
+.ajq-tva-table th { font-weight: 700; background: transparent; }
 .ajq-tva-table th:first-child, .ajq-tva-table td:first-child { text-align: left; }
 
 /* ─────────────────────────────────────────────────────────────────
-   BLOC CONDITIONS DE RÈGLEMENT
+   BLOC CONDITIONS DE RÈGLEMENT — sobre comme PDFs
    ───────────────────────────────────────────────────────────────── */
 .ajq-payment {
-  margin-top: 4mm;
-  font-size: 9pt;
-  line-height: 1.5;
+  margin-top: 3mm;
+  font-size: 8.5pt;
+  line-height: 1.4;
+  color: #000;
 }
 
-.ajq-payment__row { margin-bottom: 1mm; }
+.ajq-payment__row { margin-bottom: 0.3mm; }
 .ajq-payment__row strong { font-weight: 700; }
 
 .ajq-payment__deposit {
-  font-weight: 600;
-  margin-top: 1mm;
+  font-weight: 400;
+  margin-top: 0.5mm;
 }
 
 /* ─────────────────────────────────────────────────────────────────
    BLOC ASSURANCE PROFESSIONNELLE
    ───────────────────────────────────────────────────────────────── */
 .ajq-insurance {
-  margin-top: 4mm;
-  font-size: 9pt;
-  line-height: 1.5;
+  margin-top: 2mm;
+  font-size: 8.5pt;
+  line-height: 1.4;
+  color: #000;
 }
 
-.ajq-insurance__title { font-weight: 700; }
+.ajq-insurance__title { font-weight: 400; }
 
 /* ─────────────────────────────────────────────────────────────────
-   BLOC SIGNATURE
+   BLOC SIGNATURE — sobre comme PDFs (pas de bordure visible)
    ───────────────────────────────────────────────────────────────── */
 .ajq-signature {
-  margin-top: 6mm;
+  margin-top: 4mm;
   font-size: 9pt;
-  border-top: 0.4pt solid #888;
-  padding-top: 3mm;
+  padding-top: 2mm;
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8mm;
+  gap: 6mm;
 }
 
-.ajq-signature__num { font-weight: 700; margin-bottom: 1mm; }
-.ajq-signature__mention { font-style: italic; color: #2a2a2a; }
+.ajq-signature__num { font-weight: 700; margin-bottom: 1mm; color: #000; }
+.ajq-signature__mention { font-style: normal; color: #000; line-height: 1.4; }
 .ajq-signature__box {
-  margin-top: 6mm;
-  border: 0.4pt dashed #888;
-  height: 28mm;
+  margin-top: 4mm;
+  border: none;
+  height: 22mm;
 }
-.ajq-signature__entreprise { font-weight: 700; margin-top: 6mm; }
+.ajq-signature__entreprise { font-weight: 400; margin-top: 4mm; }
 
 /* ─────────────────────────────────────────────────────────────────
-   PAGE CGV
+   PAGE CGV — dense comme dans les PDFs
    ───────────────────────────────────────────────────────────────── */
 .ajq-cgv-title {
-  font-size: 11pt;
+  font-size: 10pt;
   font-weight: 700;
   margin: 0 0 2mm;
+  color: #000;
 }
 
 .ajq-cgv-intro {
-  font-size: 8.5pt;
-  line-height: 1.45;
-  margin-bottom: 3mm;
-  color: #2a2a2a;
+  font-size: 8pt;
+  line-height: 1.4;
+  margin-bottom: 2mm;
+  color: #000;
 }
 
-.ajq-cgv-article { margin-bottom: 2.5mm; }
+.ajq-cgv-article { margin-bottom: 1.5mm; }
 
 .ajq-cgv-article__title {
-  font-size: 9pt;
+  font-size: 8.5pt;
   font-weight: 700;
-  margin-bottom: 0.5mm;
+  margin-bottom: 0.2mm;
+  color: #000;
 }
 
 .ajq-cgv-article__body {
   font-size: 8pt;
-  line-height: 1.45;
+  line-height: 1.35;
   white-space: pre-line;
   text-align: justify;
+  color: #000;
 }
 
 .ajq-cgv-article__bullets {
-  margin: 0.5mm 0 0 4mm;
+  margin: 0.3mm 0 0 4mm;
   padding: 0;
   font-size: 8pt;
-  line-height: 1.45;
+  line-height: 1.35;
 }
 
-.ajq-cgv-article__bullets li { margin-bottom: 0.5mm; }
+.ajq-cgv-article__bullets li { margin-bottom: 0.2mm; }
 
 /* ─────────────────────────────────────────────────────────────────
    IMPRESSION (préparation export PDF future)
