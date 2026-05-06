@@ -937,7 +937,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
       <div class="nav-item" data-section="pieces" onclick="navToSection('pieces',this)">
         <span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></span>
-        <span>Pièces</span>
+        <span>Pièces du logement</span>
       </div>
       <div class="nav-item" data-section="mesures" onclick="navToSection('mesures',this)">
         <span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l4-4 4 4 4-7 6 7"/><path d="M3 21h18"/></svg></span>
@@ -957,7 +957,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
       <div class="nav-item" data-section="recap" onclick="navToSection('recap',this)">
         <span class="nav-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg></span>
-        <span>Récapitulatif</span>
+        <span>Résumé chantier</span>
       </div>
     </nav>
 
@@ -1082,7 +1082,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     <div class="dash-block">
       <div class="dash-block-header">
         <div>
-          <div class="dash-block-title">Pièces</div>
+          <div class="dash-block-title">Pièces du logement</div>
           <div class="dash-block-sub" id="dash-pieces-count-sub">0 pièce</div>
         </div>
       </div>
@@ -1121,7 +1121,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     <!-- Notes manuscrites -->
     <div class="dash-block dash-block-notes">
       <div class="dash-block-header">
-        <div class="dash-block-title">Notes manuscrites récentes</div>
+        <div class="dash-block-title">Notes / croquis récents</div>
         <div class="dash-block-date" id="dash-notes-date">—</div>
       </div>
       <div class="dash-note-card" id="dash-note-card">
@@ -1131,14 +1131,14 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
 
     <!-- Récapitulatif -->
     <div class="dash-block">
-      <div class="dash-block-header"><div class="dash-block-title">Récapitulatif</div></div>
+      <div class="dash-block-header"><div class="dash-block-title">Résumé chantier</div></div>
       <div class="dash-recap-list" id="dash-recap-list">
         <div class="dash-recap-line"><span>Surface totale</span><span class="val" id="dash-recap-surf">—</span></div>
         <div class="dash-recap-line"><span>Nombre de pièces</span><span class="val" id="dash-recap-nbp">0</span></div>
         <div class="dash-recap-line"><span>Date de création</span><span class="val" id="dash-recap-debut">—</span></div>
         <div class="dash-recap-line"><span>Dernière modification</span><span class="val" id="dash-recap-fin">—</span></div>
       </div>
-      <a class="dash-block-footer-link" onclick="navToSection('recap')">Voir le récapitulatif complet</a>
+      <a class="dash-block-footer-link" onclick="navToSection('recap')">Voir le résumé chantier complet</a>
     </div>
   </div>
 
@@ -1171,7 +1171,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
   <div class="travaux-split-layout">
     <!-- COLONNE GAUCHE : CATÉGORIES -->
     <div class="travaux-cats-col">
-      <h2 class="travaux-col-title">Catégories</h2>
+      <h2 class="travaux-col-title">Types de travaux</h2>
       <div class="travaux-cats-list" id="travaux-cats-list"></div>
     </div>
 
@@ -1190,8 +1190,8 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
       </div>
 
       <div class="travaux-tabs">
-        <div class="travaux-tab active" data-tab="interventions" onclick="switchTravauxTab('interventions',this)">Interventions</div>
-        <div class="travaux-tab" data-tab="notes" onclick="switchTravauxTab('notes',this)">Notes manuscrites <span class="travaux-tab-badge" id="travaux-tab-notes-count">0</span></div>
+        <div class="travaux-tab active" data-tab="interventions" onclick="switchTravauxTab('interventions',this)">Travaux à faire</div>
+        <div class="travaux-tab" data-tab="notes" onclick="switchTravauxTab('notes',this)">Notes / croquis <span class="travaux-tab-badge" id="travaux-tab-notes-count">0</span></div>
         <div class="travaux-tab" data-tab="photos" onclick="switchTravauxTab('photos',this)">Photos <span class="travaux-tab-count" id="travaux-tab-photos-count">(0)</span></div>
       </div>
 
@@ -1262,20 +1262,44 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     </div>
     <div class="form-group"><label class="form-label">Observations générales</label><textarea class="form-input" id="f-obs" data-aj-no-mic="1" placeholder="Accès difficile, prévoir..."></textarea></div>
   </div>
+  <div class="form-section">
+    <div class="form-section-title">Suivi du chantier</div>
+    <div class="form-row">
+      <div class="form-group"><label class="form-label">Statut du chantier</label><select class="form-input" id="f-statut">
+        <option value="À visiter" selected>À visiter</option>
+        <option value="Visite faite">Visite faite</option>
+        <option value="Devis à faire">Devis à faire</option>
+        <option value="Devis envoyé">Devis envoyé</option>
+        <option value="Accepté">Accepté</option>
+        <option value="En cours">En cours</option>
+        <option value="Terminé">Terminé</option>
+        <option value="Archivé">Archivé</option>
+      </select></div>
+      <div class="form-group"><label class="form-label">Priorité / urgence</label><select class="form-input" id="f-priorite">
+        <option value="Normal" selected>Normal</option>
+        <option value="Urgent">Urgent</option>
+        <option value="À rappeler">À rappeler</option>
+        <option value="En attente client">En attente client</option>
+        <option value="À vérifier">À vérifier</option>
+      </select></div>
+    </div>
+  </div>
   <button class="btn btn-primary" onclick="createClient()">Créer la fiche client →</button>
 </div>
 
 <!-- CLIENT DETAIL -->
 <div class="screen" id="screen-client">
+  <!-- Bandeau parcours guidé Session 20 -->
+  <div id="client-progress-banner" style="margin-bottom:14px"></div>
   <div id="client-hero" style="background:var(--c-primary);border-radius:16px;padding:20px;margin-bottom:20px;color:#fff"></div>
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <p class="section-title" style="margin-bottom:0">Pièces</p>
+    <p class="section-title" style="margin-bottom:0">Pièces du logement</p>
     <button class="btn btn-secondary btn-sm" onclick="showScreen('screen-add-piece')">+ Pièce</button>
   </div>
   <div id="pieces-list"></div>
   <button class="btn-add" onclick="showScreen('screen-add-piece')">+ Ajouter une pièce</button>
   <div class="divider"></div>
-  <button class="btn btn-primary" onclick="showRecap()" style="margin-top:8px">Voir le récapitulatif →</button>
+  <button class="btn btn-primary" onclick="showRecap()" style="margin-top:8px">Voir le résumé chantier →</button>
 </div>
 
 <!-- ADD PIECE -->
@@ -2119,12 +2143,12 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     <div class="form-section-title">📊 Statistiques</div>
     <div class="db-stat-grid">
       <div class="db-stat"><div class="db-stat-val" id="db-nb-clients">0</div><div class="db-stat-label">Clients</div></div>
-      <div class="db-stat"><div class="db-stat-val" id="db-nb-pieces">0</div><div class="db-stat-label">Pièces</div></div>
+      <div class="db-stat"><div class="db-stat-val" id="db-nb-pieces">0</div><div class="db-stat-label">Pièces du logement</div></div>
       <div class="db-stat"><div class="db-stat-val" id="db-storage">0 Ko</div><div class="db-stat-label">Stockage</div></div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
       <div class="db-stat"><div class="db-stat-val" id="db-nb-photos">0</div><div class="db-stat-label">Photos</div></div>
-      <div class="db-stat"><div class="db-stat-val" id="db-nb-notes">0</div><div class="db-stat-label">Notes manuscrites</div></div>
+      <div class="db-stat"><div class="db-stat-val" id="db-nb-notes">0</div><div class="db-stat-label">Notes / croquis</div></div>
     </div>
   </div>
   <div class="form-section">
@@ -2133,7 +2157,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
   </div>
   <div class="form-section">
     <div class="form-section-title">🔍 Rechercher</div>
-    <input class="form-input" type="text" id="db-search" placeholder="Nom, adresse, ville..." oninput="searchDB(this.value)">
+    <input class="form-input" type="text" id="db-search" placeholder="Nom, prénom, ville, téléphone, statut, priorité, type..." oninput="searchDB(this.value)">
     <div id="db-search-results" style="margin-top:10px"></div>
   </div>
   <div class="form-section">
@@ -2188,6 +2212,35 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
 <script>
 /* ═══════════════ BASE DE DONNÉES ═══════════════ */
 var DB_KEY='chantier_db_v2';
+
+/* ═══════════════ STATUTS & PRIORITÉ CHANTIER (Session 20) ═══════════════
+   Constantes globales — labels exacts demandés par le brief artisan.
+   Utilisés dans : formulaire création/édition client, fiche client,
+   liste des chantiers, recap, recherche tolérante. */
+var STATUTS_CHANTIER = ['À visiter','Visite faite','Devis à faire','Devis envoyé','Accepté','En cours','Terminé','Archivé'];
+var PRIORITES_CHANTIER = ['Normal','Urgent','À rappeler','En attente client','À vérifier'];
+var STATUT_DEFAUT = 'À visiter';
+var PRIORITE_DEFAUT = 'Normal';
+
+/* Couleurs par statut/priorité pour affichage badges */
+var STATUT_COLORS = {
+  'À visiter':       {bg:'#e8f0fe', fg:'#0d4690'},
+  'Visite faite':    {bg:'#dff6e6', fg:'#1d4d33'},
+  'Devis à faire':   {bg:'#fff4dc', fg:'#7a5a30'},
+  'Devis envoyé':    {bg:'#fde8d6', fg:'#9a4514'},
+  'Accepté':         {bg:'#d4edda', fg:'#1d4d33'},
+  'En cours':        {bg:'#ddeefe', fg:'#0d4690'},
+  'Terminé':         {bg:'#e8e8e8', fg:'#3a4a5c'},
+  'Archivé':         {bg:'#eee', fg:'#7a8896'}
+};
+var PRIORITE_COLORS = {
+  'Normal':            {bg:'#f1f3f5', fg:'#3a4a5c'},
+  'Urgent':            {bg:'#fde8e8', fg:'#c62828'},
+  'À rappeler':        {bg:'#fff4dc', fg:'#7a5a30'},
+  'En attente client': {bg:'#e8eaee', fg:'#3a4a5c'},
+  'À vérifier':        {bg:'#fde8d6', fg:'#9a4514'}
+};
+
 function dbLoad(){
   try{
     var db=JSON.parse(localStorage.getItem(DB_KEY))||{clients:{},pieces:{}};
@@ -2205,6 +2258,13 @@ function dbLoad(){
       if(t.murs)t.murs.forEach(function(m){m.types=migrTypes(m.types||(m.type?[m.type]:[]));});
       if(t.placards)t.placards.forEach(function(pc){pc.types=migrTypes(pc.types);});
       if(t.intplacards)t.intplacards.forEach(function(ip){ip.types=migrTypes(ip.types);});
+    });
+    /* Migration douce Session 20 : statut + priorité par défaut sur les
+       anciens chantiers qui n'en ont pas. Aucun champ existant supprimé. */
+    Object.keys(db.clients||{}).forEach(function(cid){
+      var c = db.clients[cid]; if(!c) return;
+      if(!c.statut)   c.statut   = STATUT_DEFAUT;
+      if(!c.priorite) c.priorite = PRIORITE_DEFAUT;
     });
     return db;
   }catch(e){return{clients:{},pieces:{}};}
@@ -2226,7 +2286,7 @@ var LABELS={
   'screen-client':['Fiche client',''],
   'screen-add-piece':['Ajouter une pièce','Sélectionner'],
   'screen-piece':['Relevé de pièce','Auto-sauvegarde active'],
-  'screen-recap':['Récapitulatif','Synthèse complète'],
+  'screen-recap':['Résumé chantier','Synthèse complète'],
   'screen-db':['Base de données','Stockage local']
 };
 function showScreen(id){
@@ -2503,7 +2563,7 @@ function renderHome(){
     var noTrav=clientPieces.find(function(p){var t=p.travaux||{};return!(t.paintElems&&t.paintElems.length)&&!Object.values(t.cats||{}).some(function(v){return v===true;});});
     if(noMes){nextStep='Mesures '+noMes.nom;nextStepSub='À relever';}
     else if(noTrav){nextStep='Travaux '+noTrav.nom;nextStepSub='À définir';}
-    else{nextStep='Récapitulatif';nextStepSub='Finaliser le chantier';}
+    else{nextStep='Résumé chantier';nextStepSub='Finaliser le chantier';}
   } else if(client){
     nextStep='Ajouter une pièce';nextStepSub='Démarrer les relevés';
   }
@@ -3033,26 +3093,52 @@ function renderClientsList(){
   if(!clients.length){el.innerHTML='<div style="text-align:center;padding:30px;color:var(--c-muted);font-family:-apple-system,sans-serif">Aucun client</div>';return;}
   el.innerHTML=clients.map(function(c,i){return clientCardHTML(c,i,pieces.filter(function(p){return p.clientId===c.id;}).length);}).join('');
 }
+/* Helper Session 20 — badge HTML compact pour statut ou priorité */
+function statutBadgeHTML(s){
+  if(!s) s = STATUT_DEFAUT;
+  var col = STATUT_COLORS[s] || {bg:'#eee', fg:'#3a4a5c'};
+  return '<span style="display:inline-block;background:'+col.bg+';color:'+col.fg+';padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700;letter-spacing:0.3px;">'+esc(s)+'</span>';
+}
+function prioriteBadgeHTML(p){
+  if(!p) p = PRIORITE_DEFAUT;
+  if(p === PRIORITE_DEFAUT) return ''; /* Normal = pas affiché pour ne pas alourdir */
+  var col = PRIORITE_COLORS[p] || {bg:'#eee', fg:'#3a4a5c'};
+  var icon = (p === 'Urgent') ? '⚡ ' : (p === 'À rappeler') ? '☎ ' : '';
+  return '<span style="display:inline-block;background:'+col.bg+';color:'+col.fg+';padding:2px 8px;border-radius:99px;font-size:10.5px;font-weight:700;margin-left:4px;letter-spacing:0.3px;">'+icon+esc(p)+'</span>';
+}
+
 function clientCardHTML(c,i,nbP){
+  /* Statut + priorité affichés en badges (Session 20) */
+  var statBadge = statutBadgeHTML(c.statut);
+  var prioBadge = prioriteBadgeHTML(c.priorite);
   return '<div class="client-card" onclick="openClient(\''+c.id+'\')">'
     +'<div class="client-avatar" style="background:'+avatarColor(i)+'">'+initials(c.prenom,c.nom)+'</div>'
     +'<div class="client-info"><div class="client-name">'+esc(c.prenom)+' '+esc(c.nom)+'</div>'
     +'<div class="client-meta">'+esc(c.adresse||'')+(c.date?' — '+c.date:'')+'</div>'
-    +'<div style="margin-top:5px"><span class="tag tag-blue">'+nbP+' pièce'+(nbP!==1?'s':'')+'</span>'
+    +'<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px;align-items:center"><span class="tag tag-blue">'+nbP+' pièce'+(nbP!==1?'s':'')+'</span>'
     +(c.tel?' <span class="tag tag-green">📞</span>':'')
+    +' '+statBadge+prioBadge
     +'</div></div><span class="chevron">›</span></div>';
 }
 function createClient(){
   var prenom=v('f-prenom').trim(),nom=v('f-nom').trim();
   if(!prenom||!nom){showToast('Prénom et nom requis');return;}
+  /* Statut + priorité Session 20 — défaut sécurisé si selects absents */
+  var statut = v('f-statut') || STATUT_DEFAUT;
+  var priorite = v('f-priorite') || PRIORITE_DEFAUT;
   var c={id:uid(),prenom:prenom,nom:nom,adresse:v('f-adresse'),tel:v('f-tel'),email:v('f-email'),
     tel2:v('f-tel2'),tel2qui:v('f-tel2-qui'),
     ascenseur:getOuiNon('f-ascenseur-grp'),
-    date:v('f-date'),type:v('f-type'),etage:v('f-etage'),code:v('f-code'),obs:v('f-obs'),createdAt:Date.now()};
+    date:v('f-date'),type:v('f-type'),etage:v('f-etage'),code:v('f-code'),obs:v('f-obs'),
+    statut:statut, priorite:priorite,
+    createdAt:Date.now()};
   dbSaveClient(c);
   currentClientId=c.id;
   ['f-prenom','f-nom','f-adresse','f-tel','f-email','f-tel2','f-tel2-qui','f-etage','f-code','f-obs'].forEach(function(id){sv(id,'');});
   document.getElementById('f-date').value=new Date().toISOString().slice(0,10);
+  /* Reset des selects statut/priorité aux valeurs par défaut */
+  var fs=document.getElementById('f-statut'); if(fs) fs.value=STATUT_DEFAUT;
+  var fp=document.getElementById('f-priorite'); if(fp) fp.value=PRIORITE_DEFAUT;
   document.querySelectorAll('#f-ascenseur-grp .oui-non-btn').forEach(function(b){b.classList.remove('on-oui','on-non');});
   renderClientHero(); renderPiecesList();
   /* Simplification (Session 5) : après création client, propose direct l'ajout de pièce */
@@ -3060,7 +3146,7 @@ function createClient(){
   showToast('Fiche créée ✓ — ajoute maintenant une pièce');
 }
 var currentClientId=null;
-function openClient(id){currentClientId=id;renderClientHero();renderPiecesList();showScreen('screen-client');}
+function openClient(id){currentClientId=id;renderClientHero();renderPiecesList();renderProgressBanner();showScreen('screen-client');}
 function renderClientHero(){
   var c=dbLoad().clients[currentClientId];if(!c)return;
   var chips='';
@@ -3068,15 +3154,136 @@ function renderClientHero(){
   if(c.type)chips+='<div style="background:rgba(255,255,255,.12);border-radius:8px;padding:7px 12px;font-size:12px;font-family:-apple-system,sans-serif">🏠 '+esc(c.type)+'</div>';
   if(c.etage)chips+='<div style="background:rgba(255,255,255,.12);border-radius:8px;padding:7px 12px;font-size:12px;font-family:-apple-system,sans-serif">Étage : '+esc(c.etage)+'</div>';
   if(c.ascenseur)chips+='<div style="background:rgba(255,255,255,.12);border-radius:8px;padding:7px 12px;font-size:12px;font-family:-apple-system,sans-serif">🛗 Ascenseur : '+esc(c.ascenseur)+'</div>';
+
+  /* Selects édition statut + priorité (Session 20) — sauvegarde immédiate au change */
+  var statutSelect = '<select onchange="updateClientStatut(\''+c.id+'\', this.value)" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:6px 10px;font-size:12px;font-family:-apple-system,sans-serif;cursor:pointer;">'
+    + STATUTS_CHANTIER.map(function(s){ return '<option value="'+esc(s)+'"'+(s===c.statut?' selected':'')+' style="background:#0f2030;color:#fff">'+esc(s)+'</option>'; }).join('')
+    + '</select>';
+  var prioriteSelect = '<select onchange="updateClientPriorite(\''+c.id+'\', this.value)" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:8px;padding:6px 10px;font-size:12px;font-family:-apple-system,sans-serif;cursor:pointer;">'
+    + PRIORITES_CHANTIER.map(function(p){ return '<option value="'+esc(p)+'"'+(p===c.priorite?' selected':'')+' style="background:#0f2030;color:#fff">'+esc(p)+'</option>'; }).join('')
+    + '</select>';
+
   document.getElementById('client-hero').innerHTML=
     '<div style="font-size:22px;font-weight:700;font-family:-apple-system,sans-serif">'+esc(c.prenom)+' '+esc(c.nom)+'</div>'
     +'<div style="font-size:13px;opacity:.65;font-family:-apple-system,sans-serif;margin-top:4px">'+esc(c.adresse||'')+'</div>'
     +(c.tel?'<div style="font-size:13px;opacity:.8;font-family:-apple-system,sans-serif;margin-top:4px">📞 '+esc(c.tel)+'</div>':'')
     +(c.tel2?'<div style="font-size:13px;opacity:.7;font-family:-apple-system,sans-serif;margin-top:2px">📞 '+esc(c.tel2)+(c.tel2qui?' ('+esc(c.tel2qui)+')':'')+'</div>':'')
     +'<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'+chips+'</div>'
+    +'<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">'
+      +'<span style="font-size:11px;opacity:.6;font-family:-apple-system,sans-serif;text-transform:uppercase;letter-spacing:.4px">Suivi :</span>'
+      +statutSelect + prioriteSelect
+    +'</div>'
     +'<button onclick="deleteClient(\''+c.id+'\')" style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;padding:6px 12px;border-radius:8px;font-size:12px;font-family:-apple-system,sans-serif;cursor:pointer;margin-top:12px">🗑 Supprimer ce client</button>';
   LABELS['screen-client'][1]=c.prenom+' '+c.nom;
   if(currentScreen==='screen-client')updateNav();
+}
+
+/* Handlers Session 20 — sauvegarde immédiate du statut/priorité */
+function updateClientStatut(clientId, value){
+  var db = dbLoad(); var c = db.clients[clientId]; if(!c) return;
+  c.statut = value || STATUT_DEFAUT;
+  dbSave(db);
+  if(typeof showToast === 'function') showToast('Statut : '+c.statut);
+  renderProgressBanner();
+  if(currentScreen === 'screen-clients') renderClientsList();
+}
+function updateClientPriorite(clientId, value){
+  var db = dbLoad(); var c = db.clients[clientId]; if(!c) return;
+  c.priorite = value || PRIORITE_DEFAUT;
+  dbSave(db);
+  if(typeof showToast === 'function') showToast('Priorité : '+c.priorite);
+  renderProgressBanner();
+  if(currentScreen === 'screen-clients') renderClientsList();
+}
+
+/* ═══════════════ BANDEAU PARCOURS GUIDÉ (Session 20) ═══════════════
+   Calcule l'étape actuelle et la prochaine étape selon l'avancement
+   du chantier courant. Non bloquant — l'utilisateur peut toujours
+   sauter une étape et revenir. */
+function computeNextStep(client, pieces){
+  if(!client) return null;
+  /* 1. Si pas de pièces → prochaine étape Pièces du logement */
+  if(!pieces || !pieces.length){
+    return {
+      currentLabel: 'Client',
+      nextLabel: 'ajouter les pièces du logement',
+      action: { label: '+ Ajouter une pièce', onclick: "showScreen('screen-add-piece')" }
+    };
+  }
+  /* 2. Au moins une pièce sans mesures → étape Mesures */
+  var pieceWithoutMesures = pieces.find(function(p){
+    return !p.mesures || (!p.mesures.long && !p.mesures.larg && !p.mesures.hsp);
+  });
+  if(pieceWithoutMesures){
+    return {
+      currentLabel: 'Pièces du logement',
+      nextLabel: 'compléter les mesures de « ' + (pieceWithoutMesures.nom||'pièce') + ' »',
+      action: { label: 'Ouvrir cette pièce →', onclick: "openPiece('"+pieceWithoutMesures.id+"')" }
+    };
+  }
+  /* 3. Au moins une pièce sans travaux cochés → étape Travaux à faire */
+  var pieceWithoutTravaux = pieces.find(function(p){
+    var hasCats = false;
+    if(p.travaux){
+      var cats = p.travaux.cats || {};
+      hasCats = Object.keys(cats).some(function(k){ return cats[k] === true; });
+      /* Aussi : plafond/plinthe/murs/etc avec types[] non vides */
+      if(!hasCats){
+        if(p.travaux.plafond && p.travaux.plafond.types && p.travaux.plafond.types.length) hasCats = true;
+        else if(p.travaux.murs && p.travaux.murs.length) hasCats = true;
+        else if((p.travaux.paintElems||[]).length) hasCats = true;
+      }
+    }
+    return !hasCats;
+  });
+  if(pieceWithoutTravaux){
+    return {
+      currentLabel: 'Mesures',
+      nextLabel: 'ajouter les travaux à faire dans « ' + (pieceWithoutTravaux.nom||'pièce') + ' »',
+      action: { label: 'Ouvrir cette pièce →', onclick: "openPiece('"+pieceWithoutTravaux.id+"')" }
+    };
+  }
+  /* 4. Au moins une pièce sans photo et sans croquis → étape Photos / croquis */
+  var pieceWithoutPhotos = pieces.find(function(p){
+    var nbPhotos = (p.photos||[]).length;
+    var hasCroquis = !!(p.croquis || (p.croquisStrokes && p.croquisStrokes.length));
+    return nbPhotos === 0 && !hasCroquis;
+  });
+  if(pieceWithoutPhotos){
+    return {
+      currentLabel: 'Travaux à faire',
+      nextLabel: 'ajouter des photos ou croquis pour « ' + (pieceWithoutPhotos.nom||'pièce') + ' »',
+      action: { label: 'Ouvrir cette pièce →', onclick: "openPiece('"+pieceWithoutPhotos.id+"')" }
+    };
+  }
+  /* 5. Tout est rempli → étape Résumé chantier */
+  return {
+    currentLabel: 'Photos / croquis',
+    nextLabel: 'vérifier le résumé chantier',
+    action: { label: 'Voir le résumé chantier →', onclick: "showRecap()" }
+  };
+}
+
+function renderProgressBanner(){
+  var el = document.getElementById('client-progress-banner');
+  if(!el) return;
+  if(!currentClientId){ el.innerHTML = ''; return; }
+  var c = dbLoad().clients[currentClientId];
+  if(!c){ el.innerHTML = ''; return; }
+  var pieces = dbGetClientPieces(currentClientId);
+  var step = computeNextStep(c, pieces);
+  if(!step){ el.innerHTML = ''; return; }
+  el.innerHTML =
+    '<div style="background:linear-gradient(135deg,rgba(201,169,110,0.12),rgba(201,169,110,0.05));border:1px solid rgba(201,169,110,0.30);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-family:Inter,system-ui,sans-serif">' +
+      '<div style="font-size:24px">📍</div>' +
+      '<div style="flex:1;min-width:200px">' +
+        '<div style="font-size:11px;color:#7a5a30;text-transform:uppercase;letter-spacing:0.5px;font-weight:700">Étape actuelle : ' + esc(step.currentLabel) + '</div>' +
+        '<div style="font-size:13.5px;color:#0f2030;font-weight:600;margin-top:3px">Prochaine étape : ' + esc(step.nextLabel) + '</div>' +
+      '</div>' +
+      (step.action
+        ? '<button onclick="' + step.action.onclick + '" style="background:#c9a96e;color:#0f2030;border:none;padding:9px 16px;border-radius:8px;font-size:12.5px;font-weight:700;cursor:pointer;font-family:inherit">' + esc(step.action.label) + '</button>'
+        : '') +
+    '</div>';
 }
 function deleteClient(id){
   customConfirm('Cette action supprimera ce client ainsi que toutes ses pièces. Cette suppression est irréversible.',
@@ -5150,13 +5357,40 @@ function showRecap(){
     fieldRow('Téléphone', c.tel ? esc(c.tel) : '<span style="color:var(--c-muted);font-style:italic">—</span>' + recapMissBadge('manquant')) +
     fieldRow('Email', c.email ? esc(c.email) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
     fieldRow('Adresse chantier', c.adresse ? esc(c.adresse) : '<span style="color:var(--c-muted);font-style:italic">—</span>' + recapMissBadge('manquant')) +
-    fieldRow('Date RDV', c.date ? esc(c.date) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
-    fieldRow('Type de bien', c.type ? esc(c.type) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Date de visite', c.date ? esc(c.date) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    fieldRow('Type de chantier', c.type ? esc(c.type) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
+    /* Session 20 — Statut + Priorité du chantier dans le résumé */
+    fieldRow('Statut du chantier', statutBadgeHTML(c.statut)) +
+    fieldRow('Priorité / urgence', c.priorite && c.priorite !== PRIORITE_DEFAUT ? prioriteBadgeHTML(c.priorite).replace('margin-left:4px;','') : '<span style="font-size:11px;color:#3a4a5c;font-weight:600">'+esc(c.priorite||PRIORITE_DEFAUT)+'</span>') +
     fieldRow('Étage', c.etage ? esc(c.etage) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
     fieldRow('Ascenseur', c.ascenseur ? esc(c.ascenseur) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
     fieldRow('Code accès', c.code ? esc(c.code) : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
     fieldRow('Contact 2 (gardien/tiers)', c.tel2 ? esc(c.tel2) + (c.tel2qui?' (' + esc(c.tel2qui) + ')':'') : '<span style="color:var(--c-muted);font-style:italic">—</span>') +
     (c.obs ? '<div style="margin-top:10px;padding:10px 12px;background:#fbf8f2;border-radius:8px;font-size:12.5px;color:#3a4a5c;line-height:1.55"><b style="color:#0f2030">Observations générales :</b><br>' + esc(c.obs) + '</div>' : '')
+  );
+
+  /* ─── Pré-devis automatique sans prix (Session 20) ─── */
+  var preDevis = computePreDevis(pieces);
+  var nbPrestations = preDevis.reduce(function(n, room){ return n + room.prestations.length; }, 0);
+  var sectionPreDevis = section('Pré-devis automatique (sans prix)', '📋', nbPrestations,
+    '<div style="font-size:11.5px;color:#7a8896;margin-bottom:10px;line-height:1.5">Liste de prestations par pièce générée automatiquement depuis les travaux à faire que tu as cochés. Sert de base pour préparer le devis dans ton logiciel habituel. <strong>Pas de prix calculés ici</strong> — c\'est juste une checklist propre.</div>' +
+    (preDevis.length === 0
+      ? '<div style="color:var(--c-muted);font-style:italic;font-size:12px;padding:8px 0">Aucune pièce avec des travaux cochés. Ouvre une pièce et coche des travaux pour voir le pré-devis se remplir.</div>'
+      : preDevis.map(function(room){
+          if(!room.prestations.length){
+            return '<div style="background:#fbf8f2;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:10px 12px;margin-bottom:8px">' +
+              '<div style="font-weight:700;color:#0f2030;font-size:13px">' + esc(room.nom) + '</div>' +
+              '<div style="font-size:11.5px;color:#7a8896;margin-top:3px;font-style:italic">— pas de travaux cochés</div>' +
+            '</div>';
+          }
+          return '<div style="background:#fff;border:1px solid var(--c-border,#e3dccc);border-radius:8px;padding:12px 14px;margin-bottom:8px">' +
+            '<div style="font-weight:700;color:#0f2030;font-size:13.5px;margin-bottom:8px">' + esc(room.nom) + ' <span style="background:rgba(15,32,48,0.06);color:#3a4a5c;padding:1px 7px;border-radius:99px;font-size:10.5px;font-weight:600;margin-left:4px">' + room.prestations.length + '</span></div>' +
+            '<ul style="margin:0;padding-left:22px;font-size:12.5px;color:#3a4a5c;line-height:1.6">' +
+              room.prestations.map(function(p){ return '<li>' + esc(p) + '</li>'; }).join('') +
+            '</ul>' +
+          '</div>';
+        }).join('')
+    )
   );
 
   /* ─── 2. Contexte chantier (éditable inline) ─── */
@@ -5611,13 +5845,14 @@ function showRecap(){
     '<button onclick="recapAddPlannedLabor()" style="margin-top:8px;padding:8px 14px;background:#fff;border:1px dashed var(--c-border,#e3dccc);color:#3a4a5c;border-radius:8px;cursor:pointer;font-family:Inter,system-ui,sans-serif;font-size:12px;font-weight:600;width:100%">+ Ajouter une intervention</button>'
   );
 
-  /* ─── Assemblage Session 11 (16 sections au total) ─── */
+  /* ─── Assemblage Session 11+20 ─── */
   document.getElementById('recap-content').innerHTML =
     sectionClient +
+    sectionPreDevis +
     sectionRequest +
     sectionContexte +
     sectionConstraints +
-    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#7a8896;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin:18px 0 8px 4px">Pièces — ' + pieces.length + '</div>' +
+    '<div style="font-family:Cormorant Garamond,Georgia,serif;font-size:14px;color:#7a8896;letter-spacing:1.5px;text-transform:uppercase;font-weight:600;margin:18px 0 8px 4px">Pièces du logement — ' + pieces.length + '</div>' +
     sectionPieces +
     sectionRemovals +
     sectionMaterials +
@@ -5629,6 +5864,122 @@ function showRecap(){
     sectionNotes;
 
   showScreen('screen-recap');
+}
+
+/* ═══════════════ PRÉ-DEVIS AUTOMATIQUE SANS PRIX (Session 20) ═══════════════
+   Transforme les travaux cochés sur chaque pièce en une liste claire
+   de prestations à prévoir, sans prix calculés. Sert de checklist propre
+   pour préparer un devis dans le logiciel habituel. */
+function computePreDevis(pieces){
+  /* Mapping des cats du module Travaux split → libellés métier */
+  var CAT_LABELS = {
+    'plafond':       'Travaux plafond',
+    'plinthe':       'Plinthes',
+    'biblio':        'Bibliothèque / placard mural',
+    'fenetre':       'Fenêtres',
+    'placards':      'Placards',
+    'intplacards':   'Intérieur de placards',
+    'murs':          'Murs',
+    'paintElems':    'Éléments à peindre',
+    'demolition':    'Démolition / dépose',
+    'maconnerie':    'Maçonnerie',
+    'platrerie':     'Plâtrerie',
+    'electricite':   'Électricité',
+    'plomberie':     'Plomberie',
+    'carrelage':     'Carrelage',
+    'parquet':       'Parquet / sol',
+    'peinture':      'Peinture',
+    'menuiserie':    'Menuiserie',
+    'cloisons':      'Cloisons',
+    'isolation':     'Isolation',
+    'chauffage':     'Chauffage',
+    'ventilation':   'Ventilation / VMC',
+    'porte':         'Porte',
+    'sol':           'Sol',
+    'finitions':     'Finitions'
+  };
+
+  return pieces.map(function(p){
+    var prestations = [];
+    var t = p.travaux || {};
+
+    /* 1. Cats simples (cats[key] = true) */
+    var cats = t.cats || {};
+    Object.keys(cats).forEach(function(k){
+      if(cats[k] === true){
+        var label = CAT_LABELS[k] || k.charAt(0).toUpperCase() + k.slice(1);
+        prestations.push(label);
+      }
+    });
+
+    /* 2. Plafond avec types[] */
+    if(t.plafond && t.plafond.types && t.plafond.types.length){
+      t.plafond.types.forEach(function(type){
+        prestations.push('Plafond — ' + type);
+      });
+    }
+
+    /* 3. Plinthes avec types[] */
+    if(t.plinthe && t.plinthe.types && t.plinthe.types.length){
+      t.plinthe.types.forEach(function(type){
+        prestations.push('Plinthes — ' + type);
+      });
+    }
+
+    /* 4. Murs (array) avec types[] */
+    if(t.murs && t.murs.length){
+      t.murs.forEach(function(m, idx){
+        if(m.types && m.types.length){
+          m.types.forEach(function(type){
+            prestations.push('Mur ' + (idx+1) + ' — ' + type);
+          });
+        }
+      });
+    }
+
+    /* 5. Placards / Intplacards / Biblio / Fenetre avec types[] */
+    ['placards','intplacards','biblio','fenetre'].forEach(function(key){
+      if(t[key]){
+        var label = CAT_LABELS[key] || key;
+        if(Array.isArray(t[key])){
+          t[key].forEach(function(item, i){
+            if(item.types && item.types.length){
+              item.types.forEach(function(type){
+                prestations.push(label + ' ' + (i+1) + ' — ' + type);
+              });
+            }
+          });
+        } else if(t[key].types && t[key].types.length){
+          t[key].types.forEach(function(type){
+            prestations.push(label + ' — ' + type);
+          });
+        }
+      }
+    });
+
+    /* 6. Éléments à peindre */
+    if(t.paintElems && t.paintElems.length){
+      t.paintElems.forEach(function(elem){
+        prestations.push('Peindre : ' + elem);
+      });
+    }
+
+    /* 7. Notes manuscrites + msNotes : on n'extrait pas (trop incertain) */
+
+    /* Dédoublonne */
+    var seen = {};
+    var unique = [];
+    prestations.forEach(function(p){
+      var k = p.toLowerCase();
+      if(!seen[k]){ seen[k] = true; unique.push(p); }
+    });
+
+    return {
+      pieceId: p.id,
+      nom: p.nom || 'Pièce',
+      prestations: unique
+    };
+  }).filter(function(r){ return r; });
 }
 
 /* ═══════════════ CANVAS CROQUIS ═══════════════ */
@@ -6291,16 +6642,31 @@ function searchDB(q){
   var el=document.getElementById('db-search-results');
   if(!q||q.length<2){el.innerHTML='';return;}
   var db=dbLoad();var pieces=Object.values(db.pieces);
+  /* Recherche tolérante multi-champs Session 20 :
+     nom, prénom, adresse, ville, téléphones, email, type chantier, statut,
+     priorité, observations, date de visite, étage, code accès. Tous les mots
+     de la requête doivent être trouvés (AND logique). */
+  var words = q.toLowerCase().split(/\s+/).filter(function(w){ return w.length > 0; });
   var results=Object.values(db.clients).filter(function(c){
-    var s=(c.prenom+' '+c.nom+' '+(c.adresse||'')+' '+(c.type||'')+' '+(c.obs||'')).toLowerCase();
-    return s.indexOf(q.toLowerCase())>-1;
+    var ville = ((c.adresse||'').match(/\b(\d{4,5})\s+([A-Za-zÀ-ÿ\-\s]+)$/) || [])[2] || '';
+    var s=(
+      (c.prenom||'')+' '+(c.nom||'')+' '+
+      (c.adresse||'')+' '+ville+' '+
+      (c.tel||'')+' '+(c.tel2||'')+' '+(c.tel2qui||'')+' '+
+      (c.email||'')+' '+
+      (c.type||'')+' '+
+      (c.statut||'')+' '+(c.priorite||'')+' '+
+      (c.obs||'')+' '+(c.date||'')+' '+
+      (c.etage||'')+' '+(c.code||'')
+    ).toLowerCase();
+    return words.every(function(w){ return s.indexOf(w) !== -1; });
   });
   if(!results.length){el.innerHTML='<div style="color:var(--c-muted);font-family:-apple-system,sans-serif;font-size:13px">Aucun résultat</div>';return;}
   el.innerHTML='<div style="font-size:12px;color:var(--c-muted);font-family:-apple-system,sans-serif;margin-bottom:8px">'+results.length+' résultat(s)</div>'
     +results.map(function(c,i){
       var nbP=pieces.filter(function(p){return p.clientId===c.id;}).length;
       return '<div class="db-entry"><div style="width:32px;height:32px;border-radius:50%;background:'+avatarColor(i)+';color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;font-family:-apple-system,sans-serif;flex-shrink:0">'+initials(c.prenom,c.nom)+'</div>'
-        +'<div style="flex:1;font-family:-apple-system,sans-serif"><div style="font-weight:600">'+esc(c.prenom)+' '+esc(c.nom)+'</div><div style="font-size:12px;color:var(--c-muted)">'+nbP+' pièce'+(nbP!==1?'s':'')+'</div></div>'
+        +'<div style="flex:1;font-family:-apple-system,sans-serif"><div style="font-weight:600">'+esc(c.prenom)+' '+esc(c.nom)+'</div><div style="font-size:12px;color:var(--c-muted);display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+nbP+' pièce'+(nbP!==1?'s':'')+' · '+statutBadgeHTML(c.statut)+(c.priorite&&c.priorite!==PRIORITE_DEFAUT?' '+prioriteBadgeHTML(c.priorite).replace('margin-left:4px;',''):'')+'</div></div>'
         +'<button class="btn btn-secondary btn-sm" onclick="openClient(\''+c.id+'\')">Ouvrir</button></div>';
     }).join('');
 }
@@ -10926,7 +11292,7 @@ window.FEATURES_ENABLED = Object.assign({
     bar.id = 'aj-client-filters';
     bar.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center;font-family:Inter,sans-serif;';
     bar.innerHTML =
-      '<input id="aj-client-search" type="search" placeholder="🔍 Filtrer..." style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-size:13px;outline:none;" />' +
+      '<input id="aj-client-search" type="search" placeholder="🔍 Nom, ville, statut, priorité, téléphone..." style="flex:1;min-width:200px;padding:9px 12px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-size:13px;outline:none;" />' +
       '<select id="aj-client-type-filter" style="padding:9px 10px;border:1px solid var(--c-border,#e3dccc);border-radius:8px;font-size:13px;background:#fff;">' +
         '<option value="">Tous types</option>' +
         '<option value="Particulier">Particulier</option>' +
@@ -10970,8 +11336,26 @@ window.FEATURES_ENABLED = Object.assign({
       var visible = true;
       if(cl){
         if(q){
-          var hay = ((cl.prenom||'') + ' ' + (cl.nom||'') + ' ' + (cl.adresse||'') + ' ' + (cl.tel||'')).toLowerCase();
-          if(hay.indexOf(q) < 0) visible = false;
+          /* Recherche tolérante multi-champs Session 20 :
+             nom, prénom, adresse, ville, téléphones, email, type chantier,
+             date de visite, statut, priorité, observations, code accès */
+          var ville = ((cl.adresse||'').match(/\b(\d{4,5})\s+([A-Za-zÀ-ÿ\-\s]+)$/) || [])[2] || '';
+          var hayParts = [
+            cl.prenom||'', cl.nom||'',
+            cl.adresse||'', ville,
+            cl.tel||'', cl.tel2||'', cl.tel2qui||'',
+            cl.email||'',
+            cl.type||'',
+            cl.date||'',
+            cl.statut||'', cl.priorite||'',
+            cl.obs||'',
+            cl.etage||'', cl.code||''
+          ];
+          var hay = hayParts.join(' ').toLowerCase();
+          /* Tolérance partielle : sépare la requête en mots et exige tous les mots dans le foin */
+          var words = q.split(/\s+/).filter(function(w){ return w.length > 0; });
+          var allMatch = words.every(function(w){ return hay.indexOf(w) !== -1; });
+          if(!allMatch) visible = false;
         }
         if(type && cl.type !== type) visible = false;
         if(thresholdMs && cl.createdAt && cl.createdAt < thresholdMs) visible = false;
