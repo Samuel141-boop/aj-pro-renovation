@@ -810,6 +810,72 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--c-border-2);border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:var(--c-text-muted)}
+
+/* ════════════════════════════════════════════════════════════════════
+   SESSION 21 — Optimisations tablette Samsung + stylet + accessibilité
+   Ne change pas le design existant, ajoute juste des bonnes pratiques.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Évite le délai de 300ms double-tap zoom sur tous les éléments cliquables :
+   le tap se déclenche immédiatement avec le stylet ou le doigt. */
+button, .nav-item, .step-btn, .travail-btn, .client-card, .piece-card,
+.tag, .form-input, select, input, [role="button"], a {
+  touch-action: manipulation;
+}
+
+/* Canvas de dessin (croquis, annotations) — empêche le scroll de la page
+   pendant qu'on dessine au stylet. CRUCIAL pour l'usage tablette stylet. */
+canvas, [data-aj-canvas], #main-canvas, #bloc-canvas, .ajq-canvas {
+  touch-action: none;
+  -ms-touch-action: none;
+}
+
+/* Empêche la sélection accidentelle de texte pendant un long tap stylet
+   sur les zones d'action (boutons, cartes). Les inputs/textareas restent
+   sélectionnables, c'est leur métier. */
+button, .nav-item, .step-btn, .travail-btn, .client-card, .piece-card, .tag {
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* Focus visible global — accessibilité clavier + indication claire au
+   stylet quand un champ est actif. Couleur : doré AJ Pro pour rester
+   dans la charte. */
+*:focus-visible {
+  outline: 2px solid #c9a96e !important;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Pour les inputs/selects/textareas qui ont déjà leur propre style focus,
+   on combine plutôt qu'on remplace */
+.form-input:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible {
+  box-shadow: 0 0 0 2px rgba(201,169,110,0.3);
+}
+
+/* Tablette ≥768px : agrandit les boutons "petits" pour rester confortables
+   au stylet (cible 44px minimum recommandée par les guidelines tactiles). */
+@media (min-width: 768px) {
+  .btn-sm { min-height: 44px; padding: 10px 16px; }
+  .step-btn { min-height: 44px; }
+  /* Tags : pas de min-height (juste indicatifs), mais padding plus généreux */
+  .tag { padding: 4px 10px; }
+}
+
+/* Empêche le pinch-zoom accidentel quand on dessine — affecte juste les
+   zones de dessin, pas l'app entière. Le zoom du navigateur reste possible. */
+[data-aj-canvas-wrapper] { touch-action: pan-x pan-y; }
+[data-aj-canvas-wrapper] canvas { touch-action: none; }
+
+/* Boutons icône-only : ajoute un curseur visible et garantit la zone
+   de tap (44px minimum sur tablette). */
+button[aria-label]:not(:has(span:not(:empty))),
+button[title]:not(:has(span:not(:empty))) {
+  min-width: 36px;
+  min-height: 36px;
+}
+
 </style>
 </head>
 <body>
@@ -1116,16 +1182,16 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
     </div>
   </div>
 
-  <!-- LIGNE 4 : Notes manuscrites récentes (large) + Récapitulatif -->
+  <!-- LIGNE 4 : Notes / croquis récents (large) + Résumé chantier -->
   <div class="dash-row-4">
-    <!-- Notes manuscrites -->
+    <!-- Notes / croquis -->
     <div class="dash-block dash-block-notes">
       <div class="dash-block-header">
         <div class="dash-block-title">Notes / croquis récents</div>
         <div class="dash-block-date" id="dash-notes-date">—</div>
       </div>
       <div class="dash-note-card" id="dash-note-card">
-        <div class="dash-empty-mini" style="padding:30px;text-align:center">Aucune note manuscrite</div>
+        <div class="dash-empty-mini" style="padding:30px;text-align:center">Aucune note / croquis</div>
       </div>
     </div>
 
@@ -1200,7 +1266,7 @@ textarea.form-input{min-height:80px;resize:vertical;line-height:1.5}
         <div class="travaux-interventions-list" id="travaux-interventions-list"></div>
       </div>
 
-      <!-- Notes manuscrites -->
+      <!-- Notes / croquis -->
       <div class="travaux-tab-content" id="travaux-tab-notes" style="display:none">
         <div class="travaux-notes-list" id="travaux-notes-list"></div>
       </div>
@@ -2243,7 +2309,25 @@ var PRIORITE_COLORS = {
 
 function dbLoad(){
   try{
-    var db=JSON.parse(localStorage.getItem(DB_KEY))||{clients:{},pieces:{}};
+    var raw = localStorage.getItem(DB_KEY);
+    var db;
+    if(!raw){
+      db = {clients:{},pieces:{}};
+    } else {
+      try {
+        db = JSON.parse(raw);
+      } catch(parseErr){
+        /* Données locales corrompues — backup avant fallback (Session 21) */
+        console.error('[dbLoad] Parse JSON échoué, sauvegarde backup', parseErr);
+        try { localStorage.setItem(DB_KEY + '.corrupted_' + Date.now(), raw); } catch(e){}
+        db = {clients:{},pieces:{}};
+      }
+    }
+    /* Garde-fou : si la structure n'est pas un objet attendu, on repart propre */
+    if(!db || typeof db !== 'object'){ db = {clients:{},pieces:{}}; }
+    if(!db.clients || typeof db.clients !== 'object') db.clients = {};
+    if(!db.pieces  || typeof db.pieces  !== 'object') db.pieces  = {};
+
     /* Migration : anciennes valeurs peinture → nouvelles (sans toucher au schéma) */
     var MIGR={'Peinture simple':'Uniformisation','Peinture + rebouche':'Enduit partiel','Enduit + peinture':'Enduit général'};
     var migrTypes=function(arr){if(!arr||!arr.length)return arr;return arr.map(function(t){return MIGR[t]||t;});};
@@ -2262,16 +2346,32 @@ function dbLoad(){
     /* Migration douce Session 20 : statut + priorité par défaut sur les
        anciens chantiers qui n'en ont pas. Aucun champ existant supprimé. */
     Object.keys(db.clients||{}).forEach(function(cid){
-      var c = db.clients[cid]; if(!c) return;
+      var c = db.clients[cid]; if(!c || typeof c !== 'object') return;
       if(!c.statut)   c.statut   = STATUT_DEFAUT;
       if(!c.priorite) c.priorite = PRIORITE_DEFAUT;
     });
     return db;
   }catch(e){return{clients:{},pieces:{}};}
 }
-function dbSave(db){localStorage.setItem(DB_KEY,JSON.stringify(db));}
-function dbSaveClient(c){var db=dbLoad();db.clients[c.id]=c;dbSave(db);}
-function dbSavePiece(p){var db=dbLoad();db.pieces[p.id]=p;dbSave(db);}
+/* dbSave Session 21 — gère QuotaExceededError pour ne plus perdre silencieusement
+   les données quand localStorage sature (limite ~5-10 Mo). */
+function dbSave(db){
+  try{
+    localStorage.setItem(DB_KEY, JSON.stringify(db));
+    return true;
+  } catch(e){
+    /* QuotaExceededError ou erreur de sérialisation */
+    var msg = (e && e.name === 'QuotaExceededError')
+      ? '⚠ Stockage saturé : impossible de sauvegarder. Pense à exporter ta base puis libérer de la place (supprimer un ancien chantier ou vider des photos).'
+      : '⚠ Erreur sauvegarde : ' + (e && e.message ? e.message : 'inconnue');
+    if(typeof showToast === 'function') showToast(msg);
+    else if(typeof alert === 'function') alert(msg);
+    console.error('[dbSave]', e);
+    return false;
+  }
+}
+function dbSaveClient(c){var db=dbLoad();db.clients[c.id]=c;return dbSave(db);}
+function dbSavePiece(p){var db=dbLoad();db.pieces[p.id]=p;return dbSave(db);}
 function dbDeleteClient(id){var db=dbLoad();delete db.clients[id];Object.keys(db.pieces).forEach(function(pid){if(db.pieces[pid].clientId===id)delete db.pieces[pid];});dbSave(db);}
 function dbDeletePiece(id){var db=dbLoad();delete db.pieces[id];dbSave(db);}
 function dbGetClientPieces(cid){return Object.values(dbLoad().pieces).filter(function(p){return p.clientId===cid;});}
@@ -3308,13 +3408,19 @@ function renderPiecesList(){
     return '<div class="piece-card"><div class="piece-header" onclick="openPiece(\''+p.id+'\')">'
       +'<div class="piece-icon-box">'+icon+'</div>'
       +'<div style="flex:1"><div class="piece-name">'+esc(p.nom)+'</div><div class="piece-sub">'+sub.join(' — ')+'</div></div>'
-      +'<div class="piece-actions"><button class="btn btn-danger btn-sm" onclick="event.stopPropagation();delPiece(\''+p.id+'\')">✕</button><span class="chevron">›</span></div>'
+      +'<div class="piece-actions"><button class="btn btn-danger btn-sm" aria-label="Supprimer cette pièce" title="Supprimer cette pièce" onclick="event.stopPropagation();delPiece(\''+p.id+'\')">✕</button><span class="chevron" aria-hidden="true">›</span></div>'
       +'</div></div>';
   }).join('');
 }
 function delPiece(id){
   customConfirm('Cette action est irréversible.',
-    function(){dbDeletePiece(id);renderPiecesList();showToast('Pièce supprimée');},
+    function(){
+      dbDeletePiece(id);
+      renderPiecesList();
+      /* Session 21 — bandeau parcours doit refléter l'état après suppression */
+      if(typeof renderProgressBanner === 'function') renderProgressBanner();
+      showToast('Pièce supprimée');
+    },
     {title:'Supprimer cette pièce ?',danger:true,okLabel:'Supprimer'});
 }
 
@@ -3325,6 +3431,11 @@ function selectRoom(el,name,icon){
   el.classList.add('selected');selRoomName=name;selRoomIcon=icon;
 }
 function addPiece(){
+  if(!currentClientId){
+    showToast('Sélectionnez d\'abord un client');
+    showScreen('screen-clients');
+    return;
+  }
   var custom=document.getElementById('custom-room-name').value.trim();
   var nom=custom||selRoomName;
   var p={id:uid(),clientId:currentClientId,nom:nom,icon:selRoomIcon,createdAt:Date.now(),
@@ -3337,6 +3448,8 @@ function addPiece(){
   document.querySelectorAll('#room-type-grid .travail-btn').forEach(function(b){b.classList.remove('selected');});
   document.getElementById('custom-room-name').value='';
   selRoomName='Salon';selRoomIcon='🛋️';
+  /* Session 21 — bandeau parcours rafraîchi après ajout */
+  if(typeof renderProgressBanner === 'function') renderProgressBanner();
   loadPieceUI();showScreen('screen-piece');
 }
 var currentPieceId=null;
@@ -6684,13 +6797,49 @@ function handleImport(inp){
   reader.onload=function(e){
     try{
       var data=JSON.parse(e.target.result);
-      if(!data.clients||!data.pieces){showToast('Fichier invalide');return;}
-      var existing=dbLoad();
-      Object.assign(existing.clients,data.clients);Object.assign(existing.pieces,data.pieces);
-      dbSave(existing);renderDB();renderHome();
-      showToast('Import réussi — '+Object.keys(data.clients).length+' clients');
-    }catch(err){showToast('Erreur de lecture JSON');}
+      /* Validation enrichie Session 21 — refuse les fichiers manifestement
+         pas issus de cette app pour éviter de corrompre la base existante. */
+      if(!data || typeof data !== 'object'){ showToast('Fichier invalide (pas un objet JSON)'); return; }
+      if(!data.clients || typeof data.clients !== 'object'){ showToast('Fichier invalide (clients manquants)'); return; }
+      if(!data.pieces  || typeof data.pieces  !== 'object'){ showToast('Fichier invalide (pièces manquantes)'); return; }
+      /* Vérifie que les clients ont au moins un id et un nom */
+      var validClients = 0;
+      Object.keys(data.clients).forEach(function(cid){
+        var c = data.clients[cid];
+        if(c && typeof c === 'object' && (c.id || cid) && (c.nom || c.prenom)) validClients++;
+      });
+      if(validClients === 0 && Object.keys(data.clients).length > 0){
+        showToast('Fichier invalide : aucun client correctement formé');
+        return;
+      }
+      /* Confirmation avant fusion (la fusion peut écraser des clients de même id) */
+      var nbExistants = Object.keys(dbLoad().clients).length;
+      var nbImport = Object.keys(data.clients).length;
+      var doImport = function(){
+        var existing=dbLoad();
+        Object.assign(existing.clients,data.clients);Object.assign(existing.pieces,data.pieces);
+        if(dbSave(existing)){
+          if(typeof renderDB==='function')renderDB();
+          if(typeof renderHome==='function')renderHome();
+          if(typeof renderClientsList==='function')renderClientsList();
+          showToast('Import réussi — '+nbImport+' clients ajoutés/mis à jour');
+        }
+      };
+      if(nbExistants > 0 && typeof customConfirm === 'function'){
+        customConfirm(
+          'Tu vas importer ' + nbImport + ' client(s) dans une base qui en contient déjà ' + nbExistants + '. Les clients avec le même identifiant seront écrasés. Continuer ?',
+          doImport,
+          { title:'Confirmer l\'import ?', okLabel:'Importer' }
+        );
+      } else {
+        doImport();
+      }
+    }catch(err){
+      console.error('[handleImport]', err);
+      showToast('Erreur de lecture du fichier JSON : ' + (err.message||'inconnue'));
+    }
   };
+  reader.onerror = function(){ showToast('Erreur de lecture du fichier'); };
   reader.readAsText(inp.files[0]);inp.value='';
 }
 function confirmClearDB(){
