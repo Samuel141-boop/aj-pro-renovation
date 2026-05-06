@@ -2,7 +2,7 @@
    Stratégie : cache-first pour le shell, network-first avec fallback cache pour le reste.
    Permet à l'app de fonctionner hors-ligne (utile en chantier sans wifi). */
 
-const CACHE_VERSION = 'aj-pro-v30-2026-05-06-gdrive-autosync';
+const CACHE_VERSION = 'aj-pro-v31-2026-05-06-onedrive-autosync';
 const SHELL_CACHE = 'aj-pro-shell-' + CACHE_VERSION;
 /* Runtime cache versionné aussi : à chaque bump, l'ancien est purgé */
 const RUNTIME_CACHE = 'aj-pro-runtime-' + CACHE_VERSION;
@@ -23,7 +23,7 @@ const SHELL_FILES = [
   '/ai-prompt-builder.js',
   '/ai-analysis-service.js',
   '/ai-analysis-screen.js',
-  '/gdrive-sync.js',
+  '/onedrive-sync.js',
   '/chantier-analysis.js'
 ];
 
@@ -74,13 +74,25 @@ self.addEventListener('fetch', function(event){
     return;
   }
 
-  /* Domaines Google (auth + API Drive) : NE PAS intercepter — passent direct
-     au navigateur pour que l'auth/upload fonctionne correctement (Session 22) */
+  /* Domaines Microsoft (auth + Graph API + MSAL CDN) : NE PAS intercepter —
+     passent direct au navigateur pour que l'auth/upload OneDrive fonctionne
+     correctement (Session 22 bis) */
+  if(url.hostname === 'login.microsoftonline.com' ||
+     url.hostname === 'login.live.com' ||
+     url.hostname === 'graph.microsoft.com' ||
+     url.hostname === 'alcdn.msauth.net' ||
+     url.hostname === 'login.microsoft.com' ||
+     url.hostname.endsWith('.msftauth.net') ||
+     url.hostname.endsWith('.msft.net')){
+    return; /* le navigateur gère sans nous */
+  }
+  /* Domaines Google (auth + API Drive) : également exclus pour rétro-compat
+     si l'utilisateur revient à Google Drive (gdrive-sync.js conservé). */
   if(url.hostname === 'accounts.google.com' ||
      url.hostname === 'apis.google.com' ||
      url.hostname.endsWith('.googleapis.com') ||
      url.hostname === 'oauth2.googleapis.com'){
-    return; /* le navigateur gère sans nous */
+    return;
   }
 
   /* Resources externes (fonts, jsPDF) : cache-first puis network */
