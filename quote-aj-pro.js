@@ -761,126 +761,278 @@
 
     body.innerHTML =
       '<div class="ajqe-shell">' +
-        /* Header devis */
-        '<div style="display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap;">' +
-          '<button class="ajqe-btn" onclick="AJQuotes.backToList()">← Liste</button>' +
-          '<div style="flex:1;min-width:200px;">' +
-            '<div style="font-family:\'Cormorant Garamond\',Georgia,serif;font-size:24px;font-weight:600;color:#0f2030;line-height:1.1;">' + esc(typeLabel) + ' n° ' + esc(quote.quoteNumber || '—') + '</div>' +
-            '<div style="font-size:12px;color:#7a8896;margin-top:2px;">' + esc(quote.title || 'Sans titre') + '</div>' +
-          '</div>' +
+        /* Header minimal — juste un retour à la liste, le numéro de devis
+           est désormais affiché et éditable directement dans le document A4 */
+        '<div class="ajq-edit-topbar" data-edit-only style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap;">' +
+          '<button class="ajqe-btn" onclick="AJQuotes.backToList()">← Liste des devis</button>' +
+          '<div style="flex:1"></div>' +
+          (_state.activeView === 'print'
+            ? ''
+            : '<span style="font-size:11px;color:#7a8896;font-style:italic">' +
+                '💡 Clique directement sur le numéro, le titre, les lignes ou les prix pour les modifier' +
+              '</span>') +
         '</div>' +
-
-        /* Tabs */
-        '<div class="ajqe-tabs">' +
-          '<button class="ajqe-tab' + (_state.activeView === 'edit' ? ' active' : '') + '" onclick="AJQuotes.setView(\'edit\')">✏️ Édition</button>' +
-          '<button class="ajqe-tab' + (_state.activeView === 'preview' ? ' active' : '') + '" onclick="AJQuotes.setView(\'preview\')">📄 Aperçu AJ Pro</button>' +
-        '</div>' +
-
         '<div id="ajq-view-body"></div>' +
       '</div>';
 
-    if(_state.activeView === 'edit') renderEditView();
-    else renderPreviewView();
+    if(_state.activeView === 'print') renderPreviewView();
+    else renderEditView();
   }
 
   /* ─────────────────────────────────────────────────────────────────
-     VUE ÉDITION — métadonnées + sections + lignes + sticky totaux
+     VUE ÉDITION (Session 23 — refonte) : document A4 éditable directement
+     Au lieu d'un formulaire séparé, l'utilisateur clique directement
+     dans le devis pour modifier numéro, titre, lignes, prix, etc.
+     C'est le MÊME composant visuel que la vue aperçu, juste avec des
+     contrôles d'édition discrets visibles au survol.
      ───────────────────────────────────────────────────────────────── */
   function renderEditView(){
     var quote = getCurrentQuote();
     if(!quote) return;
     var view = document.getElementById('ajq-view-body');
     if(!view) return;
-    var totals = computeQuoteTotals(quote);
+    /* Document A4 unifié rendu en mode 'edit' */
+    renderUnifiedDocument(view, quote, 'edit');
+  }
 
+  /* Désactive en lecture-seule tous les contrôles dans la vue édition.
+     Sont préservés : les boutons explicitement marqués `data-keep-locked` (Avenant, Révision, Aperçu) */
+  function _applyLockedReadonly(rootEl){
+    if(!rootEl) return;
+    var inputs = rootEl.querySelectorAll('input, textarea, select, [contenteditable="true"]');
+    inputs.forEach(function(el){
+      if(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT'){
+        el.disabled = true;
+      } else {
+        el.setAttribute('contenteditable', 'false');
+      }
+      el.style.cursor = 'not-allowed';
+    });
+    /* Boutons d'action interne (ajout/suppression/déplacement) : on les masque */
+    rootEl.querySelectorAll('.ajqe-line__icon, .ajqe-section__addline, .ajqe-addsection, .ajq-row-controls, .ajq-section-controls').forEach(function(b){
+      b.style.display = 'none';
+    });
+    /* Boutons "Marquer option / Masquer / Supprimer section" dans la barre de section */
+    rootEl.querySelectorAll('.ajqe-section__actions .ajqe-btn').forEach(function(b){
+      b.style.display = 'none';
+    });
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     SESSION 23 — DOCUMENT UNIFIÉ A4 (mode 'edit' OU 'print')
+     ─────────────────────────────────────────────────────────────────
+     Un seul composant, deux modes :
+     - mode 'edit'  : champs éditables directement, contrôles au survol,
+                      sticky bar totaux + actions principales, pas de
+                      "@media print" appliqué (couleurs visibles)
+     - mode 'print' : tout figé, aucun contrôle, prêt à imprimer
+     ───────────────────────────────────────────────────────────────── */
+  function renderUnifiedDocument(view, quote, mode){
+    ensureCSSLoaded();
+    var totals = computeQuoteTotals(quote);
+    var company = quote.companyInfo ? Object.assign({}, K.AJ_PRO_COMPANY, quote.companyInfo) : K.AJ_PRO_COMPANY;
+    var typeDef = K.QUOTE_DOC_TYPES.find(function(d){ return d.id === quote.typeDocument; }) || K.QUOTE_DOC_TYPES[0];
     var html = '';
 
-    /* Bandeau verrouillé (Session 16) — affiché si quote émis */
-    if(quote.locked){
-      var emittedDate = quote.emittedAt ? new Date(quote.emittedAt) : null;
-      var dateStr = emittedDate
-        ? String(emittedDate.getDate()).padStart(2,'0') + '/' +
-          String(emittedDate.getMonth()+1).padStart(2,'0') + '/' +
-          emittedDate.getFullYear() + ' à ' +
-          String(emittedDate.getHours()).padStart(2,'0') + ':' +
-          String(emittedDate.getMinutes()).padStart(2,'0')
-        : '';
-      html +=
-        '<div class="ajqe-locked-banner">' +
-          '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
-            '<div style="font-size:28px;">🔒</div>' +
-            '<div style="flex:1;min-width:200px;">' +
-              '<div style="font-weight:700;font-size:15px;color:#0f2030;">Devis officiel émis — non modifiable</div>' +
-              '<div style="font-size:12.5px;color:#3a4a5c;margin-top:3px;line-height:1.5;">' +
-                'N° officiel : <strong>' + esc(quote.officialNumber || '?') + '</strong>' +
-                (dateStr ? ' · Émis le ' + esc(dateStr) : '') +
-                '<br>Pour corriger, créez un avenant ou une révision liée à ce devis.' +
+    /* Toolbar + bandeau verrouillé en mode edit uniquement */
+    if(mode === 'edit'){
+      html += '<div class="ajq-edit-toolbar" data-edit-only>';
+
+      /* Bandeau verrouillé (Session 16) — devis émis */
+      if(quote.locked){
+        var emittedDate = quote.emittedAt ? new Date(quote.emittedAt) : null;
+        var dateStr = emittedDate
+          ? String(emittedDate.getDate()).padStart(2,'0') + '/' +
+            String(emittedDate.getMonth()+1).padStart(2,'0') + '/' +
+            emittedDate.getFullYear()
+          : '';
+        html +=
+          '<div class="ajqe-locked-banner">' +
+            '<div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">' +
+              '<div style="font-size:24px;">🔒</div>' +
+              '<div style="flex:1;min-width:200px;">' +
+                '<div style="font-weight:700;font-size:14px;color:#0f2030;">Devis officiel émis — non modifiable</div>' +
+                '<div style="font-size:12px;color:#3a4a5c;margin-top:2px;line-height:1.5;">' +
+                  'N° ' + esc(quote.officialNumber || '?') +
+                  (dateStr ? ' · Émis le ' + esc(dateStr) : '') +
+                  ' · Pour corriger : créer un avenant ou une révision' +
+                '</div>' +
+              '</div>' +
+              '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                '<button class="ajqe-btn" onclick="AJQuotes.createAmendmentFromCurrent()">📑 Avenant</button>' +
+                '<button class="ajqe-btn" onclick="AJQuotes.createRevisionFromCurrent()">✏️ Révision</button>' +
               '</div>' +
             '</div>' +
-            '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-              '<button class="ajqe-btn" onclick="AJQuotes.createAmendmentFromCurrent()">📑 Créer un avenant</button>' +
-              '<button class="ajqe-btn" onclick="AJQuotes.createRevisionFromCurrent()">✏️ Créer une révision</button>' +
-              '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="AJQuotes.setView(\'preview\')">📄 Aperçu officiel</button>' +
-            '</div>' +
+          '</div>';
+      }
+
+      /* Mini bar : taux TVA + acompte + colonne remise + mode print */
+      html +=
+        '<div class="ajq-edit-quickbar">' +
+          '<label class="ajq-edit-quickbar__field"><span>Type</span><select onchange="AJQuotes.setField(\'typeDocument\', this.value)">' +
+            K.QUOTE_DOC_TYPES.map(function(t){ return '<option value="' + t.id + '"' + (quote.typeDocument === t.id ? ' selected' : '') + '>' + t.label + '</option>'; }).join('') +
+          '</select></label>' +
+          '<label class="ajq-edit-quickbar__field"><span>Validité</span><input type="date" value="' + esc(quote.validityDate || '') + '" onchange="AJQuotes.setField(\'validityDate\', this.value)" /></label>' +
+          '<label class="ajq-edit-quickbar__field"><span>TVA %</span><input type="number" step="0.5" min="0" value="' + esc(quote.vatRate) + '" onchange="AJQuotes.setField(\'vatRate\', this.value, true)" /></label>' +
+          '<label class="ajq-edit-quickbar__field"><span>Acompte %</span><input type="number" step="1" min="0" value="' + esc(quote.depositRate) + '" onchange="AJQuotes.setField(\'depositRate\', this.value, true)" /></label>' +
+          '<label class="ajq-edit-quickbar__check"><input type="checkbox"' + (quote.showDiscountColumn ? ' checked' : '') + ' onchange="AJQuotes.setField(\'showDiscountColumn\', this.checked)" /> Colonne remise</label>' +
+          '<label class="ajq-edit-quickbar__check"><input type="checkbox"' + (quote.optionsIncludedInTotal ? ' checked' : '') + ' onchange="AJQuotes.setField(\'optionsIncludedInTotal\', this.checked)" /> Options dans total</label>' +
+          '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="AJQuotes.setView(\'print\')" title="Mode aperçu / impression : masque les contrôles">📄 Mode impression</button>' +
+        '</div>';
+
+      html += '</div>'; /* /.ajq-edit-toolbar */
+    } else {
+      /* Mode print : juste une mini-barre haut avec retour édition + impression */
+      html +=
+        '<div class="ajq-print-toolbar" data-edit-only>' +
+          '<button class="ajqe-btn" onclick="AJQuotes.setView(\'edit\')">← Mode édition</button>' +
+          '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="window.print()">🖨 Imprimer</button>' +
+          (quote.locked
+            ? '<span style="background:#1d4d33;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;letter-spacing:0.4px;">🔒 ÉMIS</span>'
+            : '<span style="background:rgba(122,136,150,0.18);color:#3a4a5c;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;letter-spacing:0.4px;">BROUILLON</span>') +
+        '</div>';
+    }
+
+    /* DOCUMENT A4 unifié (3 pages logiques : travaux + totaux + CGV) */
+    html +=
+      '<div class="ajq-preview-shell" data-mode="' + mode + '">' +
+        renderPreviewPageTravaux(quote, company, typeDef, totals, mode) +
+        renderPreviewPageTotaux(quote, company, typeDef, totals, mode) +
+        renderPreviewPageCGV(quote, company, mode) +
+      '</div>';
+
+    /* Sticky bar totaux + bouton émission (mode edit uniquement) */
+    if(mode === 'edit' && !quote.locked){
+      html +=
+        '<div class="ajqe-totalsbar" data-edit-only>' +
+          '<div class="ajqe-totalsbar__col">' +
+            '<div class="ajqe-totalsbar__lab">Total HT</div>' +
+            '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.totalHT) + ' €</div>' +
+          '</div>' +
+          '<div class="ajqe-totalsbar__col">' +
+            '<div class="ajqe-totalsbar__lab">TVA ' + fmtQtyShort(totals.vatRate) + '%</div>' +
+            '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.vat) + ' €</div>' +
+          '</div>' +
+          '<div class="ajqe-totalsbar__col">' +
+            '<div class="ajqe-totalsbar__lab">Total TTC</div>' +
+            '<div class="ajqe-totalsbar__val ajqe-totalsbar__val--gold">' + fmtMoney(totals.totalTTC) + ' €</div>' +
+          '</div>' +
+          '<div class="ajqe-totalsbar__col">' +
+            '<div class="ajqe-totalsbar__lab">Acompte ' + fmtQtyShort(totals.depositRate) + '%</div>' +
+            '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.deposit) + ' €</div>' +
+          '</div>' +
+          (totals.optionsTotalHT
+            ? '<div class="ajqe-totalsbar__col">' +
+                '<div class="ajqe-totalsbar__lab">Options HT (hors total)</div>' +
+                '<div class="ajqe-totalsbar__val" style="color:#d8c595;">' + fmtMoney(totals.optionsTotalHT) + ' €</div>' +
+              '</div>'
+            : '') +
+          '<div class="ajqe-totalsbar__actions">' +
+            '<button class="ajqe-btn ajqe-btn--primary" onclick="AJQuotes.emitCurrent()" title="Verrouille le devis avec un n° officiel chronologique strict (irréversible)">📋 Émettre devis officiel</button>' +
           '</div>' +
         '</div>';
     }
 
-    /* Bandeau métadonnées doc */
-    html += renderMetaBlock(quote);
-
-    /* Bloc client / chantier */
-    html += renderClientBlock(quote);
-
-    /* Sections */
-    quote.sections.forEach(function(sec){
-      html += renderSectionEditor(quote, sec);
-    });
-
-    /* Bouton ajout section (uniquement si pas verrouillé) */
-    if(!quote.locked){
-      html += '<button class="ajqe-addsection" onclick="AJQuotes.addSection()">+ Ajouter une section</button>';
-    }
-
-    /* Sticky bar totaux */
-    html +=
-      '<div class="ajqe-totalsbar">' +
-        '<div class="ajqe-totalsbar__col">' +
-          '<div class="ajqe-totalsbar__lab">Total HT</div>' +
-          '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.totalHT) + ' €</div>' +
-        '</div>' +
-        '<div class="ajqe-totalsbar__col">' +
-          '<div class="ajqe-totalsbar__lab">TVA ' + fmtQtyShort(totals.vatRate) + '%</div>' +
-          '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.vat) + ' €</div>' +
-        '</div>' +
-        '<div class="ajqe-totalsbar__col">' +
-          '<div class="ajqe-totalsbar__lab">Total TTC</div>' +
-          '<div class="ajqe-totalsbar__val ajqe-totalsbar__val--gold">' + fmtMoney(totals.totalTTC) + ' €</div>' +
-        '</div>' +
-        '<div class="ajqe-totalsbar__col">' +
-          '<div class="ajqe-totalsbar__lab">Acompte ' + fmtQtyShort(totals.depositRate) + '%</div>' +
-          '<div class="ajqe-totalsbar__val">' + fmtMoney(totals.deposit) + ' €</div>' +
-        '</div>' +
-        (totals.optionsTotalHT
-          ? '<div class="ajqe-totalsbar__col">' +
-              '<div class="ajqe-totalsbar__lab">Options HT (hors total)</div>' +
-              '<div class="ajqe-totalsbar__val" style="color:#d8c595;">' + fmtMoney(totals.optionsTotalHT) + ' €</div>' +
-            '</div>'
-          : '') +
-        '<div class="ajqe-totalsbar__actions">' +
-          '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="AJQuotes.setView(\'preview\')">📄 Aperçu AJ Pro</button>' +
-          /* Bouton Émettre uniquement si pas déjà émis */
-          (!quote.locked
-            ? '<button class="ajqe-btn ajqe-btn--primary" onclick="AJQuotes.emitCurrent()" title="Verrouille le devis avec un n° officiel chronologique strict (irréversible)">📋 Émettre devis officiel</button>'
-            : '<span style="color:#c9a96e;font-weight:600;font-size:12px;align-self:center;">🔒 Émis</span>') +
-        '</div>' +
-      '</div>';
-
-    /* Si verrouillé : on désactive tous les inputs/textareas/selects et on cache les boutons d'action ligne/section */
     view.innerHTML = html;
+
+    /* Listeners d'édition globaux (event delegation) — uniquement en mode edit */
+    if(mode === 'edit' && !quote.locked){
+      _attachEditListeners(view);
+    }
+    /* Lecture seule visuelle si verrouillé */
     if(quote.locked){
       _applyLockedReadonly(view);
     }
+  }
+
+  /* Ajout / suppression de section depuis la vue unifiée */
+  function _renderAddSectionRow(quote){
+    return '<tr class="ajq-row--add-section" data-edit-only>' +
+      '<td colspan="99" style="text-align:center;padding:8mm 4mm;">' +
+        '<button class="ajqe-btn" onclick="AJQuotes.addSection()" style="font-size:11px;">+ Ajouter une section</button>' +
+      '</td>' +
+    '</tr>';
+  }
+
+  /* ─────────────────────────────────────────────────────────────────
+     LISTENERS D'ÉDITION (event delegation sur le container racine)
+     ───────────────────────────────────────────────────────────────── */
+  function _attachEditListeners(container){
+    if(container.__ajq_edit_listeners) return; /* déjà attaché */
+    container.__ajq_edit_listeners = true;
+
+    /* Capture sur blur : sauvegarde la valeur modifiée */
+    container.addEventListener('blur', function(e){
+      var t = e.target;
+      if(!t || !t.dataset || !t.dataset.edPath) return;
+      var path = t.dataset.edPath;
+      var isNumber = t.dataset.edNumber === '1';
+      var value;
+      if(t.tagName === 'INPUT' || t.tagName === 'SELECT'){
+        value = t.type === 'checkbox' ? t.checked : t.value;
+      } else {
+        value = t.textContent;
+      }
+      _applyEdit(path, value, isNumber);
+    }, true);
+
+    /* Entrée → sortie du champ pour les inputs simples (pas multi-ligne) */
+    container.addEventListener('keydown', function(e){
+      var t = e.target;
+      if(!t || !t.dataset || !t.dataset.edPath) return;
+      if(e.key === 'Enter' && t.dataset.edMulti !== '1'){
+        e.preventDefault();
+        if(t.blur) t.blur();
+      }
+      if(e.key === 'Escape') t.blur();
+    });
+  }
+
+  /* Applique la modification au quote courant et persiste.
+     Path syntax :
+       'quoteNumber'                            → quote.quoteNumber
+       'title' / 'vatRate' / 'depositRate' / 'showDiscountColumn'
+       'clientInfo.attentionA' / 'chantierInfo.adresse'
+       'section.{secId}.title' / 'section.{secId}.isOption'
+       'line.{lineId}.designation' / 'line.{lineId}.quantity'
+       'line.{lineId}.unit' / 'line.{lineId}.unitPriceHT' / 'line.{lineId}.discountPercent'
+       'line.{lineId}.description'
+  */
+  function _applyEdit(path, value, isNumber){
+    var quote = getCurrentQuote(); if(!quote || quote.locked) return;
+    if(isNumber) value = parseNum(value);
+
+    if(path.indexOf('section.') === 0){
+      var pp = path.split('.'); var secId = pp[1]; var field = pp.slice(2).join('.');
+      var sec = (quote.sections||[]).find(function(s){return s.id===secId;});
+      if(!sec) return;
+      sec[field] = value;
+    } else if(path.indexOf('line.') === 0){
+      var pp2 = path.split('.'); var lineId = pp2[1]; var field2 = pp2.slice(2).join('.');
+      var found = null;
+      (quote.sections||[]).forEach(function(sec){
+        (sec.lines||[]).forEach(function(ln){ if(ln.id === lineId) found = ln; });
+      });
+      if(!found) return;
+      /* Si l'utilisateur tape un PUHT : on efface remise pour éviter recalcul incohérent */
+      if(field2 === 'unitPriceHT'){
+        found.unitPriceBeforeDiscount = null;
+        found.discountPercent = 0;
+      }
+      found[field2] = value;
+    } else if(path.indexOf('clientInfo.') === 0){
+      quote.clientInfo = quote.clientInfo || {};
+      quote.clientInfo[path.slice('clientInfo.'.length)] = value;
+    } else if(path.indexOf('chantierInfo.') === 0){
+      quote.chantierInfo = quote.chantierInfo || {};
+      quote.chantierInfo[path.slice('chantierInfo.'.length)] = value;
+    } else {
+      quote[path] = value;
+    }
+    persistCurrent(quote);
+    /* Re-render léger : on relance le rendu actuel (mode courant) sans
+       perdre la sélection si possible. Le coût de rendu est faible. */
+    renderEditorScreen();
   }
 
   /* Désactive en lecture-seule tous les contrôles dans la vue édition.
@@ -1171,17 +1323,13 @@
   /* ─────────────────────────────────────────────────────────────────
      ACTIONS — handlers exposés via window.AJQuotes
      ───────────────────────────────────────────────────────────────── */
+  /* Session 23 — accepte 'edit' / 'print' (et 'preview' alias 'print' pour
+     rétrocompat). Le rendu est unifié, seul le mode change. */
   function setView(view){
+    if(view === 'preview') view = 'print';
     _state.activeView = view;
-    if(view === 'edit') renderEditView();
-    else renderPreviewView();
-    /* Met à jour les onglets actifs sans tout re-rendre */
-    var tabs = document.querySelectorAll('.ajqe-tab');
-    tabs.forEach(function(t){ t.classList.remove('active'); });
-    if(tabs.length){
-      var idx = view === 'edit' ? 0 : 1;
-      if(tabs[idx]) tabs[idx].classList.add('active');
-    }
+    /* Re-render complet — l'overhead est faible et garantit la cohérence */
+    renderEditorScreen();
   }
 
   function setField(field, value, isNumber){
@@ -1634,49 +1782,51 @@
     if(!quote) return;
     var view = document.getElementById('ajq-view-body');
     if(!view) return;
-
-    ensureCSSLoaded();
-
-    var totals = computeQuoteTotals(quote);
-    var company = quote.companyInfo ? Object.assign({}, K.AJ_PRO_COMPANY, quote.companyInfo) : K.AJ_PRO_COMPANY;
-    var typeDef = K.QUOTE_DOC_TYPES.find(function(d){ return d.id === quote.typeDocument; }) || K.QUOTE_DOC_TYPES[0];
-
-    /* Estimation pages : 1 = devis (peut couler sur plusieurs A4), 1 = totaux+signature, 1 = CGV */
-    /* Pour le rendu visuel, on construit 3 "pages" distinctes mais le tableau central
-       peut continuer naturellement si très long (V1 simple) */
-
-    var html = '';
-
-    /* Toolbar (non imprimée) */
-    var statusBadge = quote.locked
-      ? '<span style="background:#1d4d33;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;margin-left:8px;letter-spacing:0.4px;">🔒 ÉMIS</span>'
-      : '<span style="background:rgba(122,136,150,0.18);color:#3a4a5c;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;margin-left:8px;letter-spacing:0.4px;">BROUILLON</span>';
-    html +=
-      '<div class="ajq-preview-shell">' +
-        '<div class="ajq-preview-toolbar">' +
-          '<div><strong>' + esc(typeDef.label) + ' n° ' + esc(quote.quoteNumber) + '</strong>' + statusBadge + ' · ' + esc(isoToFR(quote.quoteDate)) + ' · Total TTC ' + fmtMoney(totals.totalTTC) + ' €</div>' +
-          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-            '<button class="ajqe-btn" onclick="AJQuotes.setView(\'edit\')">← Retour à l\'édition</button>' +
-            (!quote.locked
-              ? '<button class="ajqe-btn ajqe-btn--primary" onclick="AJQuotes.emitCurrent()" title="Verrouille définitivement le devis avec un n° officiel chronologique">📋 Émettre devis officiel</button>'
-              : '') +
-            '<button class="ajqe-btn ajqe-btn--gold-outline" onclick="window.print()">🖨 Imprimer</button>' +
-          '</div>' +
-        '</div>' +
-        renderPreviewPageTravaux(quote, company, typeDef, totals) +
-        renderPreviewPageTotaux(quote, company, typeDef, totals) +
-        renderPreviewPageCGV(quote, company) +
-      '</div>';
-
-    view.innerHTML = html;
+    /* Session 23 — la vue aperçu utilise maintenant le même composant unifié
+       en mode 'print' : aucune duplication, mêmes helpers, rendu identique
+       au mode édition mais sans les contrôles. */
+    renderUnifiedDocument(view, quote, 'print');
   }
 
-  function renderHeaderBlock(quote, company, pageNum, totalPages){
+  /* ─────────────────────────────────────────────────────────────────
+     SESSION 23 — Helpers d'édition inline (champs invisibles en print)
+     ───────────────────────────────────────────────────────────────── */
+  /* Champ texte : statique en print, contenteditable en edit */
+  function _ed(value, dataPath, mode, opts){
+    opts = opts || {};
+    var safe = esc(value || '');
+    if(mode !== 'edit'){
+      return safe || (opts.placeholder ? '<span style="color:#bbb;font-style:italic">' + esc(opts.placeholder) + '</span>' : '');
+    }
+    var classes = 'ajq-ed' + (opts.multiline ? ' ajq-ed--multi' : '') + (opts.cls ? ' ' + opts.cls : '');
+    var attrs = ' contenteditable="true" data-ed-path="' + esc(dataPath) + '"';
+    if(opts.multiline) attrs += ' data-ed-multi="1"';
+    if(opts.placeholder) attrs += ' data-ed-placeholder="' + esc(opts.placeholder) + '"';
+    return '<span class="' + classes + '"' + attrs + '>' + safe + '</span>';
+  }
+  /* Champ nombre : input invisible en edit, texte plat en print */
+  function _edNum(value, dataPath, mode, opts){
+    opts = opts || {};
+    var fmt = opts.format || function(v){ return v == null ? '' : esc(String(v)); };
+    if(mode !== 'edit'){
+      return fmt(value);
+    }
+    var classes = 'ajq-ed-num' + (opts.cls ? ' ' + opts.cls : '');
+    return '<input type="number" class="' + classes + '" ' +
+      'data-ed-path="' + esc(dataPath) + '" data-ed-number="1" ' +
+      'value="' + esc(value == null ? '' : value) + '" ' +
+      'step="' + (opts.step || '0.01') + '" ' +
+      (opts.min !== undefined ? 'min="' + opts.min + '" ' : '') +
+      (opts.placeholder ? 'placeholder="' + esc(opts.placeholder) + '" ' : '') +
+    '/>';
+  }
+
+  function renderHeaderBlock(quote, company, pageNum, totalPages, mode){
     return '<div class="ajq-header">' +
       '<div class="ajq-header__line1">' +
         esc(company.raisonSociale) + ' ' + esc(company.capitalPretty) + ' - Tel : ' + esc(company.tel) + ' - Email : ' + esc(company.email) +
       '</div>' +
-      '<div class="ajq-header__num">' + esc(quote.quoteNumber || '') + '</div>' +
+      '<div class="ajq-header__num">' + _ed(quote.quoteNumber, 'quoteNumber', mode, { placeholder:'D-2026XXXX', cls:'ajq-ed--num' }) + '</div>' +
       '<div class="ajq-header__line2">' +
         'APE : ' + esc(company.ape) + ' - SIRET : ' + esc(company.siret) + ' - TVA intracommunautaire : ' + esc(company.tvaIntracom) +
       '</div>' +
@@ -1693,9 +1843,19 @@
     '</div>';
   }
 
-  function renderDocTitle(quote, typeDef){
+  function renderDocTitle(quote, typeDef, mode){
+    /* En mode edit : on rend "Devis n° " statique + le numéro éditable +
+       " du " statique + la date dans un <input type="date"> stylé.
+       En mode print : tout statique. */
     var dateFR = isoToFR(quote.quoteDate);
-    var line1 = typeDef.titlePrefix + ' ' + esc(quote.quoteNumber || '') + (dateFR ? ' du ' + esc(dateFR) : '');
+    var line1;
+    if(mode === 'edit'){
+      line1 = typeDef.titlePrefix + ' ' +
+        _ed(quote.quoteNumber, 'quoteNumber', mode, { cls:'ajq-ed--num', placeholder:'D-2026XXXX' }) +
+        ' du <input type="date" class="ajq-ed-date" data-ed-path="quoteDate" value="' + esc(quote.quoteDate || '') + '" />';
+    } else {
+      line1 = typeDef.titlePrefix + ' ' + esc(quote.quoteNumber || '') + (dateFR ? ' du ' + esc(dateFR) : '');
+    }
     var revLine = '';
     if(quote.typeDocument === 'revision' && quote.revisionNumber){
       revLine = 'Révision n° ' + esc(quote.revisionNumber) + (quote.revisionDate ? ' du ' + esc(isoToFR(quote.revisionDate)) : '');
@@ -1712,34 +1872,31 @@
     '</div>';
   }
 
-  function renderClientChantierBlocks(quote, company){
+  function renderClientChantierBlocks(quote, company, mode){
     var ci = quote.clientInfo || {};
     var ch = quote.chantierInfo || {};
 
-    /* ─── BLOC CHANTIER (gauche) ───
-       Format PDF AJ Pro :
-         "Chantier : NOM-COURT (optionnel)"
-         "(plus de lignes vides en haut, puis...)"
-         "France"
-         "Travaux : RENOVATION D'UNE SALLE DE DOUCHE" (optionnel) */
+    /* ─── BLOC CHANTIER (gauche) ─── */
     var chantierShort = ch.nom || ch.shortName || '';
     var chantierBlock =
       '<div class="ajq-block">' +
-        '<div class="ajq-block__title">Chantier :' + (chantierShort ? ' ' + esc(chantierShort) : '') + '</div>' +
-        (ch.adresse ? '<div class="ajq-block__line">' + esc(ch.adresse) + '</div>' : '') +
-        ((ch.codePostal || ch.ville) ? '<div class="ajq-block__line">' + esc(((ch.codePostal || '') + ' ' + (ch.ville || '')).trim()) + '</div>' : '') +
+        '<div class="ajq-block__title">Chantier : ' +
+          _ed(chantierShort, 'chantierInfo.nom', mode, { placeholder:'(optionnel) ex: BOULAY' }) +
+        '</div>' +
+        '<div class="ajq-block__line">' +
+          _ed(ch.adresse, 'chantierInfo.adresse', mode, { placeholder:'Adresse chantier' }) +
+        '</div>' +
+        '<div class="ajq-block__line">' +
+          _ed(ch.codePostal, 'chantierInfo.codePostal', mode, { placeholder:'CP', cls:'ajq-ed--cp' }) + ' ' +
+          _ed(ch.ville, 'chantierInfo.ville', mode, { placeholder:'Ville', cls:'ajq-ed--ville' }) +
+        '</div>' +
         '<div class="ajq-block__line">' + esc(company.pays || 'France') + '</div>' +
-        (quote.title ? '<div class="ajq-block__travaux">Travaux : ' + esc(quote.title) + '</div>' : '') +
+        '<div class="ajq-block__travaux">Travaux : ' +
+          _ed(quote.title, 'title', mode, { placeholder:'Titre des travaux (ex: Rénovation salle de douche)', multiline:true }) +
+        '</div>' +
       '</div>';
 
-    /* ─── BLOC AJ PRO (centre) ───
-       Format PDF :
-         "AJ Pro Rénovation"
-         "95/97 rue Gallieni"
-         "92500 Rueil-Malmaison France"
-         "Email : contact@ajprorenovation.com"
-         "Tél : 01 78 53 30 08"
-         "RCS NANTERRE 487 953 465" */
+    /* ─── BLOC AJ PRO (centre) ─── */
     var ajproName = (company.raisonSociale || 'AJ Pro Rénovation').replace(/^Sarl\s+/i, '');
     var ajproBlock =
       '<div class="ajq-block">' +
@@ -1751,56 +1908,69 @@
         '<div class="ajq-block__rcs">' + esc(company.rcs) + '</div>' +
       '</div>';
 
-    /* ─── BLOC CLIENT (droite) ───
-       Format PDF :
-         "Mme/M. NOM (en gras)"
-         "À l'attention de Mme NOM"
-         "(adresse)"
-         "(détails accès : étage, ascenseur, code, interphone)"
-         "(CP VILLE PAYS)"
-         "(téléphone client)"
-       Le téléphone est sur sa propre ligne en bas. */
+    /* ─── BLOC CLIENT (droite) ─── */
     var civNomComplet = '';
     if(ci.attentionA) civNomComplet = ci.attentionA;
     else if(ci.civilite || ci.prenom || ci.nom){
       civNomComplet = ((ci.civilite || '') + ' ' + (ci.prenom || '') + ' ' + (ci.nom || '')).replace(/\s+/g, ' ').trim();
     }
 
-    var accessLines = [];
-    if(ch.etage){
-      var ligneAcces = ch.etage;
-      if(ch.etage.indexOf('étage') === -1) ligneAcces += ' étage';
-      if(ch.ascenseur) ligneAcces += ' - ' + ch.ascenseur;
-      if(ch.codeAccess) ligneAcces += ' - Code ' + ch.codeAccess;
-      if(ch.interphone) ligneAcces += ' - Interphone ' + ch.interphone;
-      accessLines.push(ligneAcces);
-    } else if(ch.ascenseur || ch.codeAccess || ch.interphone){
-      var ligne = [];
-      if(ch.ascenseur) ligne.push(ch.ascenseur);
-      if(ch.codeAccess) ligne.push('Code ' + ch.codeAccess);
-      if(ch.interphone) ligne.push('Interphone ' + ch.interphone);
-      accessLines.push(ligne.join(' - '));
+    /* Construction unique d'une ligne accès (étage / ascenseur / code / interphone)
+       — éditable champ par champ en mode edit */
+    var accessLine = '';
+    if(mode === 'edit'){
+      var bits = [];
+      bits.push(_ed(ch.etage, 'chantierInfo.etage', mode, { placeholder:'Étage', cls:'ajq-ed--inline' }));
+      bits.push(_ed(ch.ascenseur, 'chantierInfo.ascenseur', mode, { placeholder:'Ascenseur', cls:'ajq-ed--inline' }));
+      bits.push(_ed(ch.codeAccess, 'chantierInfo.codeAccess', mode, { placeholder:'Code', cls:'ajq-ed--inline' }));
+      bits.push(_ed(ch.interphone, 'chantierInfo.interphone', mode, { placeholder:'Interphone', cls:'ajq-ed--inline' }));
+      accessLine = bits.join(' - ');
+    } else {
+      var bitsP = [];
+      if(ch.etage){
+        var lAcces = ch.etage;
+        if(ch.etage.indexOf('étage') === -1) lAcces += ' étage';
+        bitsP.push(lAcces);
+      }
+      if(ch.ascenseur) bitsP.push(ch.ascenseur);
+      if(ch.codeAccess) bitsP.push('Code ' + ch.codeAccess);
+      if(ch.interphone) bitsP.push('Interphone ' + ch.interphone);
+      accessLine = bitsP.length ? esc(bitsP.join(' - ')) : '';
     }
-
-    var clientCp = ci.codePostal || '';
-    var clientVille = ci.ville || '';
-    var clientLineCpVille = (clientCp || clientVille) ? ((clientCp + ' ' + clientVille).trim() + ' ' + (company.pays === 'France' ? 'France' : '')).trim() : '';
 
     var clientBlock =
       '<div class="ajq-block">' +
-        (civNomComplet ? '<div class="ajq-block__line ajq-block__line--bold">' + esc(civNomComplet) + '</div>' : '') +
-        (ci.attentionA ? '<div class="ajq-block__line">A l\'attention de ' + esc(ci.attentionA) + '</div>' : '') +
-        (ci.adresse ? '<div class="ajq-block__line">' + esc(ci.adresse) + '</div>' : '') +
-        accessLines.map(function(l){ return '<div class="ajq-block__line">' + esc(l) + '</div>'; }).join('') +
-        (clientLineCpVille ? '<div class="ajq-block__line">' + esc(clientLineCpVille) + '</div>' : '') +
-        (ci.tel ? '<div class="ajq-block__line" style="margin-top:1mm;">' + esc(ci.tel) + '</div>' : '') +
-        (ci.email ? '<div class="ajq-block__line">' + esc(ci.email) + '</div>' : '') +
+        '<div class="ajq-block__line ajq-block__line--bold">' +
+          _ed(civNomComplet, 'clientInfo.attentionA', mode, { placeholder:'Mme/M. NOM Prénom' }) +
+        '</div>' +
+        (mode === 'edit'
+          ? '<div class="ajq-block__line" style="font-size:8pt;">A l\'attention de ' +
+              _ed(ci.attentionA, 'clientInfo.attentionA', mode, { placeholder:'Nom complet client' }) +
+            '</div>'
+          : (ci.attentionA ? '<div class="ajq-block__line">A l\'attention de ' + esc(ci.attentionA) + '</div>' : '')) +
+        '<div class="ajq-block__line">' +
+          _ed(ci.adresse, 'clientInfo.adresse', mode, { placeholder:'Adresse client' }) +
+        '</div>' +
+        '<div class="ajq-block__line">' + accessLine + '</div>' +
+        '<div class="ajq-block__line">' +
+          _ed(ci.codePostal, 'clientInfo.codePostal', mode, { placeholder:'CP', cls:'ajq-ed--cp' }) + ' ' +
+          _ed(ci.ville, 'clientInfo.ville', mode, { placeholder:'Ville', cls:'ajq-ed--ville' }) + ' ' +
+          esc(company.pays === 'France' ? 'France' : '') +
+        '</div>' +
+        '<div class="ajq-block__line" style="margin-top:1mm;">' +
+          _ed(ci.tel, 'clientInfo.tel', mode, { placeholder:'Téléphone' }) +
+        '</div>' +
+        (mode === 'edit' || ci.email
+          ? '<div class="ajq-block__line">' +
+              _ed(ci.email, 'clientInfo.email', mode, { placeholder:'Email (optionnel)' }) +
+            '</div>'
+          : '') +
       '</div>';
 
     return '<div class="ajq-blocks">' + chantierBlock + ajproBlock + clientBlock + '</div>';
   }
 
-  function renderPreviewPageTravaux(quote, company, typeDef, totals){
+  function renderPreviewPageTravaux(quote, company, typeDef, totals, mode){
     var totalPages = 3;
     var withDiscount = !!quote.showDiscountColumn;
 
@@ -1812,6 +1982,7 @@
       (withDiscount ? '<th class="pu">PU</th><th class="disc">R(%)</th>' : '') +
       '<th class="puht">PUHT</th>' +
       '<th class="total">Total H.T</th>' +
+      (mode === 'edit' ? '<th class="ajq-th-ctrl" data-edit-only></th>' : '') +
     '</tr></thead>';
 
     var colsHtml = '<colgroup>' +
@@ -1822,41 +1993,53 @@
       (withDiscount ? '<col class="pu"/><col class="disc"/>' : '') +
       '<col class="puht"/>' +
       '<col class="total"/>' +
+      (mode === 'edit' ? '<col class="ctrl"/>' : '') +
     '</colgroup>';
 
     var body = '';
-    /* Nombre total de colonnes : sans remise = 6 (N° + Des + Qté + U + PUHT + Total)
-                                  avec remise  = 8 (... + PU + R%)                  */
+    /* totalCols = colonnes du document final (mode print).
+       En mode edit on ajoute une colonne contrôles (gérée à part dans le colspan). */
     var totalCols = withDiscount ? 8 : 6;
-    var sectionTitleColspan = totalCols - 1;  /* tout sauf la cellule N° */
-    var subtotalLabelColspan = totalCols - 1; /* tout sauf la cellule du montant */
+    var sectionTitleColspan = totalCols - 1;
+    var subtotalLabelColspan = totalCols - 1;
 
     quote.sections.forEach(function(sec){
-      if(sec.visible === false) return;
-      /* Titre de section — style PDF AJ Pro :
-         "1 Commentaires"
-         "2 Peinture - Chambre parentale - hors intérieur placard"
-         "1.6 Toile à enduire - plafond + murs - si besoin Option" (option = inline)
-         La mention "Option" suit le titre comme dans les PDFs. */
-      var titlePiece = (sec.title || '');
+      if(sec.visible === false && mode !== 'edit') return;
+
+      /* Titre de section — éditable directement, mention Option inline */
+      var titleHtml = _ed(sec.title, 'section.' + sec.id + '.title', mode, { placeholder:'Titre de section' });
       var optionInline = sec.isOption ? ' <span class="ajq-option-pill">Option</span>' : '';
       body +=
-        '<tr class="ajq-row--section">' +
+        '<tr class="ajq-row--section" data-section-id="' + esc(sec.id) + '">' +
           '<td class="num">' + esc(sec.number) + '</td>' +
-          '<td class="des" colspan="' + sectionTitleColspan + '">' + esc(titlePiece) + optionInline + '</td>' +
+          '<td class="des" colspan="' + sectionTitleColspan + '">' + titleHtml + optionInline + '</td>' +
+          (mode === 'edit'
+            ? '<td class="ajq-row-ctrl" data-edit-only>' +
+                _renderSectionControls(sec) +
+              '</td>'
+            : '') +
         '</tr>';
 
       /* Lignes */
       (sec.lines || []).forEach(function(ln){
-        if(ln.visible === false) return;
-        body += renderPreviewLineRow(ln, sec, withDiscount);
+        if(ln.visible === false && mode !== 'edit') return;
+        body += renderPreviewLineRow(ln, sec, withDiscount, mode);
       });
 
-      /* Sous-total section — style PDF :
-         "Sous-total Peinture - Chambre parentale - hors intérieur placard 1 304,00"
-         "Sous-total Toile à enduire - plafond + murs - si besoin Option 664,80"
-         La mention Option suit le titre, le montant à droite.
-         Si total = 0 et seulement des commentaires, "Sous-total Commentaires" sans montant. */
+      /* Bouton "+" en fin de section pour ajouter une ligne (mode edit) */
+      if(mode === 'edit'){
+        body +=
+          '<tr class="ajq-row--add-line" data-edit-only>' +
+            '<td class="des" colspan="' + (totalCols) + '" style="text-align:left;padding:1mm 2mm;">' +
+              '<button class="ajq-add-line-btn" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\')">+ ligne</button> ' +
+              '<button class="ajq-add-line-btn" onclick="AJQuotes.addLine(\'' + esc(sec.id) + '\', \'comment\')">+ commentaire</button> ' +
+              '<button class="ajq-add-line-btn ajq-add-line-btn--lib" onclick="AJQuotes.openLibraryPicker(\'' + esc(sec.id) + '\')">📚 + depuis bibliothèque</button>' +
+            '</td>' +
+            '<td data-edit-only></td>' +
+          '</tr>';
+      }
+
+      /* Sous-total section */
       var subtotal = computeSectionSubtotal(sec, { optionsIncludedInTotal: !!quote.optionsIncludedInTotal });
       var subTotalDisplay = subtotal === 0 ? '' : fmtMoney(subtotal);
       var subtotalLabel = 'Sous-total ' + (sec.title || '') + (sec.isOption ? ' Option' : '');
@@ -1864,17 +2047,32 @@
         '<tr class="ajq-row--subtotal">' +
           '<td class="des" colspan="' + subtotalLabelColspan + '">' + esc(subtotalLabel) + '</td>' +
           '<td class="total">' + esc(subTotalDisplay) + '</td>' +
+          (mode === 'edit' ? '<td data-edit-only></td>' : '') +
         '</tr>';
     });
 
+    /* Bouton "+ section" en fin de tableau (mode edit) */
+    if(mode === 'edit' && !quote.locked){
+      body +=
+        '<tr class="ajq-row--add-section" data-edit-only>' +
+          '<td colspan="' + (totalCols + 1) + '" style="text-align:center;padding:4mm 2mm;">' +
+            '<button class="ajqe-btn" onclick="AJQuotes.addSection()">+ Ajouter une section</button>' +
+          '</td>' +
+        '</tr>';
+    }
+
     var draftClass = quote.locked ? '' : ' ajq-page--draft';
     return '<div class="ajq-page' + draftClass + '">' +
-      renderHeaderBlock(quote, company, 1, totalPages) +
+      renderHeaderBlock(quote, company, 1, totalPages, mode) +
       renderActivitiesBlock(company) +
-      renderDocTitle(quote, typeDef) +
-      renderClientChantierBlocks(quote, company) +
-      (quote.title ? '<div class="ajq-worktitle">' + esc(quote.title) + '</div>' : '') +
-      '<table class="ajq-table' + (withDiscount ? ' ajq-table--with-discount' : ' ajq-table--no-discount') + '">' +
+      renderDocTitle(quote, typeDef, mode) +
+      renderClientChantierBlocks(quote, company, mode) +
+      (mode === 'edit' || quote.title
+        ? '<div class="ajq-worktitle">' +
+            _ed(quote.title, 'title', mode, { placeholder:'Titre des travaux (ex: Rénovation salle de douche dans un logement)', multiline:true }) +
+          '</div>'
+        : '') +
+      '<table class="ajq-table' + (withDiscount ? ' ajq-table--with-discount' : ' ajq-table--no-discount') + (mode === 'edit' ? ' ajq-table--editable' : '') + '">' +
         colsHtml +
         headersHtml +
         '<tbody>' + body + '</tbody>' +
@@ -1882,65 +2080,125 @@
     '</div>';
   }
 
-  function renderPreviewLineRow(ln, sec, withDiscount){
+  /* Mini menu de contrôles pour une section (option / masquer / supprimer / monter / descendre) */
+  function _renderSectionControls(sec){
+    return '<div class="ajq-row-controls">' +
+      '<button class="ajq-rc-btn" title="Marquer ' + (sec.isOption ? 'comme essentiel' : 'comme option') + '" onclick="AJQuotes.toggleSectionOption(\'' + esc(sec.id) + '\')">' + (sec.isOption ? '★' : '☆') + '</button>' +
+      '<button class="ajq-rc-btn" title="Monter cette section" onclick="AJQuotes.moveSection(\'' + esc(sec.id) + '\', -1)">▲</button>' +
+      '<button class="ajq-rc-btn" title="Descendre cette section" onclick="AJQuotes.moveSection(\'' + esc(sec.id) + '\', 1)">▼</button>' +
+      '<button class="ajq-rc-btn ajq-rc-btn--danger" title="Supprimer cette section" onclick="AJQuotes.deleteSection(\'' + esc(sec.id) + '\')">🗑</button>' +
+    '</div>';
+  }
+
+  /* Mini menu de contrôles pour une ligne */
+  function _renderLineControls(sec, ln){
+    return '<div class="ajq-row-controls">' +
+      '<button class="ajq-rc-btn" title="Monter" onclick="AJQuotes.moveLine(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\',-1)">▲</button>' +
+      '<button class="ajq-rc-btn" title="Descendre" onclick="AJQuotes.moveLine(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\',1)">▼</button>' +
+      '<button class="ajq-rc-btn" title="Dupliquer" onclick="AJQuotes.duplicateLine(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\')">⎘</button>' +
+      '<button class="ajq-rc-btn" title="' + (ln.visible === false ? 'Afficher' : 'Masquer') + '" onclick="AJQuotes.toggleLineVisible(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\')">' + (ln.visible === false ? '👁' : '🙈') + '</button>' +
+      '<button class="ajq-rc-btn ajq-rc-btn--danger" title="Supprimer" onclick="AJQuotes.deleteLine(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\')">🗑</button>' +
+    '</div>';
+  }
+
+  function renderPreviewLineRow(ln, sec, withDiscount, mode){
     var rowClass = 'ajq-row--line';
     if(ln.type === 'comment') rowClass += ' ajq-row--comment';
     if(ln.status === 'option') rowClass += ' ajq-row--option';
     if(ln.status === 'excluded') rowClass += ' ajq-row--excluded';
+    if(ln.visible === false) rowClass += ' ajq-row--hidden';
     if(ln.highlighted && ln.highlightColor === 'red') rowClass += ' ajq-row--highlight-red';
 
-    /* Style PDF AJ Pro : désignation principale + description multilignes,
-       même taille, pas d'italique, juste retours à la ligne. */
-    var designationHtml = '<div class="ajq-line__designation">' + esc(ln.designation || '') + '</div>';
-    if(ln.description) designationHtml += '<div class="ajq-line__description">' + esc(ln.description) + '</div>';
-    /* Indication "fourni client" / "à confirmer" : seulement si pas déjà dans la désignation */
-    var dlow = ((ln.designation || '') + ' ' + (ln.description || '')).toLowerCase();
-    if(ln.suppliedBy === 'client' && dlow.indexOf('fourni') === -1 && dlow.indexOf('client') === -1){
-      designationHtml += '<div class="ajq-line__description">--&gt; fourni / client</div>';
-    } else if(ln.suppliedBy === 'to_confirm' && dlow.indexOf('confirmer') === -1){
-      designationHtml += '<div class="ajq-line__description">--&gt; à confirmer</div>';
+    /* Désignation + description (multi-lignes éditables) */
+    var designationHtml = '<div class="ajq-line__designation">' +
+      _ed(ln.designation, 'line.' + ln.id + '.designation', mode, { placeholder:'Désignation', multiline:true }) +
+    '</div>';
+    if(mode === 'edit' || ln.description){
+      designationHtml += '<div class="ajq-line__description">' +
+        _ed(ln.description, 'line.' + ln.id + '.description', mode, { placeholder:'Description longue (optionnelle)', multiline:true }) +
+      '</div>';
     }
-
-    var qty = (ln.type === 'comment' || ln.quantity == null) ? '' : fmtQty(ln.quantity);
-    var unit = (ln.type === 'comment') ? '' : (ln.unit || '');
-    var puCells = '';
-
-    if(withDiscount){
-      var pub = ln.unitPriceBeforeDiscount != null ? ln.unitPriceBeforeDiscount : ln.unitPriceHT;
-      puCells += '<td class="pu">' + (ln.type === 'comment' ? '' : fmtMoneyOrEmpty(pub)) + '</td>';
-      puCells += '<td class="disc">' + (ln.type === 'comment' ? '' : (ln.discountPercent ? fmtQty(ln.discountPercent) + '%' : '')) + '</td>';
-    }
-
-    var puhtDisplay = ln.type === 'comment' ? '' : fmtMoneyOrEmpty(ln.unitPriceHT);
-    var totalDisplay;
-    if(ln.type === 'comment'){
-      totalDisplay = '';
-    } else if(ln.unitPriceHT === 0 && ln.totalHT === 0){
-      /* Le PDF source affiche souvent "0,00" — on met 0,00 si la ligne est explicitement à 0€ */
-      totalDisplay = ln.allowZeroPrice ? '0,00' : '';
+    /* Indication "fourni client" / "à confirmer" : auto-affiché en print uniquement */
+    if(mode === 'print'){
+      var dlow = ((ln.designation || '') + ' ' + (ln.description || '')).toLowerCase();
+      if(ln.suppliedBy === 'client' && dlow.indexOf('fourni') === -1 && dlow.indexOf('client') === -1){
+        designationHtml += '<div class="ajq-line__description">--&gt; fourni / client</div>';
+      } else if(ln.suppliedBy === 'to_confirm' && dlow.indexOf('confirmer') === -1){
+        designationHtml += '<div class="ajq-line__description">--&gt; à confirmer</div>';
+      }
     } else {
-      totalDisplay = fmtMoney(ln.totalHT);
+      /* Mode edit : sélecteur status + suppliedBy compact sous la description */
+      designationHtml += '<div class="ajq-line__editmeta" data-edit-only>' +
+        '<select class="ajq-ed-select" onchange="AJQuotes.setLineField(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\',\'status\',this.value)">' +
+          K.QUOTE_LINE_STATUSES.map(function(s){ return '<option value="' + s.id + '"' + (ln.status === s.id ? ' selected' : '') + '>' + esc(s.label) + '</option>'; }).join('') +
+        '</select>' +
+        '<select class="ajq-ed-select" onchange="AJQuotes.setLineField(\'' + esc(sec.id) + '\',\'' + esc(ln.id) + '\',\'suppliedBy\',this.value)">' +
+          '<option value="">Fourniture : non spécifiée</option>' +
+          K.QUOTE_SUPPLIED_BY.map(function(b){ return '<option value="' + b.id + '"' + (ln.suppliedBy === b.id ? ' selected' : '') + '>Fourni par : ' + esc(b.label) + '</option>'; }).join('') +
+        '</select>' +
+      '</div>';
     }
 
-    return '<tr class="' + rowClass + '">' +
-      '<td class="num">' + esc(ln.number || '') + '</td>' +
+    /* Cellules numériques */
+    var qtyCell, unitCell, puCells = '', puhtCell, totalCell;
+
+    if(mode === 'edit' && ln.type !== 'comment'){
+      qtyCell = '<td class="qty">' + _edNum(ln.quantity, 'line.' + ln.id + '.quantity', mode, { format: fmtQty, step:'0.01' }) + '</td>';
+      unitCell = '<td class="unit"><input type="text" class="ajq-ed-num ajq-ed-num--unit" data-ed-path="line.' + esc(ln.id) + '.unit" value="' + esc(ln.unit || 'U') + '" /></td>';
+      if(withDiscount){
+        var pub = ln.unitPriceBeforeDiscount != null ? ln.unitPriceBeforeDiscount : ln.unitPriceHT;
+        puCells += '<td class="pu">' + _edNum(pub, 'line.' + ln.id + '.unitPriceBeforeDiscount', mode, { format: fmtMoneyOrEmpty }) + '</td>';
+        puCells += '<td class="disc">' + _edNum(ln.discountPercent || 0, 'line.' + ln.id + '.discountPercent', mode, { format: function(v){ return v ? fmtQty(v)+'%' : ''; } }) + '</td>';
+      }
+      puhtCell = '<td class="puht">' + _edNum(ln.unitPriceHT, 'line.' + ln.id + '.unitPriceHT', mode, { format: fmtMoneyOrEmpty }) + '</td>';
+      /* Total : calculé, non éditable directement */
+      var tDisp = ln.unitPriceHT === 0 && ln.totalHT === 0 ? (ln.allowZeroPrice ? '0,00' : '') : fmtMoney(ln.totalHT);
+      totalCell = '<td class="total">' + esc(tDisp) + '</td>';
+    } else if(ln.type === 'comment'){
+      qtyCell = '<td class="qty"></td>';
+      unitCell = '<td class="unit"></td>';
+      if(withDiscount){ puCells = '<td class="pu"></td><td class="disc"></td>'; }
+      puhtCell = '<td class="puht"></td>';
+      totalCell = '<td class="total"></td>';
+    } else {
+      /* mode print, ligne normale */
+      var qty = ln.quantity == null ? '' : fmtQty(ln.quantity);
+      qtyCell = '<td class="qty">' + esc(qty) + '</td>';
+      unitCell = '<td class="unit">' + esc(ln.unit || '') + '</td>';
+      if(withDiscount){
+        var pubP = ln.unitPriceBeforeDiscount != null ? ln.unitPriceBeforeDiscount : ln.unitPriceHT;
+        puCells += '<td class="pu">' + fmtMoneyOrEmpty(pubP) + '</td>';
+        puCells += '<td class="disc">' + (ln.discountPercent ? fmtQty(ln.discountPercent) + '%' : '') + '</td>';
+      }
+      puhtCell = '<td class="puht">' + esc(fmtMoneyOrEmpty(ln.unitPriceHT)) + '</td>';
+      var tDispP;
+      if(ln.unitPriceHT === 0 && ln.totalHT === 0){ tDispP = ln.allowZeroPrice ? '0,00' : ''; }
+      else { tDispP = fmtMoney(ln.totalHT); }
+      totalCell = '<td class="total">' + esc(tDispP) + '</td>';
+    }
+
+    return '<tr class="' + rowClass + '" data-line-id="' + esc(ln.id) + '">' +
+      '<td class="num">' +
+        (mode === 'edit'
+          ? '<input type="text" class="ajq-ed-num ajq-ed-num--ord" data-ed-path="line.' + esc(ln.id) + '.numberOverride" value="' + esc(ln.numberOverride || ln.number || '') + '" placeholder="' + esc(ln.number || '') + '" />'
+          : esc(ln.number || '')) +
+      '</td>' +
       '<td class="des">' + designationHtml + '</td>' +
-      '<td class="qty">' + esc(qty) + '</td>' +
-      '<td class="unit">' + esc(unit) + '</td>' +
-      puCells +
-      '<td class="puht">' + esc(puhtDisplay) + '</td>' +
-      '<td class="total">' + esc(totalDisplay) + '</td>' +
+      qtyCell + unitCell + puCells + puhtCell + totalCell +
+      (mode === 'edit'
+        ? '<td class="ajq-row-ctrl" data-edit-only>' + _renderLineControls(sec, ln) + '</td>'
+        : '') +
     '</tr>';
   }
 
-  function renderPreviewPageTotaux(quote, company, typeDef, totals){
+  function renderPreviewPageTotaux(quote, company, typeDef, totals, mode){
     var totalPages = 3;
     var draftClass = quote.locked ? '' : ' ajq-page--draft';
     var validityFR = isoToFR(quote.validityDate);
     var depositPct = fmtQty(totals.depositRate);
 
     return '<div class="ajq-page' + draftClass + '">' +
-      renderHeaderBlock(quote, company, 2, totalPages) +
+      renderHeaderBlock(quote, company, 2, totalPages, mode) +
       /* Attestation TVA */
       '<div class="ajq-tva-attestation">' + esc(K.AJ_PRO_TVA_ATTESTATION) + '</div>' +
       /* Bloc totaux — style PDF AJ Pro : 2 colonnes (label, valeur) sans col EUR séparée */
@@ -1966,26 +2224,33 @@
         '<tr><th>% TVA</th><th>Base</th><th>Total TVA</th></tr>' +
         '<tr><td>' + fmtQty(totals.vatRate) + '</td><td>' + fmtMoney(totals.totalHT) + '</td><td>' + fmtMoney(totals.vat) + '</td></tr>' +
       '</table>' +
-      /* Bloc règlement */
+      /* Bloc règlement — date + mode règlement éditables en mode edit */
       '<div class="ajq-payment">' +
-        (validityFR ? '<div class="ajq-payment__row"><strong>Validité du devis :</strong> ' + esc(validityFR) + '</div>' : '') +
+        '<div class="ajq-payment__row"><strong>Validité du devis :</strong> ' +
+          (mode === 'edit'
+            ? '<input type="date" class="ajq-ed-date" data-ed-path="validityDate" value="' + esc(quote.validityDate || '') + '" />'
+            : esc(validityFR)) +
+        '</div>' +
         '<div class="ajq-payment__row"><strong>Délai de règlement :</strong></div>' +
-        '<div class="ajq-payment__row"><strong>Mode de règlement :</strong> ' + esc(quote.paymentMethod || 'Virement') + '</div>' +
+        '<div class="ajq-payment__row"><strong>Mode de règlement :</strong> ' +
+          _ed(quote.paymentMethod || 'Virement', 'paymentMethod', mode, { placeholder:'Virement' }) +
+        '</div>' +
         '<div class="ajq-payment__row"><strong>Conditions de règlement :</strong></div>' +
         '<div class="ajq-payment__deposit">' +
           esc(depositPct) + '% à la signature à verser sur le compte IBAN : ' + esc(company.iban) + ', soit ' +
           fmtMoney(totals.deposit) + ' EUR TTC' +
         '</div>' +
-        '<div class="ajq-payment__row"><strong>Délai de règlement :</strong> ' + esc(quote.paymentDelay || 'Règlement comptant') + '</div>' +
+        '<div class="ajq-payment__row"><strong>Délai de règlement :</strong> ' +
+          _ed(quote.paymentDelay || 'Règlement comptant', 'paymentDelay', mode, { placeholder:'Règlement comptant' }) +
+        '</div>' +
       '</div>' +
-      /* Bloc assurance */
+      /* Bloc assurance — figé (constantes AJ Pro) */
       '<div class="ajq-insurance">' +
         '<div><span class="ajq-insurance__title">Assurance Professionnelle :</span> ' + esc(company.assurance.assureur) + ' – ref contrat n°' + esc(company.assurance.reference) + ' depuis le ' + esc(company.assurance.depuis) + '</div>' +
         '<div>Activités couvertes : ' + esc(company.assurance.activitesCouvertes) + '</div>' +
         '<div>' + esc(company.assurance.mention) + '</div>' +
       '</div>' +
-      /* Signature — format PDF AJ Pro :
-         "Devis n° D-2026XXXX" ou "Devis n° D-2026XXXX-N" si révision (suffixe -N) */
+      /* Signature */
       (function(){
         var sigNum = quote.quoteNumber || '';
         if(quote.typeDocument === 'revision' && quote.revisionNumber){
@@ -2006,7 +2271,7 @@
     '</div>';
   }
 
-  function renderPreviewPageCGV(quote, company){
+  function renderPreviewPageCGV(quote, company, mode){
     var totalPages = 3;
     var draftClass = quote.locked ? '' : ' ajq-page--draft';
 
@@ -2020,7 +2285,7 @@
     }).join('');
 
     return '<div class="ajq-page' + draftClass + '">' +
-      renderHeaderBlock(quote, company, 3, totalPages) +
+      renderHeaderBlock(quote, company, 3, totalPages, mode) +
       '<div class="ajq-cgv-title">Conditions générales de vente</div>' +
       '<div class="ajq-cgv-intro">' + esc(K.AJ_PRO_TERMS_INTRO) + '</div>' +
       articlesHtml +

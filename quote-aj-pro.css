@@ -515,7 +515,235 @@
     page-break-after: always;
     page-break-inside: avoid;
   }
+  /* Session 23 — masque tous les contrôles d'édition à l'impression */
+  [data-edit-only] { display: none !important; }
+  .ajq-row-controls, .ajq-row-ctrl, .ajq-th-ctrl,
+  .ajq-row--add-line, .ajq-row--add-section,
+  .ajq-line__editmeta { display: none !important; }
+  /* Inputs et contenteditable redeviennent du texte plat */
+  .ajq-ed, .ajq-ed-num, .ajq-ed-date, .ajq-ed-select {
+    border: none !important; background: transparent !important; padding: 0 !important;
+  }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   SESSION 23 — Édition inline (champs éditables qui ressemblent à du
+   texte plat tant qu'on n'interagit pas)
+   ════════════════════════════════════════════════════════════════════ */
+
+/* Container : indique le mode courant pour le CSS conditionnel */
+.ajq-preview-shell[data-mode="edit"] .ajq-page--draft::after {
+  /* En mode édition, le filigrane "Brouillon" reste visible mais plus discret */
+  opacity: 0.6;
+}
+
+/* Champ texte contenteditable : ressemble à du texte normal, encadré
+   subtilement au hover/focus */
+.ajq-ed {
+  display: inline;
+  outline: none;
+  border-radius: 1px;
+  padding: 0 1px;
+  min-width: 1ch;
+  cursor: text;
+  transition: background 0.12s, box-shadow 0.12s;
+  /* Préserve les retours à la ligne dans le contenu */
+}
+.ajq-ed--multi { display: inline-block; }
+.ajq-ed:empty::before {
+  content: attr(data-ed-placeholder);
+  color: #b8b8b8;
+  font-style: italic;
+  font-weight: 400;
+}
+.ajq-ed:hover {
+  background: rgba(201, 169, 110, 0.10);
+  box-shadow: inset 0 -1px 0 rgba(201, 169, 110, 0.45);
+}
+.ajq-ed:focus {
+  background: rgba(201, 169, 110, 0.18);
+  box-shadow: 0 0 0 1px rgba(201, 169, 110, 0.7);
+}
+
+/* Input nombre : invisible tant qu'on ne survole pas, alignement droite */
+.ajq-ed-num {
+  width: 100%;
+  border: 1px dashed transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  padding: 0 2pt;
+  text-align: right;
+  -moz-appearance: textfield;
+  appearance: textfield;
+  cursor: text;
+  outline: none;
+}
+.ajq-ed-num::-webkit-inner-spin-button,
+.ajq-ed-num::-webkit-outer-spin-button {
+  -webkit-appearance: none; margin: 0;
+}
+.ajq-ed-num:hover {
+  border-color: rgba(201, 169, 110, 0.40);
+  background: rgba(201, 169, 110, 0.06);
+}
+.ajq-ed-num:focus {
+  border-color: rgba(201, 169, 110, 0.85);
+  background: rgba(201, 169, 110, 0.10);
+}
+.ajq-ed-num--unit { text-align: center; }
+.ajq-ed-num--ord { text-align: left; font-weight: 600; }
+.ajq-ed-num--cp { width: 5ch; }
+
+/* Inline (étage / ascenseur / etc.) : se comporte comme du texte */
+.ajq-ed--inline { padding: 0 2px; }
+.ajq-ed--num { font-weight: 700; }
+.ajq-ed--cp { width: 5ch; display: inline-block; }
+.ajq-ed--ville { width: auto; display: inline-block; }
+
+/* Input date stylé pour ressembler à du texte */
+.ajq-ed-date {
+  border: 1px dashed transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  padding: 0 4pt;
+  cursor: text;
+  outline: none;
+  font-feature-settings: "tnum";
+}
+.ajq-ed-date:hover { border-color: rgba(201, 169, 110, 0.40); background: rgba(201, 169, 110, 0.06); }
+.ajq-ed-date:focus { border-color: rgba(201, 169, 110, 0.85); background: rgba(201, 169, 110, 0.10); }
+
+/* Petit select discret */
+.ajq-ed-select {
+  font-family: Inter, system-ui, sans-serif;
+  font-size: 9pt;
+  padding: 1px 4px;
+  border: 1px solid rgba(201, 169, 110, 0.30);
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  margin-right: 4px;
+  margin-top: 1mm;
+}
+.ajq-ed-select:hover { border-color: rgba(201, 169, 110, 0.7); }
+
+/* Ligne d'édition meta sous chaque ligne (status + suppliedBy) */
+.ajq-line__editmeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 1mm;
+  padding-top: 1mm;
+  border-top: 0.3pt dashed rgba(201, 169, 110, 0.30);
+}
+
+/* Tableau éditable : ajoute la colonne contrôles à droite */
+.ajq-table--editable .ajq-th-ctrl,
+.ajq-table--editable .ajq-row-ctrl {
+  width: 100px;
+  background: #fafaf6;
+  border-left: 0.3pt solid #e8e4d6;
+}
+
+/* Contrôles au survol (lignes / sections) */
+.ajq-row-controls {
+  display: flex;
+  gap: 2px;
+  justify-content: flex-end;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.ajq-row--line:hover .ajq-row-controls,
+.ajq-row--section:hover .ajq-row-controls,
+.ajq-row-controls:focus-within {
+  opacity: 1;
+}
+
+.ajq-rc-btn {
+  background: #fff;
+  border: 1px solid #e3dccc;
+  color: #3a4a5c;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 10pt;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+  min-width: 22px;
+  min-height: 22px;
+  transition: all 0.12s;
+}
+.ajq-rc-btn:hover { border-color: #c9a96e; background: #fcf8ef; color: #0f2030; }
+.ajq-rc-btn--danger { color: #c62828; border-color: rgba(198, 40, 40, 0.3); }
+.ajq-rc-btn--danger:hover { background: rgba(198, 40, 40, 0.08); border-color: #c62828; }
+
+/* Boutons "+ ligne" / "+ commentaire" / "+ depuis biblio" en fin de section */
+.ajq-add-line-btn {
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px dashed rgba(15, 32, 48, 0.18);
+  color: #3a4a5c;
+  font-family: inherit;
+  font-size: 8.5pt;
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+}
+.ajq-add-line-btn:hover { background: #fff; border-color: #c9a96e; color: #0f2030; }
+.ajq-add-line-btn--lib { background: #faf3df; border-color: #c9a96e; color: #7a5a30; }
+.ajq-add-line-btn--lib:hover { background: #fcf8ef; }
+
+/* Lignes masquées en mode edit : aspect grisé */
+.ajq-row--hidden {
+  opacity: 0.45;
+  background: rgba(122, 136, 150, 0.04);
+}
+
+/* Toolbar du mode édition (au-dessus du document) */
+.ajq-edit-toolbar { max-width: 210mm; margin: 0 auto 14px; font-family: Inter, system-ui, sans-serif; }
+.ajq-edit-quickbar {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+  background: #fff;
+  border: 1px solid #e3dccc;
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+.ajq-edit-quickbar__field { display: flex; flex-direction: column; gap: 2px; }
+.ajq-edit-quickbar__field span { font-size: 10px; color: #7a8896; text-transform: uppercase; font-weight: 600; letter-spacing: 0.4px; }
+.ajq-edit-quickbar__field input,
+.ajq-edit-quickbar__field select {
+  padding: 6px 8px; border: 1px solid #e3dccc; border-radius: 5px; font-size: 12px;
+  font-family: inherit; background: #fff; min-width: 110px;
+}
+.ajq-edit-quickbar__check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #3a4a5c; cursor: pointer; }
+
+.ajq-print-toolbar {
+  max-width: 210mm; margin: 0 auto 14px;
+  display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  background: #fff; border: 1px solid #e3dccc; border-radius: 10px;
+  padding: 10px 14px;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+/* Mode print : masque tous les éléments data-edit-only */
+.ajq-preview-shell[data-mode="print"] [data-edit-only] { display: none !important; }
+.ajq-preview-shell[data-mode="print"] .ajq-row-controls,
+.ajq-preview-shell[data-mode="print"] .ajq-row-ctrl,
+.ajq-preview-shell[data-mode="print"] .ajq-th-ctrl,
+.ajq-preview-shell[data-mode="print"] .ajq-line__editmeta { display: none !important; }
+.ajq-preview-shell[data-mode="print"] .ajq-ed,
+.ajq-preview-shell[data-mode="print"] .ajq-ed-num,
+.ajq-preview-shell[data-mode="print"] .ajq-ed-date,
+.ajq-preview-shell[data-mode="print"] .ajq-ed-select {
+  border: none !important; background: transparent !important; padding: 0 !important;
+}
+.ajq-preview-shell[data-mode="print"] .ajq-ed:empty::before { content: ''; }
 
 /* ─────────────────────────────────────────────────────────────────
    VUE ÉDITION — styles propres au module (préfixe .ajqe-)
