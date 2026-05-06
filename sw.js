@@ -2,7 +2,7 @@
    Stratégie : cache-first pour le shell, network-first avec fallback cache pour le reste.
    Permet à l'app de fonctionner hors-ligne (utile en chantier sans wifi). */
 
-const CACHE_VERSION = 'aj-pro-v29-2026-05-06-stabilite-tablette-a11y';
+const CACHE_VERSION = 'aj-pro-v30-2026-05-06-gdrive-autosync';
 const SHELL_CACHE = 'aj-pro-shell-' + CACHE_VERSION;
 /* Runtime cache versionné aussi : à chaque bump, l'ancien est purgé */
 const RUNTIME_CACHE = 'aj-pro-runtime-' + CACHE_VERSION;
@@ -23,6 +23,7 @@ const SHELL_FILES = [
   '/ai-prompt-builder.js',
   '/ai-analysis-service.js',
   '/ai-analysis-screen.js',
+  '/gdrive-sync.js',
   '/chantier-analysis.js'
 ];
 
@@ -71,6 +72,15 @@ self.addEventListener('fetch', function(event){
       })
     );
     return;
+  }
+
+  /* Domaines Google (auth + API Drive) : NE PAS intercepter — passent direct
+     au navigateur pour que l'auth/upload fonctionne correctement (Session 22) */
+  if(url.hostname === 'accounts.google.com' ||
+     url.hostname === 'apis.google.com' ||
+     url.hostname.endsWith('.googleapis.com') ||
+     url.hostname === 'oauth2.googleapis.com'){
+    return; /* le navigateur gère sans nous */
   }
 
   /* Resources externes (fonts, jsPDF) : cache-first puis network */

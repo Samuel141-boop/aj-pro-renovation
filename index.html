@@ -13,6 +13,8 @@
 <meta name="theme-color" content="#0f2030">
 <meta name="description" content="AJ PRO RÉNOVATION — Logiciel de gestion de chantier pour artisans et conducteurs de travaux. Relevés, mesures, devis.">
 <link rel="manifest" href="/manifest.json">
+<!-- Google Identity Services (Session 22) — chargé async, ne bloque pas l'app -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -2227,7 +2229,7 @@ button[title]:not(:has(span:not(:empty))) {
     <div id="db-search-results" style="margin-top:10px"></div>
   </div>
   <div class="form-section">
-    <div class="form-section-title">⚙️ Gestion</div>
+    <div class="form-section-title">⚙️ Gestion locale</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-secondary" onclick="exportDB()">⬇ Exporter JSON</button>
       <button class="btn btn-secondary" onclick="importDB()">⬆ Importer JSON</button>
@@ -2235,7 +2237,24 @@ button[title]:not(:has(span:not(:empty))) {
     </div>
     <input type="file" id="import-input" accept=".json" style="display:none" onchange="handleImport(this)">
     <div style="font-size:12px;color:var(--c-text-muted);margin-top:12px;line-height:1.6">
-      🔒 Données stockées uniquement sur cet appareil. Aucune donnée envoyée sur internet.
+      🔒 Données locales : stockées sur cet appareil seulement.
+    </div>
+  </div>
+  <!-- Sauvegarde automatique Google Drive (Session 22) -->
+  <div class="form-section">
+    <div class="form-section-title">☁️ Sauvegarde automatique Google Drive</div>
+    <div id="aj-gdrive-panel" style="font-size:13px;color:var(--c-text-muted);line-height:1.6;margin-bottom:12px">
+      Une fois connecté à ton Google Drive, toutes tes données (clients, pièces, photos, croquis, devis…) sont sauvegardées automatiquement en arrière-plan, sans bouton à cliquer.
+      <br>Le badge en haut à droite t'indique l'état de la synchronisation.
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="if(window.GDriveSync)window.GDriveSync.connect()">☁️ Connecter Google Drive</button>
+      <button class="btn btn-secondary" onclick="if(window.GDriveSync)window.GDriveSync.restoreFromDrive()">🔄 Restaurer depuis Drive</button>
+      <button class="btn btn-secondary" onclick="if(window.GDriveSync)window.GDriveSync.changeClientId()" title="Changer l'OAuth Client ID Google Cloud">⚙ Client ID</button>
+      <button class="btn btn-secondary" onclick="if(window.GDriveSync)window.GDriveSync.disconnect()">⏏ Déconnecter Drive</button>
+    </div>
+    <div style="font-size:11px;color:var(--c-text-muted);margin-top:10px;line-height:1.55">
+      💡 Première utilisation : voir <strong>GOOGLE_DRIVE_AUTO_SYNC_SETUP.md</strong> dans le code source pour configurer ton projet Google Cloud (3 minutes, gratuit).
     </div>
   </div>
 </div>
@@ -2387,7 +2406,7 @@ var LABELS={
   'screen-add-piece':['Ajouter une pièce','Sélectionner'],
   'screen-piece':['Relevé de pièce','Auto-sauvegarde active'],
   'screen-recap':['Résumé chantier','Synthèse complète'],
-  'screen-db':['Base de données','Stockage local']
+  'screen-db':['Mes chantiers enregistrés','Stockage local + Drive']
 };
 function showScreen(id){
   if(id===currentScreen)return;
@@ -4287,6 +4306,10 @@ function handlePhoto(inp){
       p.photos.push({id:newId,data:compressedData,date:new Date().toLocaleDateString('fr-FR'),category:null});
       dbSave(db);renderPhotos(p.photos);
       showToast('Photo ajoutée ✓');
+      /* Session 22 — pousse la photo en binaire dans Drive (sous-dossier photos-originales) */
+      if(window.GDriveSync && window.GDriveSync.markMediaDirty){
+        window.GDriveSync.markMediaDirty(newId, p.id, p.clientId, compressedData, 'photo');
+      }
       /* Propose de tagger la photo (optionnel - pas bloquant) */
       setTimeout(function(){promptPhotoCategory(newId);},400);
     });
@@ -6950,6 +6973,8 @@ renderHome();
 <script src="/ai-analysis-service.js"></script>
 <script src="/ai-analysis-screen.js"></script>
 <script src="/chantier-analysis.js"></script>
+<!-- Sauvegarde automatique Google Drive (Session 22) -->
+<script src="/gdrive-sync.js"></script>
 <script>
 
 /* ════════════════════════════════════════════════════════════════════
